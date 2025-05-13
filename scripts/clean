@@ -1,0 +1,3 @@
+#!/usr/bin/env zsh
+
+rm -r src/evergreen{,_README.md} src/.openapi-generator*

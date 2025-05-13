@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evergreen-mcp-server"
+version = "0.1.0"
+description = "A server for interacting with the Evergreen API."
+authors = [
+    { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
+]
+dependencies = [
+    "urllib3",
+    "python-dateutil",
+    "aiohttp",
+    "aiohttp-retry",
+    "pydantic",
+    "typing-extensions",
+    "pyyaml",
+    "mcp[cli]"
+]
+
+[project.optional-dependencies]
+dev = [
+    "openapi-generator-cli"
+]
+
+[project.scripts]
+evergreen-mcp-server = "server:main"

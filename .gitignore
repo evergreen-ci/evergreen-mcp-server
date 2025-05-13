@@ -1,0 +1,5 @@
+src/evergreen/**
+src/evergreen_README.md
+src/.openapi-generator*
+src/**/__pycache__
+src/*.egg-info
