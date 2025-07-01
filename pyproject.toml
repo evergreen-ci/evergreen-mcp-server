@@ -17,7 +17,7 @@ dependencies = [
     "pydantic",
     "typing-extensions",
     "pyyaml",
-    "mcp[cli]"
+    "mcp"
 ]
 
 [project.optional-dependencies]
