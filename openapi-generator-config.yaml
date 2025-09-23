@@ -1,3 +1,0 @@
-generateSourceCodeOnly: true
-library: asyncio
-packageName: evergreen

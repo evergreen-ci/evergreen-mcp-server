@@ -17,12 +17,12 @@ dependencies = [
     "pydantic",
     "typing-extensions",
     "pyyaml",
-    "mcp"
+    "mcp",
+    "gql[aiohttp]"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "openapi-generator-cli"
 ]
 
 [project.scripts]
