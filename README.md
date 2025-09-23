@@ -316,6 +316,86 @@ Add to your Claude Desktop MCP configuration:
 }
 ```
 
+## MCP Inspector Integration
+
+The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a powerful debugging and testing tool that provides a web-based interface for interacting with MCP servers. It's especially useful for development, testing, and understanding how the Evergreen MCP server works.
+
+### Installing MCP Inspector
+
+```bash
+# Install globally via npm
+npm install -g @modelcontextprotocol/inspector
+
+# Or install locally in your project
+npm install --save-dev @modelcontextprotocol/inspector
+```
+
+### Using Inspector with Evergreen MCP Server
+
+#### Method 1: Direct Server Command
+
+```bash
+# Start the inspector with the Evergreen MCP server
+mcp-inspector python run_mcp_server.py
+```
+
+#### Method 2: With Project ID Configuration
+
+```bash
+# Start with a specific project ID
+mcp-inspector python run_mcp_server.py --project-id your-evergreen-project-id
+```
+
+#### Method 3: Using Virtual Environment Path
+
+```bash
+# If you have the server installed in a virtual environment
+mcp-inspector /path/to/your/project/.venv/bin/evergreen-mcp-server
+```
+
+### Inspector Features for Evergreen MCP
+
+The MCP Inspector provides several useful features when working with the Evergreen MCP server:
+
+1. **Tool Testing**: Interactive forms to test all available tools:
+   - `list_user_recent_patches`
+   - `get_patch_failed_jobs`
+   - `get_task_logs`
+
+2. **Resource Browsing**: View available Evergreen project resources
+
+3. **Real-time Logging**: See server logs and debug information in real-time
+
+4. **Request/Response Inspection**: Examine the exact JSON payloads being sent and received
+
+5. **Schema Validation**: Verify that tool inputs match the expected schemas
+
+### Typical Inspector Workflow
+
+1. **Start Inspector**: Launch the inspector with your Evergreen MCP server
+2. **Test Authentication**: Verify your Evergreen credentials are working by listing projects
+3. **Explore Tools**: Use the interactive forms to test each tool with sample data
+4. **Debug Issues**: Use the logging panel to troubleshoot any authentication or API issues
+5. **Validate Responses**: Examine the JSON responses to understand the data structure
+
+### Inspector Configuration Tips
+
+- **Environment Variables**: The inspector will use the same `~/.evergreen.yml` configuration file as the server
+- **Logging Level**: Set `PYTHONPATH=src` and enable debug logging for more detailed output
+- **Network Issues**: If you encounter connection issues, verify your Evergreen API endpoint and credentials
+
+### Example Inspector Session
+
+1. Open the inspector web interface (typically at `http://localhost:3000`)
+2. Navigate to the "Tools" tab
+3. Try `list_user_recent_patches` with `limit: 5`
+4. Copy a patch ID from the response
+5. Use `get_patch_failed_jobs` with the copied patch ID
+6. Copy a task ID from the failed jobs response
+7. Use `get_task_logs` with the task ID to see detailed error logs
+
+This workflow demonstrates the typical debugging process for CI/CD failures using the Evergreen MCP server.
+
 ## Available Resources
 
 The server currently provides the following MCP resources:
