@@ -21,71 +21,79 @@ logger = logging.getLogger(__name__)
 
 
 def get_tool_definitions() -> Sequence[types.Tool]:
-    """Get all MCP tool definitions"""
+    """Get all MCP tool definitions with enhanced descriptions for AI assistants."""
     return [
         types.Tool(
             name="list_user_recent_patches",
-            description="List recent patches for the authenticated user",
+            description="Retrieve the authenticated user's recent Evergreen patches/commits with their CI/CD status. Use this to see your recent code changes, check patch status (success/failed/running), and identify patches that need attention. Returns patch IDs needed for other tools.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Number of patches to return (default: 10, max: 50)",
+                        "description": "Number of recent patches to return. Use smaller numbers (3-5) for quick overview, larger (10-20) for comprehensive analysis. Maximum 50.",
                         "default": 10,
                         "minimum": 1,
                         "maximum": 50
                     }
                 },
-                "required": []
+                "required": [],
+                "additionalProperties": False
             }
         ),
         types.Tool(
             name="get_patch_failed_jobs",
-            description="Get failed jobs for a specific patch",
+            description="Analyze failed CI/CD jobs for a specific patch to understand why builds are failing. Shows detailed failure information including failed tasks, build variants, timeout issues, and log links. Essential for debugging patch failures.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "patch_id": {
                         "type": "string",
-                        "description": "Patch identifier from list_user_recent_patches (required)"
+                        "description": "Patch identifier obtained from list_user_recent_patches. This is the 'patch_id' field from the patches array."
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of failed tasks to return (default: 50)",
-                        "default": 50
+                        "description": "Maximum number of failed tasks to analyze. Use 10-20 for focused analysis, 50+ for comprehensive failure review.",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 100
                     }
                 },
-                "required": ["patch_id"]
+                "required": ["patch_id"],
+                "additionalProperties": False
             }
         ),
         types.Tool(
             name="get_task_logs",
-            description="Get detailed logs for a specific Evergreen task",
+            description="Extract detailed logs from a specific failed Evergreen task to identify root cause of failures. Filters for error messages by default to focus on relevant failure information. Use task_id from get_patch_failed_jobs results.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "Task identifier (required)"
+                        "description": "Task identifier from get_patch_failed_jobs response. Found in the 'task_id' field of failed_tasks array."
                     },
                     "execution": {
                         "type": "integer",
-                        "description": "Task execution number (default: 0)",
-                        "default": 0
+                        "description": "Task execution number if task was retried. Usually 0 for first execution, 1+ for retries.",
+                        "default": 0,
+                        "minimum": 0
                     },
                     "max_lines": {
                         "type": "integer",
-                        "description": "Maximum number of log lines to return (default: 1000)",
-                        "default": 1000
+                        "description": "Maximum log lines to return. Use 100-500 for quick error analysis, 1000+ for comprehensive debugging.",
+                        "default": 1000,
+                        "minimum": 10,
+                        "maximum": 5000
                     },
                     "filter_errors": {
                         "type": "boolean",
-                        "description": "Whether to filter for error messages only (default: True)",
+                        "description": "Whether to show only error/failure messages (recommended) or all log output. Set to false only when you need complete context.",
                         "default": True
                     }
                 },
-                "required": ["task_id"]
+                "required": ["task_id"],
+                "additionalProperties": False
             }
         )
     ]
