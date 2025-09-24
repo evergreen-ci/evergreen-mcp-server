@@ -307,12 +307,14 @@ Add to your Claude Desktop MCP configuration:
 **With Project ID Configuration:**
 ```json
 {
-    "mcpServers": {
-        "evergreen": {
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": ["--project-id", "your-evergreen-project-id"]
-        }
+  "mcpServers": {
+    "evergreen": {
+      "command": "{root}/evergreen-mcp-server/.venv/bin/python",
+      "args": ["run_mcp_server.py"],
+      "cwd": "{root}/evergreen-mcp-server",
+      "env": {}
     }
+  }
 }
 ```
 
@@ -336,14 +338,14 @@ npm install --save-dev @modelcontextprotocol/inspector
 
 ```bash
 # Start the inspector with the Evergreen MCP server
-mcp-inspector python run_mcp_server.py
+mcp-inspector python run_server.py
 ```
 
 #### Method 2: With Project ID Configuration
 
 ```bash
 # Start with a specific project ID
-mcp-inspector python run_mcp_server.py --project-id your-evergreen-project-id
+mcp-inspector python run_server.py --project-id your-evergreen-project-id
 ```
 
 #### Method 3: Using Virtual Environment Path
@@ -480,16 +482,17 @@ for patch in patches:
 evergreen-mcp-server/
 ├── src/
 │   ├── server.py                    # Main MCP server implementation
+│   ├── run_mcp_server.py            # Server entry point with logging setup
 │   ├── mcp_tools.py                 # MCP tool definitions and handlers
 │   ├── evergreen_graphql_client.py  # GraphQL client for Evergreen API
 │   ├── failed_jobs_tools.py         # Core logic for patch and failed jobs analysis
 │   └── evergreen_queries.py         # GraphQL query definitions
+├── tests/
+│   └── test_mcp_client.py           # MCP integration tests (full end-to-end)
 ├── scripts/
 │   └── fetch_graphql_schema.sh      # Script to update GraphQL schema
-├── tests/
-│   └── test_failed_jobs.py          # Integration tests for patch-based functionality
 ├── merged-schema.graphql            # Evergreen GraphQL schema
-├── requirements.txt                 # Python dependencies
+├── run_server.py                    # Convenience wrapper to start server
 ├── pyproject.toml                   # Project configuration
 └── README.md                        # This file
 ```

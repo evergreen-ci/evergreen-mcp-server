@@ -8,9 +8,8 @@ import os
 import logging
 from pathlib import Path
 
-# Add src to Python path
-src_path = Path(__file__).parent / "src"
-sys.path.insert(0, str(src_path))
+# Add current directory to Python path (we're already in src/)
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Set up logging to both console and file
 logging.basicConfig(
@@ -18,7 +17,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stderr),  # Log to stderr so it doesn't interfere with MCP protocol
-        logging.FileHandler('mcp_server.log')
+        logging.FileHandler('../mcp_server.log')  # Log to project root
     ]
 )
 
@@ -35,7 +34,7 @@ def main():
         logger.info(f"Python path: {sys.path[:3]}...")  # Show first 3 entries
         
         # Import and run the server
-        from src.server import main as server_main
+        from server import main as server_main
         logger.info("Server module imported successfully")
         
         logger.info("Starting MCP server...")

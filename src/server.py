@@ -110,21 +110,21 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
 
     # Call the appropriate handler
     try:
-        logger.info(f"🚀 Executing tool: {name}")
+        logger.debug(f"Executing tool: {name}")
         if name == "list_user_recent_patches":
             result = await handler(arguments, client, USER_ID)
         else:
             result = await handler(arguments, client)
-        logger.info(f"✅ Tool {name} completed successfully")
+        logger.debug(f"Tool {name} completed successfully")
         return result
     except Exception as e:
-        logger.error(f"❌ Tool handler failed for {name}: {e}")
+        logger.error(f"Tool handler failed for {name}: {e}")
         import traceback
-        logger.error(f"   Full traceback: {traceback.format_exc()}")
+        logger.debug(f"Full traceback: {traceback.format_exc()}")
         error_response = {
             "error": f"Tool execution failed: {str(e)}",
-            "tool": name,
-            "arguments": arguments
+            "tool": name
+            # Removed arguments to avoid logging potentially sensitive data
         }
         return [types.TextContent(
             type="text",
@@ -135,10 +135,7 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
 async def _main() -> int:
     logger.info("Setting up MCP stdio server...")
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        logger.info("🌟 MCP server running and ready for connections")
-        logger.info("   Server name: evergreen-mcp-server")
-        logger.info("   Server version: 0.1.0")
-        logger.info("   Waiting for client connections...")
+        logger.info("MCP server running and ready for connections")
         await server.run(
             read_stream,
             write_stream,
@@ -151,7 +148,7 @@ async def _main() -> int:
                 ),
             ),
         )
-    logger.info("🔚 MCP server shutting down")
+    logger.info("MCP server shutting down")
     return 0
 
 

@@ -26,4 +26,4 @@ dev = [
 ]
 
 [project.scripts]
-evergreen-mcp-server = "server:main"
+evergreen-mcp-server = "src.run_mcp_server:main"
