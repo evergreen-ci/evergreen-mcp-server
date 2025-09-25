@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_tool_definitions() -> Sequence[types.Tool]:
-    """Get all MCP tool definitions with enhanced descriptions for AI assistants."""
+    """Get all MCP tool definitions."""
     return [
         types.Tool(
             name="list_user_recent_patches",

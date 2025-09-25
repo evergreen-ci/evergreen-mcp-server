@@ -80,7 +80,7 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
 async def _handle_list_tools() -> Sequence[types.Tool]:
     """List available MCP tools"""
     tools = get_tool_definitions()
-    logger.info(f"📋 Listing {len(tools)} available tools:")
+    logger.info(f"Listing {len(tools)} available tools:")
     for tool in tools:
         logger.info(f"   - {tool.name}: {tool.description}")
     return tools
@@ -89,7 +89,7 @@ async def _handle_list_tools() -> Sequence[types.Tool]:
 @server.call_tool()
 async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextContent]:
     """Handle MCP tool calls by delegating to appropriate handlers"""
-    logger.info(f"🔧 Tool call received: {name}")
+    logger.info(f"Tool call received: {name}")
     logger.info(f"   Arguments: {json.dumps(arguments, indent=2)}")
 
     client = server.request_context.lifespan_context["evergreen_client"]
@@ -97,7 +97,7 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
     # Get the handler for this tool
     handler = TOOL_HANDLERS.get(name)
     if not handler:
-        logger.error(f"❌ Unknown tool requested: {name}")
+        logger.error(f"Unknown tool requested: {name}")
         logger.info(f"   Available tools: {list(TOOL_HANDLERS.keys())}")
         error_response = {
             "error": f"Unknown tool: {name}",
