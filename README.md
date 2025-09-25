@@ -258,6 +258,30 @@ python -m src.server
 python src/server.py
 ```
 
+### Method 4: Using Docker
+
+#### Build and Run with Docker
+
+```bash
+# Build the Docker image
+docker build -t evergreen-mcp-server .
+
+# Run the container with required environment variables
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  evergreen-mcp-server
+
+# Run with volume mount for logs
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  -v $(pwd)/logs:/app/logs \
+  evergreen-mcp-server
+```
+
 ## MCP Client Configuration
 
 ### VS Code with MCP Extension
@@ -313,6 +337,24 @@ Add to your Claude Desktop MCP configuration:
       "args": ["run_mcp_server.py"],
       "cwd": "{root}/evergreen-mcp-server",
       "env": {}
+    }
+  }
+}
+```
+
+**Using Docker:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "EVERGREEN_USER=your_username",
+        "-e", "EVERGREEN_API_KEY=your_api_key",
+        "-e", "EVERGREEN_PROJECT=your_project",
+        "evergreen-mcp-server"
+      ]
     }
   }
 }
