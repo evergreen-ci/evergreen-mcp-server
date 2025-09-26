@@ -54,7 +54,7 @@ class EvergreenGraphQLClient:
             "Content-Type": "application/json",
         }
 
-        logger.debug(f"Connecting to GraphQL endpoint: {self.endpoint}")
+        logger.debug("Connecting to GraphQL endpoint: %s", self.endpoint)
 
         # Create transport with headers directly
         transport = AIOHTTPTransport(url=self.endpoint, headers=headers)
@@ -71,7 +71,7 @@ class EvergreenGraphQLClient:
                     await self._client.transport.close()
                 logger.debug("GraphQL client closed")
             except Exception as e:
-                logger.warning(f"Error closing GraphQL client: {e}")
+                logger.warning("Error closing GraphQL client: %s", e)
             
     async def _execute_query(self, query_string: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute a GraphQL query with error handling
@@ -92,13 +92,13 @@ class EvergreenGraphQLClient:
         try:
             query = gql(query_string)
             result = await self._client.execute_async(query, variable_values=variables)
-            logger.debug(f"Query executed successfully: {len(str(result))} chars returned")
+            logger.debug("Query executed successfully: %s chars returned", len(str(result)))
             return result
         except TransportError as e:
-            logger.error(f"GraphQL transport error: {e}")
+            logger.error("GraphQL transport error: %s", e)
             raise Exception(f"Failed to execute GraphQL query: {e}")
         except Exception as e:
-            logger.error(f"GraphQL query execution error: {e}")
+            logger.error("GraphQL query execution error: %s", e)
             raise
             
     async def get_projects(self) -> List[Dict[str, Any]]:
@@ -114,7 +114,7 @@ class EvergreenGraphQLClient:
         for group in result.get('projects', []):
             projects.extend(group.get('projects', []))
             
-        logger.info(f"Retrieved {len(projects)} projects")
+        logger.info("Retrieved %s projects", len(projects))
         return projects
         
     async def get_project(self, project_id: str) -> Dict[str, Any]:
@@ -133,7 +133,7 @@ class EvergreenGraphQLClient:
         if not project:
             raise Exception(f"Project not found: {project_id}")
             
-        logger.info(f"Retrieved project details for: {project.get('displayName', project_id)}")
+        logger.info("Retrieved project details for: %s", project.get('displayName', project_id))
         return project
         
     async def get_project_settings(self, project_id: str) -> Dict[str, Any]:
@@ -152,7 +152,7 @@ class EvergreenGraphQLClient:
         if not settings:
             raise Exception(f"Project settings not found: {project_id}")
             
-        logger.info(f"Retrieved project settings for: {project_id}")
+        logger.info("Retrieved project settings for: %s", project_id)
         return settings
     
 
@@ -172,11 +172,11 @@ class EvergreenGraphQLClient:
             result = await self._execute_query(GET_USER_RECENT_PATCHES, variables)
             patches = result.get('user', {}).get('patches', {}).get('patches', [])
 
-            logger.info(f"Retrieved {len(patches)} recent patches for user {user_id}")
+            logger.info("Retrieved %s recent patches for user %s", len(patches), user_id)
             return patches
 
         except Exception as e:
-            logger.error(f"Error fetching recent patches for user {user_id}: {e}")
+            logger.error("Error fetching recent patches for user %s: %s", user_id, e)
             raise
 
     async def get_patch_failed_tasks(self, patch_id: str) -> Dict[str, Any]:
@@ -201,11 +201,11 @@ class EvergreenGraphQLClient:
             version = patch.get('versionFull', {})
             failed_count = version.get('tasks', {}).get('count', 0)
 
-            logger.info(f"Retrieved patch {patch_id} with {failed_count} failed tasks")
+            logger.info("Retrieved patch %s with %s failed tasks", patch_id, failed_count)
             return patch
 
         except Exception as e:
-            logger.error(f"Error fetching failed tasks for patch {patch_id}: {e}")
+            logger.error("Error fetching failed tasks for patch %s: %s", patch_id, e)
             raise
 
     async def get_version_with_failed_tasks(self, version_id: str) -> Dict[str, Any]:
@@ -225,7 +225,7 @@ class EvergreenGraphQLClient:
             raise Exception(f"Version not found: {version_id}")
 
         failed_count = version.get('tasks', {}).get('count', 0)
-        logger.info(f"Retrieved version {version_id} with {failed_count} failed tasks")
+        logger.info("Retrieved version %s with %s failed tasks", version_id, failed_count)
         return version
 
     async def get_task_logs(self, task_id: str, execution: int = 0) -> Dict[str, Any]:
@@ -246,7 +246,7 @@ class EvergreenGraphQLClient:
             raise Exception(f"Task not found: {task_id}")
 
         logs_count = len(task.get('taskLogs', {}).get('taskLogs', []))
-        logger.info(f"Retrieved {logs_count} log entries for task {task_id}")
+        logger.info("Retrieved %s log entries for task %s", logs_count, task_id)
         return task
 
     async def __aenter__(self):
