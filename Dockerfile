@@ -5,7 +5,7 @@ COPY . /app
 WORKDIR /app
 RUN pip install --no-cache-dir -e .
 USER evergreen
-ENTRYPOINT ["python", "-m", "src.run_mcp_server"]
+ENTRYPOINT ["evergreen-mcp-server"]
 LABEL maintainer="MongoDB"
 LABEL description="Evergreen MCP Server - A server for interacting with the Evergreen API"
 LABEL version=${VERSION}
