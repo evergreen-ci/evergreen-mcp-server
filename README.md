@@ -47,7 +47,11 @@ source .venv/bin/activate
 ### 3. Install Dependencies
 
 ```bash
+# Install the package
 pip install -e .
+
+# For development (includes testing dependencies)
+pip install -e ".[dev]"
 ```
 
 ## Configuration
@@ -251,14 +255,7 @@ evergreen-mcp-server
 python -m src.server
 ```
 
-### Method 3: Development Mode
-
-```bash
-# From the project root
-python src/server.py
-```
-
-### Method 4: Using Docker
+### Method 3: Using Docker
 
 #### Build and Run with Docker
 
@@ -333,10 +330,8 @@ Add to your Claude Desktop MCP configuration:
 {
   "mcpServers": {
     "evergreen": {
-      "command": "{root}/evergreen-mcp-server/.venv/bin/python",
-      "args": ["run_mcp_server.py"],
-      "cwd": "{root}/evergreen-mcp-server",
-      "env": {}
+      "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+      "args": ["--project-id", "your-evergreen-project-id"]
     }
   }
 }
@@ -376,25 +371,25 @@ npm install --save-dev @modelcontextprotocol/inspector
 
 ### Using Inspector with Evergreen MCP Server
 
-#### Method 1: Direct Server Command
+#### Method 1: Using Entry Point
 
 ```bash
 # Start the inspector with the Evergreen MCP server
-mcp-inspector python run_server.py
+mcp-inspector evergreen-mcp-server
 ```
 
 #### Method 2: With Project ID Configuration
 
 ```bash
 # Start with a specific project ID
-mcp-inspector python run_server.py --project-id your-evergreen-project-id
+mcp-inspector evergreen-mcp-server --project-id your-evergreen-project-id
 ```
 
-#### Method 3: Using Virtual Environment Path
+#### Method 3: Using Python Module
 
 ```bash
-# If you have the server installed in a virtual environment
-mcp-inspector /path/to/your/project/.venv/bin/evergreen-mcp-server
+# Using the Python module directly
+mcp-inspector python -m src.server
 ```
 
 ### Inspector Features for Evergreen MCP
@@ -516,6 +511,45 @@ for patch in patches:
         selected_patch = patch
 ```
 
+## Testing
+
+The project includes comprehensive tests to ensure functionality and reliability.
+
+### Running Tests
+
+```bash
+# Run all tests with pytest (recommended)
+python -m pytest tests/ -v
+
+# Run specific test files
+python -m pytest tests/test_basic.py -v
+python -m pytest tests/test_mcp_client.py -v
+
+# Run tests with unittest
+python -m unittest tests.test_basic -v
+
+# Run integration test directly
+python tests/test_mcp_client.py
+```
+
+### Test Structure
+
+- **`tests/test_basic.py`**: Unit tests for individual components
+  - Tool definitions and handlers validation
+  - Module import verification
+  - Component functionality testing
+
+- **`tests/test_mcp_client.py`**: Full integration test
+  - End-to-end MCP protocol testing
+  - Real Evergreen API connectivity
+  - Tool execution and response validation
+
+### Test Requirements
+
+- **Unit Tests**: No external dependencies, run offline
+- **Integration Tests**: Require valid `~/.evergreen.yml` configuration
+- **Development Dependencies**: Install with `pip install -e ".[dev]"`
+
 ## Development
 
 ### Project Structure
@@ -523,19 +557,19 @@ for patch in patches:
 ```
 evergreen-mcp-server/
 ├── src/
+│   ├── __init__.py                  # Package initialization
 │   ├── server.py                    # Main MCP server implementation
-│   ├── run_mcp_server.py            # Server entry point with logging setup
 │   ├── mcp_tools.py                 # MCP tool definitions and handlers
 │   ├── evergreen_graphql_client.py  # GraphQL client for Evergreen API
 │   ├── failed_jobs_tools.py         # Core logic for patch and failed jobs analysis
 │   └── evergreen_queries.py         # GraphQL query definitions
 ├── tests/
+│   ├── test_basic.py                # Unit tests for components
 │   └── test_mcp_client.py           # MCP integration tests (full end-to-end)
 ├── scripts/
 │   └── fetch_graphql_schema.sh      # Script to update GraphQL schema
-├── merged-schema.graphql            # Evergreen GraphQL schema
-├── run_server.py                    # Convenience wrapper to start server
-├── pyproject.toml                   # Project configuration
+├── Dockerfile                       # Docker container configuration
+├── pyproject.toml                   # Project configuration and dependencies
 └── README.md                        # This file
 ```
 
@@ -547,11 +581,17 @@ evergreen-mcp-server/
 
 ### Dependencies
 
+**Runtime Dependencies:**
 - `mcp`: Model Context Protocol implementation
 - `aiohttp`: Async HTTP client for API calls
+- `gql[aiohttp]`: GraphQL client with async HTTP transport
 - `pyyaml`: YAML configuration file parsing
 - `pydantic`: Data validation and serialization
-- Generated Evergreen API client
+- `python-dateutil`: Date/time parsing utilities
+
+**Development Dependencies:**
+- `pytest`: Testing framework
+- `pytest-asyncio`: Async test support
 
 ### Updating GraphQL Schema
 
