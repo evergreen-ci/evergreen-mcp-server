@@ -20,8 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import mcp.client.stdio
-from mcp.client.session import ClientSession
 import pytest
+from mcp.client.session import ClientSession
 
 
 @pytest.mark.asyncio
@@ -36,16 +36,14 @@ async def test_mcp_server():
         "list_patches": False,
         "get_failed_jobs": False,
         "get_task_logs": False,
-        "error_handling": False
+        "error_handling": False,
     }
-    
+
     # Start the server process using the installed entry point
     server_params = mcp.client.stdio.StdioServerParameters(
-        command="evergreen-mcp-server",
-        args=[],
-        env=None
+        command="evergreen-mcp-server", args=[], env=None
     )
-    
+
     async with mcp.client.stdio.stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             # Initialize the session
@@ -59,60 +57,66 @@ async def test_mcp_server():
             for tool in tools_result.tools:
                 print(f"   - {tool.name}: {tool.description}")
             test_results["tools_listed"] = len(tools_result.tools) > 0
-            
+
             # Test 1: List user recent patches
             print(f"\nTest 1: list_user_recent_patches")
             try:
-                result = await session.call_tool("list_user_recent_patches", {"limit": 3})
+                result = await session.call_tool(
+                    "list_user_recent_patches", {"limit": 3}
+                )
                 print("Tool call successful")
-                
+
                 # Parse the response
                 if result.content and len(result.content) > 0:
                     response_text = result.content[0].text
                     response_data = json.loads(response_text)
-                    
+
                     if "error" in response_data:
                         print(f" Tool returned error: {response_data['error']}")
                     else:
-                        patches = response_data.get('patches', [])
+                        patches = response_data.get("patches", [])
                         print(f"   Retrieved {len(patches)} patches")
                         for i, patch in enumerate(patches[:2]):  # Show first 2
-                            print(f"   {i+1}. {patch['githash'][:8]} - {patch['status']}")
+                            print(
+                                f"   {i+1}. {patch['githash'][:8]} - {patch['status']}"
+                            )
                         test_results["list_patches"] = True
                 else:
                     print(" No content in response")
-                    
+
             except Exception as e:
                 print(f" Tool call failed: {e}")
-            
+
             # Test 2: Get patch failed jobs (if we have patches)
             print(f"\nTest 2: get_patch_failed_jobs")
             failed_task_id = None
             try:
                 # First get a patch ID
-                patches_result = await session.call_tool("list_user_recent_patches", {"limit": 1})
+                patches_result = await session.call_tool(
+                    "list_user_recent_patches", {"limit": 1}
+                )
                 if patches_result.content and len(patches_result.content) > 0:
                     patches_data = json.loads(patches_result.content[0].text)
-                    if patches_data.get('patches'):
-                        patch_id = patches_data['patches'][0]['patch_id']
+                    if patches_data.get("patches"):
+                        patch_id = patches_data["patches"][0]["patch_id"]
                         print(f"   Testing with patch: {patch_id}")
 
-                        result = await session.call_tool("get_patch_failed_jobs", {
-                            "patch_id": patch_id,
-                            "max_results": 5
-                        })
+                        result = await session.call_tool(
+                            "get_patch_failed_jobs",
+                            {"patch_id": patch_id, "max_results": 5},
+                        )
 
                         if result.content and len(result.content) > 0:
                             response_data = json.loads(result.content[0].text)
                             if "error" in response_data:
                                 print(f"Tool returned error: {response_data['error']}")
                             else:
-                                failed_tasks = response_data.get('failed_tasks', [])
+                                failed_tasks = response_data.get("failed_tasks", [])
                                 print(f"Found {len(failed_tasks)} failed tasks")
                                 test_results["get_failed_jobs"] = True
                                 # Store a task ID for the next test
                                 if failed_tasks:
-                                    failed_task_id = failed_tasks[0]['task_id']
+                                    failed_task_id = failed_tasks[0]["task_id"]
                         else:
                             print("No content in response")
                     else:
@@ -122,30 +126,39 @@ async def test_mcp_server():
 
             except Exception as e:
                 print(f"Tool call failed: {e}")
-            
+
             # Test 3: Get task logs (if we have a failed task)
             print(f"\nTest 3: get_task_logs")
             if failed_task_id:
                 try:
-                    result = await session.call_tool("get_task_logs", {
-                        "task_id": failed_task_id,
-                        "max_lines": 10,
-                        "filter_errors": True
-                    })
+                    result = await session.call_tool(
+                        "get_task_logs",
+                        {
+                            "task_id": failed_task_id,
+                            "max_lines": 10,
+                            "filter_errors": True,
+                        },
+                    )
 
                     if result.content and len(result.content) > 0:
                         response_data = json.loads(result.content[0].text)
                         if "error" in response_data:
-                            error_msg = response_data['error']
+                            error_msg = response_data["error"]
                             # Display tasks don't have logs - this is expected behavior
                             if "display task" in error_msg.lower():
-                                print(f"Task is a display task (no logs available) - this is expected")
-                                test_results["get_task_logs"] = True  # This is actually correct behavior
+                                print(
+                                    f"Task is a display task (no logs available) - this is expected"
+                                )
+                                test_results["get_task_logs"] = (
+                                    True  # This is actually correct behavior
+                                )
                             else:
                                 print(f"Tool returned unexpected error: {error_msg}")
                         else:
-                            logs = response_data.get('logs', [])
-                            print(f"Retrieved {len(logs)} log entries for task {failed_task_id}")
+                            logs = response_data.get("logs", [])
+                            print(
+                                f"Retrieved {len(logs)} log entries for task {failed_task_id}"
+                            )
                             test_results["get_task_logs"] = True
                     else:
                         print("No content in response")
@@ -198,5 +211,6 @@ async def test_mcp_server():
 
 if __name__ == "__main__":
     import sys
+
     success = asyncio.run(test_mcp_server())
     sys.exit(0 if success else 1)

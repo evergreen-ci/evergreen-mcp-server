@@ -1,22 +1,22 @@
 """MCP server for Evergreen"""
 
-from asyncio import run
-from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator, Sequence
-import os.path
-import sys
-import logging
 import argparse
 import json
+import logging
+import os.path
+import sys
+from asyncio import run
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 
 import mcp.server.stdio
 import mcp.types as types
+import yaml
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
-import yaml
 
 from .evergreen_graphql_client import EvergreenGraphQLClient
-from .mcp_tools import get_tool_definitions, TOOL_HANDLERS
+from .mcp_tools import TOOL_HANDLERS, get_tool_definitions
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -36,8 +36,7 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
         evergreen_config = yaml.safe_load(f)
 
     client = EvergreenGraphQLClient(
-        user=evergreen_config["user"],
-        api_key=evergreen_config["api_key"]
+        user=evergreen_config["user"], api_key=evergreen_config["api_key"]
     )
 
     # Store user ID for patch queries
@@ -49,7 +48,9 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
             logger.info(f"Default project ID configured: {DEFAULT_PROJECT_ID}")
         yield {"evergreen_client": client}
 
+
 server: Server = Server("evergreen-mcp-server", lifespan=_server_lifespan)
+
 
 @server.list_resources()
 async def _handle_project_resources() -> Sequence[types.Resource]:
@@ -60,11 +61,16 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
         projects = await client.get_projects()
         logger.info(f"Retrieved {len(projects)} projects for resource listing")
 
-        return list(map(lambda project: types.Resource(
-            uri=f"evergreen://project/{project['id']}",
-            name=project['displayName'],
-            mimeType="application/json",
-        ), projects))
+        return list(
+            map(
+                lambda project: types.Resource(
+                    uri=f"evergreen://project/{project['id']}",
+                    name=project["displayName"],
+                    mimeType="application/json",
+                ),
+                projects,
+            )
+        )
     except Exception as e:
         logger.error(f"Failed to retrieve projects: {e}")
         # Return empty list on error to prevent server crash
@@ -96,12 +102,11 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
         logger.info(f"   Available tools: {list(TOOL_HANDLERS.keys())}")
         error_response = {
             "error": f"Unknown tool: {name}",
-            "available_tools": list(TOOL_HANDLERS.keys())
+            "available_tools": list(TOOL_HANDLERS.keys()),
         }
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(error_response, indent=2)
-        )]
+        return [
+            types.TextContent(type="text", text=json.dumps(error_response, indent=2))
+        ]
 
     # Call the appropriate handler
     try:
@@ -115,16 +120,16 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
     except Exception as e:
         logger.error(f"Tool handler failed for {name}: {e}")
         import traceback
+
         logger.debug(f"Full traceback: {traceback.format_exc()}")
         error_response = {
             "error": f"Tool execution failed: {str(e)}",
-            "tool": name
+            "tool": name,
             # Removed arguments to avoid logging potentially sensitive data
         }
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(error_response, indent=2)
-        )]
+        return [
+            types.TextContent(type="text", text=json.dumps(error_response, indent=2))
+        ]
 
 
 async def _main() -> int:
@@ -147,7 +152,6 @@ async def _main() -> int:
     return 0
 
 
-
 def main() -> None:
     """Main entry point for the MCP server"""
     global DEFAULT_PROJECT_ID
@@ -157,9 +161,7 @@ def main() -> None:
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Evergreen MCP Server")
     parser.add_argument(
-        "--project-id",
-        type=str,
-        help="Default Evergreen project identifier"
+        "--project-id", type=str, help="Default Evergreen project identifier"
     )
 
     args = parser.parse_args()

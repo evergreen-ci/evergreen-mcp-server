@@ -4,17 +4,22 @@ This module provides a GraphQL client for interacting with the Evergreen CI/CD p
 It handles authentication, connection management, and query execution.
 """
 
-from typing import List, Dict, Any, Optional
 import logging
+from typing import Any, Dict, List, Optional
+
 import aiohttp
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
 from .evergreen_queries import (
-    GET_PROJECTS, GET_PROJECT, GET_PROJECT_SETTINGS,
-    GET_USER_RECENT_PATCHES, GET_PATCH_FAILED_TASKS, GET_TASK_LOGS,
-    GET_VERSION_WITH_FAILED_TASKS
+    GET_PATCH_FAILED_TASKS,
+    GET_PROJECT,
+    GET_PROJECT_SETTINGS,
+    GET_PROJECTS,
+    GET_TASK_LOGS,
+    GET_USER_RECENT_PATCHES,
+    GET_VERSION_WITH_FAILED_TASKS,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,14 +27,14 @@ logger = logging.getLogger(__name__)
 
 class EvergreenGraphQLClient:
     """GraphQL client for Evergreen API
-    
+
     This client provides async methods for querying the Evergreen GraphQL API.
     It handles authentication via API keys and manages the connection lifecycle.
     """
-    
+
     def __init__(self, user: str, api_key: str, endpoint: str = None):
         """Initialize the GraphQL client
-        
+
         Args:
             user: Evergreen username
             api_key: Evergreen API key
@@ -39,7 +44,7 @@ class EvergreenGraphQLClient:
         self.api_key = api_key
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
-        
+
     async def connect(self):
         """Initialize GraphQL client connection"""
         headers = {
@@ -55,38 +60,42 @@ class EvergreenGraphQLClient:
         self._client = Client(transport=transport)
 
         logger.info("GraphQL client connected successfully")
-        
+
     async def close(self):
         """Close client connections"""
         if self._client:
             try:
                 # Close the transport if it has a close method
-                if hasattr(self._client.transport, 'close'):
+                if hasattr(self._client.transport, "close"):
                     await self._client.transport.close()
                 logger.debug("GraphQL client closed")
             except Exception as e:
                 logger.warning("Error closing GraphQL client: %s", e)
-            
-    async def _execute_query(self, query_string: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+
+    async def _execute_query(
+        self, query_string: str, variables: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Execute a GraphQL query with error handling
-        
+
         Args:
             query_string: GraphQL query string
             variables: Query variables
-            
+
         Returns:
             Query result data
-            
+
         Raises:
             Exception: If query execution fails
         """
         if not self._client:
             raise RuntimeError("Client not connected. Call connect() first.")
-            
+
         try:
             query = gql(query_string)
             result = await self._client.execute_async(query, variable_values=variables)
-            logger.debug("Query executed successfully: %s chars returned", len(str(result)))
+            logger.debug(
+                "Query executed successfully: %s chars returned", len(str(result))
+            )
             return result
         except TransportError as e:
             logger.error("GraphQL transport error: %s", e)
@@ -94,63 +103,66 @@ class EvergreenGraphQLClient:
         except Exception as e:
             logger.error("GraphQL query execution error: %s", e)
             raise
-            
+
     async def get_projects(self) -> List[Dict[str, Any]]:
         """Get all projects from Evergreen
-        
+
         Returns:
             List of project dictionaries with flattened structure
         """
         result = await self._execute_query(GET_PROJECTS)
-        
+
         # Flatten grouped projects into simple list
         projects = []
-        for group in result.get('projects', []):
-            projects.extend(group.get('projects', []))
-            
+        for group in result.get("projects", []):
+            projects.extend(group.get("projects", []))
+
         logger.info("Retrieved %s projects", len(projects))
         return projects
-        
+
     async def get_project(self, project_id: str) -> Dict[str, Any]:
         """Get specific project by ID
-        
+
         Args:
             project_id: Project identifier
-            
+
         Returns:
             Project details dictionary
         """
         variables = {"projectId": project_id}
         result = await self._execute_query(GET_PROJECT, variables)
-        
-        project = result.get('project')
+
+        project = result.get("project")
         if not project:
             raise Exception(f"Project not found: {project_id}")
-            
-        logger.info("Retrieved project details for: %s", project.get('displayName', project_id))
+
+        logger.info(
+            "Retrieved project details for: %s", project.get("displayName", project_id)
+        )
         return project
-        
+
     async def get_project_settings(self, project_id: str) -> Dict[str, Any]:
         """Get project settings and configuration
-        
+
         Args:
             project_id: Project identifier
-            
+
         Returns:
             Project settings dictionary
         """
         variables = {"projectId": project_id}
         result = await self._execute_query(GET_PROJECT_SETTINGS, variables)
-        
-        settings = result.get('projectSettings')
+
+        settings = result.get("projectSettings")
         if not settings:
             raise Exception(f"Project settings not found: {project_id}")
-            
+
         logger.info("Retrieved project settings for: %s", project_id)
         return settings
-    
 
-    async def get_user_recent_patches(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def get_user_recent_patches(
+        self, user_id: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         """Get recent patches for the authenticated user
 
         Args:
@@ -160,13 +172,18 @@ class EvergreenGraphQLClient:
         Returns:
             List of patch dictionaries
         """
-        variables = {"userId": user_id, "limit": min(limit, 50)}  # Cap at 50 for performance
+        variables = {
+            "userId": user_id,
+            "limit": min(limit, 50),
+        }  # Cap at 50 for performance
 
         try:
             result = await self._execute_query(GET_USER_RECENT_PATCHES, variables)
-            patches = result.get('user', {}).get('patches', {}).get('patches', [])
+            patches = result.get("user", {}).get("patches", {}).get("patches", [])
 
-            logger.info("Retrieved %s recent patches for user %s", len(patches), user_id)
+            logger.info(
+                "Retrieved %s recent patches for user %s", len(patches), user_id
+            )
             return patches
 
         except Exception as e:
@@ -186,16 +203,18 @@ class EvergreenGraphQLClient:
 
         try:
             result = await self._execute_query(GET_PATCH_FAILED_TASKS, variables)
-            patch = result.get('patch')
+            patch = result.get("patch")
 
             if not patch:
                 raise Exception(f"Patch not found: {patch_id}")
 
             # Count failed tasks
-            version = patch.get('versionFull', {})
-            failed_count = version.get('tasks', {}).get('count', 0)
+            version = patch.get("versionFull", {})
+            failed_count = version.get("tasks", {}).get("count", 0)
 
-            logger.info("Retrieved patch %s with %s failed tasks", patch_id, failed_count)
+            logger.info(
+                "Retrieved patch %s with %s failed tasks", patch_id, failed_count
+            )
             return patch
 
         except Exception as e:
@@ -214,12 +233,14 @@ class EvergreenGraphQLClient:
         variables = {"versionId": version_id}
         result = await self._execute_query(GET_VERSION_WITH_FAILED_TASKS, variables)
 
-        version = result.get('version')
+        version = result.get("version")
         if not version:
             raise Exception(f"Version not found: {version_id}")
 
-        failed_count = version.get('tasks', {}).get('count', 0)
-        logger.info("Retrieved version %s with %s failed tasks", version_id, failed_count)
+        failed_count = version.get("tasks", {}).get("count", 0)
+        logger.info(
+            "Retrieved version %s with %s failed tasks", version_id, failed_count
+        )
         return version
 
     async def get_task_logs(self, task_id: str, execution: int = 0) -> Dict[str, Any]:
@@ -235,11 +256,11 @@ class EvergreenGraphQLClient:
         variables = {"taskId": task_id, "execution": execution}
         result = await self._execute_query(GET_TASK_LOGS, variables)
 
-        task = result.get('task')
+        task = result.get("task")
         if not task:
             raise Exception(f"Task not found: {task_id}")
 
-        logs_count = len(task.get('taskLogs', {}).get('taskLogs', []))
+        logs_count = len(task.get("taskLogs", {}).get("taskLogs", []))
         logger.info("Retrieved %s log entries for task %s", logs_count, task_id)
         return task
 
