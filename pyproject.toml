@@ -2,6 +2,10 @@
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
 [project]
 name = "evergreen-mcp-server"
 version = "0.1.0"
@@ -23,7 +27,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0"
 ]
 
 [project.scripts]
-evergreen-mcp-server = "src.run_mcp_server:main"
+evergreen-mcp-server = "src.server:main"

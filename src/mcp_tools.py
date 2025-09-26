@@ -113,7 +113,7 @@ async def handle_list_user_recent_patches(
             text=json.dumps(result, indent=2)
         )]
     except Exception as e:
-        logger.error(f"Failed to fetch user patches: {e}")
+        logger.error("Failed to fetch user patches: %s", e)
         error_response = {
             "error": str(e),
             "tool": "list_user_recent_patches",
@@ -142,7 +142,7 @@ async def handle_get_patch_failed_jobs(
             text=json.dumps(result, indent=2)
         )]
     except Exception as e:
-        logger.error(f"Failed to fetch patch failed jobs: {e}")
+        logger.error("Failed to fetch patch failed jobs: %s", e)
         error_response = {
             "error": str(e),
             "tool": "get_patch_failed_jobs",
@@ -166,7 +166,7 @@ async def handle_get_task_logs(
             text=json.dumps(result, indent=2)
         )]
     except Exception as e:
-        logger.error(f"Failed to fetch task logs: {e}")
+        logger.error("Failed to fetch task logs: %s", e)
         error_response = {
             "error": str(e),
             "tool": "get_task_logs",

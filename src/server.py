@@ -15,13 +15,8 @@ from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 import yaml
 
-try:
-    from .evergreen_graphql_client import EvergreenGraphQLClient
-    from .mcp_tools import get_tool_definitions, TOOL_HANDLERS
-except ImportError:
-    # For standalone usage
-    from evergreen_graphql_client import EvergreenGraphQLClient
-    from mcp_tools import get_tool_definitions, TOOL_HANDLERS
+from .evergreen_graphql_client import EvergreenGraphQLClient
+from .mcp_tools import get_tool_definitions, TOOL_HANDLERS
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

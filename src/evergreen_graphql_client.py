@@ -11,17 +11,11 @@ from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
-try:
-    from .evergreen_queries import (
-        GET_PROJECTS, GET_PROJECT, GET_PROJECT_SETTINGS,
-        GET_USER_RECENT_PATCHES, GET_PATCH_FAILED_TASKS, GET_TASK_LOGS
-    )
-except ImportError:
-    # For standalone usage
-    from evergreen_queries import (
-        GET_PROJECTS, GET_PROJECT, GET_PROJECT_SETTINGS,
-        GET_USER_RECENT_PATCHES, GET_PATCH_FAILED_TASKS, GET_TASK_LOGS
-    )
+from .evergreen_queries import (
+    GET_PROJECTS, GET_PROJECT, GET_PROJECT_SETTINGS,
+    GET_USER_RECENT_PATCHES, GET_PATCH_FAILED_TASKS, GET_TASK_LOGS,
+    GET_VERSION_WITH_FAILED_TASKS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -257,3 +251,4 @@ class EvergreenGraphQLClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
         await self.close()
+        return None

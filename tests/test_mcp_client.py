@@ -21,8 +21,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import mcp.client.stdio
 from mcp.client.session import ClientSession
+import pytest
 
 
+@pytest.mark.asyncio
 async def test_mcp_server():
     """Test the MCP server by connecting and calling tools"""
     print("Testing Evergreen MCP Server - Full Integration Test")
@@ -37,10 +39,10 @@ async def test_mcp_server():
         "error_handling": False
     }
     
-    # Start the server process
+    # Start the server process using the installed entry point
     server_params = mcp.client.stdio.StdioServerParameters(
-        command="python",
-        args=[str(Path(__file__).parent.parent / "run_server.py")],
+        command="evergreen-mcp-server",
+        args=[],
         env=None
     )
     
