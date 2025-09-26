@@ -249,13 +249,7 @@ source .venv/bin/activate
 evergreen-mcp-server
 ```
 
-### Method 2: Using Python Module
-
-```bash
-python -m src.server
-```
-
-### Method 3: Using Docker
+### Method : Using Docker
 
 #### Build and Run with Docker
 
@@ -285,19 +279,6 @@ docker run --rm -it \
 
 Add the following to your MCP client configuration (e.g., `.vscode/mcp.json`):
 
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": []
-        }
-    }
-}
-```
-
-**With Project ID Configuration:**
 ```json
 {
     "servers": {
@@ -549,6 +530,28 @@ python tests/test_mcp_client.py
 - **Unit Tests**: No external dependencies, run offline
 - **Integration Tests**: Require valid `~/.evergreen.yml` configuration
 - **Development Dependencies**: Install with `pip install -e ".[dev]"`
+
+### Code Quality
+
+The project uses automated code formatting and linting:
+
+```bash
+# Format code
+black src/ tests/
+
+# Sort imports
+isort src/ tests/
+
+# Check for syntax errors and style issues
+flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+```
+
+### Continuous Integration
+
+GitHub Actions workflows automatically:
+- **Test Workflow**: Tests code compilation, imports, and unit tests across Python 3.11-3.13
+- **Lint Workflow**: Validates code formatting, import sorting, and style guidelines
+- **PR Checks**: All workflows run on pull requests to ensure code quality
 
 ## Development
 
