@@ -44,6 +44,7 @@ class EvergreenGraphQLClient:
         self.api_key = api_key
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._session = None
+        self._session_context = None
         self._client = None
 
     async def connect(self):
@@ -60,8 +61,8 @@ class EvergreenGraphQLClient:
         transport = AIOHTTPTransport(url=self.endpoint, headers=headers)
         self._client = Client(transport=transport)
 
-        # Connect and get session
-        self._session = await self._client.connect_async().__aenter__()
+        # Connect and get session - connect_async() returns the session directly
+        self._session = await self._client.connect_async()
 
         logger.info("GraphQL client connected successfully")
 
@@ -69,11 +70,12 @@ class EvergreenGraphQLClient:
         """Close client connections"""
         if self._session:
             try:
-                await self._session.__aexit__(None, None, None)
+                await self._session.close()
                 logger.debug("GraphQL session closed")
             except Exception:
                 logger.warning("Error closing GraphQL session", exc_info=True)
         self._session = None
+        self._session_context = None
         self._client = None
 
     async def _execute_query(
