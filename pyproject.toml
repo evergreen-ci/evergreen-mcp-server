@@ -3,12 +3,12 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
+where = ["src"]
+include = ["evergreen_mcp*"]
 
 [tool.black]
 line-length = 88
-target-version = ['py311', 'py312', 'py313']
+target-version = ['py313']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -28,7 +28,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["src"]
+known_first_party = ["evergreen_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
@@ -59,4 +59,4 @@ dev = [
 ]
 
 [project.scripts]
-evergreen-mcp-server = "src.server:main"
+evergreen-mcp-server = "evergreen_mcp.server:main"

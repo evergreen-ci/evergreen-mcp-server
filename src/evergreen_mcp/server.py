@@ -45,7 +45,7 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
     async with client:
         logger.info("Evergreen GraphQL client initialized")
         if DEFAULT_PROJECT_ID:
-            logger.info(f"Default project ID configured: {DEFAULT_PROJECT_ID}")
+            logger.info("Default project ID configured: %s", DEFAULT_PROJECT_ID)
         yield {"evergreen_client": client}
 
 
@@ -59,7 +59,7 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
 
     try:
         projects = await client.get_projects()
-        logger.info(f"Retrieved {len(projects)} projects for resource listing")
+        logger.info("Retrieved %s projects for resource listing", len(projects))
 
         return list(
             map(
@@ -71,8 +71,8 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
                 projects,
             )
         )
-    except Exception as e:
-        logger.error(f"Failed to retrieve projects: {e}")
+    except Exception:
+        logger.error("Failed to retrieve projects", exc_info=True)
         # Return empty list on error to prevent server crash
         return []
 
@@ -81,25 +81,25 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
 async def _handle_list_tools() -> Sequence[types.Tool]:
     """List available MCP tools"""
     tools = get_tool_definitions()
-    logger.info(f"Listing {len(tools)} available tools:")
+    logger.info("Listing %s available tools:", len(tools))
     for tool in tools:
-        logger.info(f"   - {tool.name}: {tool.description}")
+        logger.info("   - %s: %s", tool.name, tool.description)
     return tools
 
 
 @server.call_tool()
 async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextContent]:
     """Handle MCP tool calls by delegating to appropriate handlers"""
-    logger.info(f"Tool call received: {name}")
-    logger.info(f"   Arguments: {json.dumps(arguments, indent=2)}")
+    logger.info("Tool call received: %s", name)
+    logger.info("   Arguments: %s", json.dumps(arguments, indent=2))
 
     client = server.request_context.lifespan_context["evergreen_client"]
 
     # Get the handler for this tool
     handler = TOOL_HANDLERS.get(name)
     if not handler:
-        logger.error(f"Unknown tool requested: {name}")
-        logger.info(f"   Available tools: {list(TOOL_HANDLERS.keys())}")
+        logger.error("Unknown tool requested: %s", name)
+        logger.info("   Available tools: %s", list(TOOL_HANDLERS.keys()))
         error_response = {
             "error": f"Unknown tool: {name}",
             "available_tools": list(TOOL_HANDLERS.keys()),
@@ -110,18 +110,15 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
 
     # Call the appropriate handler
     try:
-        logger.debug(f"Executing tool: {name}")
+        logger.debug("Executing tool: %s", name)
         if name == "list_user_recent_patches":
             result = await handler(arguments, client, USER_ID)
         else:
             result = await handler(arguments, client)
-        logger.debug(f"Tool {name} completed successfully")
+        logger.debug("Tool %s completed successfully", name)
         return result
     except Exception as e:
-        logger.error(f"Tool handler failed for {name}: {e}")
-        import traceback
-
-        logger.debug(f"Full traceback: {traceback.format_exc()}")
+        logger.error("Tool handler failed for %s", name, exc_info=True)
         error_response = {
             "error": f"Tool execution failed: {str(e)}",
             "tool": name,
@@ -169,11 +166,11 @@ def main() -> None:
     # Set global project ID if provided
     if args.project_id:
         DEFAULT_PROJECT_ID = args.project_id
-        logger.info(f"Using default project ID: {DEFAULT_PROJECT_ID}")
+        logger.info("Using default project ID: %s", DEFAULT_PROJECT_ID)
 
     logger.info("Initializing MCP server...")
     try:
         sys.exit(run(_main()))
-    except Exception as e:
-        logger.error(f"Server failed to start: {e}")
+    except Exception:
+        logger.error("Server failed to start", exc_info=True)
         sys.exit(1)

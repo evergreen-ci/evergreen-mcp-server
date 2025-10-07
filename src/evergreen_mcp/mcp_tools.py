@@ -11,19 +11,11 @@ from typing import Any, Dict
 
 import mcp.types as types
 
-try:
-    from .failed_jobs_tools import (
-        fetch_patch_failed_jobs,
-        fetch_task_logs,
-        fetch_user_recent_patches,
-    )
-except ImportError:
-    # For standalone usage
-    from failed_jobs_tools import (
-        fetch_patch_failed_jobs,
-        fetch_task_logs,
-        fetch_user_recent_patches,
-    )
+from .failed_jobs_tools import (
+    fetch_patch_failed_jobs,
+    fetch_task_logs,
+    fetch_user_recent_patches,
+)
 
 logger = logging.getLogger(__name__)
 

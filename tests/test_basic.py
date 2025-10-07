@@ -5,14 +5,9 @@ Basic unit tests for Evergreen MCP server components
 These tests validate individual components without requiring Evergreen credentials.
 """
 
-import sys
 import unittest
-from pathlib import Path
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from mcp_tools import TOOL_HANDLERS, get_tool_definitions
+from evergreen_mcp.mcp_tools import TOOL_HANDLERS, get_tool_definitions
 
 
 class TestMCPTools(unittest.TestCase):
@@ -70,7 +65,7 @@ class TestImports(unittest.TestCase):
     def test_import_server(self):
         """Test that server module can be imported"""
         try:
-            from src import server
+            from evergreen_mcp import server
 
             self.assertTrue(hasattr(server, "main"), "Server should have main function")
         except ImportError as e:
@@ -79,7 +74,7 @@ class TestImports(unittest.TestCase):
     def test_import_graphql_client(self):
         """Test that GraphQL client can be imported"""
         try:
-            from src.evergreen_graphql_client import EvergreenGraphQLClient
+            from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 
             self.assertIsNotNone(
                 EvergreenGraphQLClient, "EvergreenGraphQLClient should be importable"
@@ -90,7 +85,7 @@ class TestImports(unittest.TestCase):
     def test_import_queries(self):
         """Test that queries module can be imported"""
         try:
-            from src import evergreen_queries
+            from evergreen_mcp import evergreen_queries
 
             # Check that some expected queries exist
             expected_queries = [

@@ -13,11 +13,6 @@ Run with: python tests/test_mcp_client.py
 
 import asyncio
 import json
-import sys
-from pathlib import Path
-
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import mcp.client.stdio
 import pytest
