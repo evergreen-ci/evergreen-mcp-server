@@ -43,11 +43,10 @@ class EvergreenGraphQLClient:
         self.user = user
         self.api_key = api_key
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
-        self._session = None
         self._client = None
 
     async def connect(self):
-        """Initialize GraphQL client connection and session"""
+        """Initialize GraphQL client connection"""
         headers = {
             "Api-User": self.user,
             "Api-Key": self.api_key,
@@ -60,20 +59,18 @@ class EvergreenGraphQLClient:
         transport = AIOHTTPTransport(url=self.endpoint, headers=headers)
         self._client = Client(transport=transport)
 
-        # Connect and get session - connect_async() returns the session directly
-        self._session = await self._client.connect_async()
-
         logger.info("GraphQL client connected successfully")
 
     async def close(self):
         """Close client connections"""
-        if self._session:
+        if self._client:
             try:
-                await self._session.close()
-                logger.debug("GraphQL session closed")
+                # Close the transport if it has a close method
+                if hasattr(self._client.transport, "close"):
+                    await self._client.transport.close()
+                logger.debug("GraphQL client closed")
             except Exception:
-                logger.warning("Error closing GraphQL session", exc_info=True)
-        self._session = None
+                logger.warning("Error closing GraphQL client", exc_info=True)
         self._client = None
 
     async def _execute_query(
@@ -91,12 +88,12 @@ class EvergreenGraphQLClient:
         Raises:
             Exception: If query execution fails
         """
-        if not self._session:
+        if not self._client:
             raise RuntimeError("Client not connected. Call connect() first.")
 
         try:
             query = gql(query_string)
-            result = await self._session.execute(query, variable_values=variables)
+            result = await self._client.execute_async(query, variable_values=variables)
             logger.debug(
                 "Query executed successfully: %s chars returned", len(str(result))
             )
