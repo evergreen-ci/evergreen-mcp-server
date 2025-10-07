@@ -44,7 +44,6 @@ class EvergreenGraphQLClient:
         self.api_key = api_key
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._session = None
-        self._session_context = None
         self._client = None
 
     async def connect(self):
@@ -75,7 +74,6 @@ class EvergreenGraphQLClient:
             except Exception:
                 logger.warning("Error closing GraphQL session", exc_info=True)
         self._session = None
-        self._session_context = None
         self._client = None
 
     async def _execute_query(
@@ -277,5 +275,6 @@ class EvergreenGraphQLClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
+        _ = exc_type, exc_val, exc_tb  # Unused but required by protocol
         await self.close()
         return None
