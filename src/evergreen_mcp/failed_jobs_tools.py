@@ -179,7 +179,7 @@ async def fetch_patch_failed_jobs(
             "summary": summary,
         }
 
-    except Exception:
+    except Exception as e:
         logger.error("Error fetching failed jobs for patch %s", patch_id, exc_info=True)
         return {
             "error": str(e),
