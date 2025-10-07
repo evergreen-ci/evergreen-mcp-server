@@ -1,3 +1,0 @@
-#!/usr/bin/env zsh
-
-openapi-generator-cli generate -i 'https://mciuploads.s3.amazonaws.com/evergreen/latest/swagger.json' -g python -c openapi-generator-config.yaml -o src/
