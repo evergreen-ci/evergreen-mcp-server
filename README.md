@@ -1,5 +1,7 @@
 # Evergreen MCP Server
 
+> NOTE: Alpha release. For any issues please create new github issue. 
+
 A Model Context Protocol (MCP) server that provides access to the Evergreen CI/CD platform API. 
 This server enables AI assistants and other MCP clients to interact with Evergreen projects, builds, tasks, and other CI/CD resources.
 
