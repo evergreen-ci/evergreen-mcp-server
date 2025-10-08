@@ -14,7 +14,7 @@ on:
         type: boolean
 
 env:
-  # TODO: Replace once clarified 
+  # Using GitHub Container Registry for public Docker images
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
