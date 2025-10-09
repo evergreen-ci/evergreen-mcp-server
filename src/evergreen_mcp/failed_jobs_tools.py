@@ -25,7 +25,7 @@ async def fetch_user_recent_patches(
         Dictionary containing user's recent patches
     """
     try:
-        logger.info(f"Fetching {limit} recent patches for user {user_id}")
+        logger.info("Fetching %s recent patches for user %s", limit, user_id)
 
         # Get user's recent patches
         patches = await client.get_user_recent_patches(user_id, limit)
@@ -52,7 +52,7 @@ async def fetch_user_recent_patches(
             }
             processed_patches.append(patch_info)
 
-        logger.info(f"Successfully processed {len(processed_patches)} patches")
+        logger.info("Successfully processed %s patches", len(processed_patches))
 
         return {
             "user_id": user_id,
@@ -61,7 +61,7 @@ async def fetch_user_recent_patches(
         }
 
     except Exception as e:
-        logger.error(f"Error fetching user patches: {e}")
+        logger.error("Error fetching user patches", exc_info=True)
         return {"error": str(e), "user_id": user_id, "patches": [], "total_patches": 0}
 
 
@@ -79,7 +79,7 @@ async def fetch_patch_failed_jobs(
         Dictionary containing patch info and failed jobs data
     """
     try:
-        logger.info(f"Fetching failed jobs for patch {patch_id}")
+        logger.info("Fetching failed jobs for patch %s", patch_id)
 
         # Get patch with failed tasks
         patch = await client.get_patch_failed_tasks(patch_id)
@@ -167,7 +167,9 @@ async def fetch_patch_failed_jobs(
         }
 
         logger.info(
-            f"Successfully processed {len(processed_tasks)} failed tasks for patch {patch_id}"
+            "Successfully processed %s failed tasks for patch %s",
+            len(processed_tasks),
+            patch_id,
         )
 
         return {
@@ -178,7 +180,7 @@ async def fetch_patch_failed_jobs(
         }
 
     except Exception as e:
-        logger.error(f"Error fetching failed jobs for patch {patch_id}: {e}")
+        logger.error("Error fetching failed jobs for patch %s", patch_id, exc_info=True)
         return {
             "error": str(e),
             "patch_id": patch_id,
@@ -227,12 +229,14 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
         }
 
         logger.info(
-            f"Successfully fetched {len(processed_logs)} log entries for task {task_id}"
+            "Successfully fetched %s log entries for task %s",
+            len(processed_logs),
+            task_id,
         )
         return result
 
-    except Exception as e:
-        logger.error(f"Failed to fetch task logs: {e}")
+    except Exception:
+        logger.error("Failed to fetch task logs", exc_info=True)
         raise
 
 

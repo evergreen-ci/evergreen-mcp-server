@@ -69,8 +69,9 @@ class EvergreenGraphQLClient:
                 if hasattr(self._client.transport, "close"):
                     await self._client.transport.close()
                 logger.debug("GraphQL client closed")
-            except Exception as e:
-                logger.warning("Error closing GraphQL client: %s", e)
+            except Exception:
+                logger.warning("Error closing GraphQL client", exc_info=True)
+        self._client = None
 
     async def _execute_query(
         self, query_string: str, variables: Optional[Dict[str, Any]] = None
@@ -98,10 +99,10 @@ class EvergreenGraphQLClient:
             )
             return result
         except TransportError as e:
-            logger.error("GraphQL transport error: %s", e)
+            logger.error("GraphQL transport error", exc_info=True)
             raise Exception(f"Failed to execute GraphQL query: {e}")
-        except Exception as e:
-            logger.error("GraphQL query execution error: %s", e)
+        except Exception:
+            logger.error("GraphQL query execution error", exc_info=True)
             raise
 
     async def get_projects(self) -> List[Dict[str, Any]]:
@@ -271,5 +272,6 @@ class EvergreenGraphQLClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
+        _ = exc_type, exc_val, exc_tb  # Unused but required by protocol
         await self.close()
         return None

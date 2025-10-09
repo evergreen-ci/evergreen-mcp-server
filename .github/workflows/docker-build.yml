@@ -14,7 +14,7 @@ on:
         type: boolean
 
 env:
-  # TODO: Replace once clarified 
+  # Using GitHub Container Registry for public Docker images
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -50,7 +50,7 @@ jobs:
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
-          type=sha,prefix={{branch}}-
+          type=sha
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build Docker image

@@ -239,17 +239,36 @@ Retrieves detailed logs for a specific Evergreen task, with optional error filte
 
 ## Running the Server
 
-### Method 1: Direct Execution
+The Evergreen MCP server is designed to be used with MCP clients (like Claude Desktop, VS Code with MCP extension) or for testing with the MCP Inspector. It communicates via stdio and is not meant to be run as a standalone HTTP server.
+
+### Method 1: With MCP Inspector (Recommended for Testing)
+
+```bash
+# Using npx (no installation required)
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
+
+# This will:
+# - Start the MCP server
+# - Launch a web interface for testing
+# - Open your browser automatically
+```
+
+### Method 2: Direct Execution (for MCP Clients)
 
 ```bash
 # Make sure your virtual environment is activated
 source .venv/bin/activate
 
-# Run the server
+# Run the server (will wait for stdio input from an MCP client)
 evergreen-mcp-server
+
+# With project ID
+evergreen-mcp-server --project-id your-evergreen-project-id
 ```
 
-### Method : Using Docker
+**Note**: When run directly, the server expects to communicate via stdio with an MCP client. It will not provide a command-line interface or HTTP endpoint.
+
+### Method 3: Using Docker
 
 #### Build and Run with Docker
 
@@ -342,35 +361,43 @@ The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a powe
 
 ### Installing MCP Inspector
 
+The MCP Inspector can be installed globally or run directly with `npx` (recommended for one-time use):
+
 ```bash
-# Install globally via npm
+# Option 1: Install globally via npm
 npm install -g @modelcontextprotocol/inspector
 
-# Or install locally in your project
-npm install --save-dev @modelcontextprotocol/inspector
+# Option 2: Use npx (no installation required)
+# This will be shown in the examples below
 ```
 
 ### Using Inspector with Evergreen MCP Server
 
-#### Method 1: Using Entry Point
+#### Method 1: Using npx (Recommended)
 
 ```bash
-# Start the inspector with the Evergreen MCP server
-mcp-inspector evergreen-mcp-server
+# Start the inspector with the Evergreen MCP server using the full path to the virtual environment
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
+
+# Or if your virtual environment is activated:
+npx @modelcontextprotocol/inspector evergreen-mcp-server
 ```
 
-#### Method 2: With Project ID Configuration
+#### Method 2: Using Globally Installed Inspector
 
 ```bash
-# Start with a specific project ID
-mcp-inspector evergreen-mcp-server --project-id your-evergreen-project-id
+# If you installed mcp-inspector globally
+mcp-inspector .venv/bin/evergreen-mcp-server
+
+# With project ID configuration
+mcp-inspector .venv/bin/evergreen-mcp-server --project-id your-evergreen-project-id
 ```
 
-#### Method 3: Using Python Module
+#### Method 3: Using Python Module Directly
 
 ```bash
 # Using the Python module directly
-mcp-inspector python -m src.server
+npx @modelcontextprotocol/inspector python -m evergreen_mcp.server
 ```
 
 ### Inspector Features for Evergreen MCP
@@ -406,13 +433,19 @@ The MCP Inspector provides several useful features when working with the Evergre
 
 ### Example Inspector Session
 
-1. Open the inspector web interface (typically at `http://localhost:3000`)
-2. Navigate to the "Tools" tab
-3. Try `list_user_recent_patches` with `limit: 5`
-4. Copy a patch ID from the response
-5. Use `get_patch_failed_jobs` with the copied patch ID
-6. Copy a task ID from the failed jobs response
-7. Use `get_task_logs` with the task ID to see detailed error logs
+When you start the inspector, it will:
+1. Install the inspector package (if using npx)
+2. Start the proxy server (typically on port 6277)
+3. Open your browser automatically to the inspector interface (typically at `http://localhost:6274`)
+4. Display an authentication token in the URL
+
+Then you can:
+1. Navigate to the "Tools" tab in the web interface
+2. Try `list_user_recent_patches` with `limit: 5`
+3. Copy a patch ID from the response
+4. Use `get_patch_failed_jobs` with the copied patch ID
+5. Copy a task ID from the failed jobs response
+6. Use `get_task_logs` with the task ID to see detailed error logs
 
 This workflow demonstrates the typical debugging process for CI/CD failures using the Evergreen MCP server.
 

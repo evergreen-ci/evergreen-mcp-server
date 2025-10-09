@@ -38,6 +38,7 @@ coverage.xml
 
 # Environments
 .env
+.env.*
 .venv
 env/
 venv/
@@ -45,12 +46,28 @@ ENV/
 env.bak/
 venv.bak/
 
+# Credentials and secrets
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets.yml
+secrets.yaml
+credentials.yml
+credentials.yaml
+.evergreen.yml
+.evergreen.yaml
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+
+# Local configuration files
+.vscode/mcp.json
 
 # Logs
 *.log

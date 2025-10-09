@@ -26,16 +26,16 @@ jobs:
     - name: Lint with basic checks
       run: |
         # Check for syntax errors and undefined names
-        python -m py_compile src/*.py
+        python -m py_compile src/evergreen_mcp/*.py
         python -m py_compile tests/*.py
 
     - name: Test imports and basic functionality
       run: |
         # Test that all modules can be imported
-        python -c "import src.server; print('✓ Server module imports successfully')"
-        python -c "from src.evergreen_graphql_client import EvergreenGraphQLClient; print('✓ GraphQL client imports successfully')"
-        python -c "from src.mcp_tools import get_tool_definitions; print('✓ MCP tools import successfully')"
-        
+        python -c "import evergreen_mcp.server; print('✓ Server module imports successfully')"
+        python -c "from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient; print('✓ GraphQL client imports successfully')"
+        python -c "from evergreen_mcp.mcp_tools import get_tool_definitions; print('✓ MCP tools import successfully')"
+
         # Test entry point exists
         evergreen-mcp-server --help
 
@@ -48,7 +48,7 @@ jobs:
       run: |
         # Test that the package installs correctly
         pip install -e .
-        python -c "import src; print('✓ Package installed and imports correctly')"
+        python -c "import evergreen_mcp; print('✓ Package installed and imports correctly')"
 
     - name: Check code quality
       run: |
