@@ -57,9 +57,18 @@ query GetProjectSettings($projectId: String!) {
     }
     githubWebhooksEnabled
     vars {
-      adminOnlyVars
-      privateVars
-      vars
+      adminOnlyVars {
+        key
+        value
+      }
+      privateVars {
+        key
+        value
+      }
+      vars {
+        key
+        value
+      }
     }
     aliases {
       alias
@@ -82,7 +91,10 @@ query GetProjectPatches($projectId: String!, $limit: Int = 10) {
         author
         createTime
         status
-        version
+        versionFull {
+          id
+          status
+        }
       }
     }
   }
@@ -91,7 +103,7 @@ query GetProjectPatches($projectId: String!, $limit: Int = 10) {
 
 # Query to get builds for a project
 GET_PROJECT_BUILDS = """
-query GetProjectBuilds($projectId: String!, $limit: Int = 10) {
+query GetProjectBuilds($projectId: String!) {
   project(projectIdentifier: $projectId) {
     id
     displayName

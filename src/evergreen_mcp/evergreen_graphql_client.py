@@ -21,6 +21,7 @@ from .evergreen_queries import (
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
 )
+from .schema_validator import GraphQLSchemaValidator
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +33,27 @@ class EvergreenGraphQLClient:
     It handles authentication via API keys and manages the connection lifecycle.
     """
 
-    def __init__(self, user: str, api_key: str, endpoint: str = None):
+    def __init__(
+        self,
+        user: str,
+        api_key: str,
+        endpoint: str = None,
+        enable_validation: bool = False,
+    ):
         """Initialize the GraphQL client
 
         Args:
             user: Evergreen username
             api_key: Evergreen API key
             endpoint: GraphQL endpoint URL (defaults to Evergreen's main instance)
+            enable_validation: Whether to validate queries against schema (default: False)
         """
         self.user = user
         self.api_key = api_key
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
+        self.enable_validation = enable_validation
+        self._validator = GraphQLSchemaValidator() if enable_validation else None
 
     async def connect(self):
         """Initialize GraphQL client connection"""
@@ -90,6 +100,16 @@ class EvergreenGraphQLClient:
         """
         if not self._client:
             raise RuntimeError("Client not connected. Call connect() first.")
+
+        # Validate query against schema if validation is enabled
+        if self.enable_validation and self._validator:
+            validation_errors = self._validator.validate_query(query_string)
+            if validation_errors:
+                error_messages = [str(error) for error in validation_errors]
+                logger.error("Query validation failed: %s", "; ".join(error_messages))
+                raise Exception(
+                    f"GraphQL query validation failed: {'; '.join(error_messages)}"
+                )
 
         try:
             query = gql(query_string)

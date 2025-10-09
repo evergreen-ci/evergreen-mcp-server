@@ -42,7 +42,12 @@ jobs:
     - name: Run unit tests
       run: |
         # Run unit tests that don't require Evergreen credentials
-        python -m pytest tests/test_basic.py -v
+        python -m pytest tests/test_basic.py tests/test_schema_validation.py -v
+
+    - name: Validate GraphQL queries
+      run: |
+        # Validate all GraphQL queries against schema
+        python scripts/validate_queries.py
 
     - name: Test package installation
       run: |

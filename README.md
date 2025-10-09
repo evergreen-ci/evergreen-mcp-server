@@ -637,6 +637,38 @@ To update the Evergreen GraphQL schema:
 ./scripts/fetch_graphql_schema.sh
 ```
 
+### GraphQL Schema Validation
+
+The project includes GraphQL schema validation to catch query errors at development time:
+
+**Validate all queries:**
+```bash
+python scripts/validate_queries.py
+```
+
+**Validate with verbose output:**
+```bash
+python scripts/validate_queries.py --verbose
+```
+
+**Enable validation in GraphQL client:**
+```python
+from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+
+client = EvergreenGraphQLClient(
+    user="your_user",
+    api_key="your_key",
+    enable_validation=True  # Enable schema validation
+)
+```
+
+**Pre-commit hook setup:**
+```bash
+# Install as git pre-commit hook
+cp scripts/pre-commit-validate-queries.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
 ### Cleaning Generated Files
 
 ```bash
