@@ -355,6 +355,63 @@ Add to your Claude Desktop MCP configuration:
 }
 ```
 
+### IDE AI Tools with MCP Inspector
+
+Many IDE-based AI tools can leverage MCP servers through the MCP Inspector for testing and development workflows. The MCP Inspector acts as a proxy, providing a web interface for interacting with MCP servers before integrating them directly into your IDE.
+
+#### Augment Code Editor
+
+[Augment](https://augmentcode.com/) is an AI-powered code editor that supports MCP integration. To use the Evergreen MCP server with Augment via MCP Inspector:
+
+1. **Start MCP Inspector with Evergreen MCP Server:**
+   ```bash
+   npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server --project-id your-project-id
+   ```
+
+2. **Access Inspector Interface:**
+   - Open the browser interface (typically `http://localhost:6274`)
+   - Test your Evergreen tools in the "Tools" tab
+   - Verify authentication and functionality
+
+3. **Configure Augment for MCP:**
+   - In Augment, navigate to MCP settings
+   - Add the Evergreen MCP server configuration:
+   ```json
+   {
+     "name": "evergreen",
+     "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+     "args": ["--project-id", "your-evergreen-project-id"]
+   }
+   ```
+
+#### Other MCP-Compatible IDE Tools
+
+Several other IDE and editor tools support MCP integration. For any MCP-compatible tool:
+
+1. **Use MCP Inspector for Development:** Test your server configuration using the inspector before adding it to your IDE
+2. **Standard MCP Configuration:** Most tools follow similar configuration patterns as shown above
+3. **Common Configuration Format:**
+   ```json
+   {
+     "servers": {
+       "evergreen": {
+         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+         "args": ["--project-id", "your-project-id"]
+       }
+     }
+   }
+   ```
+
+#### Integration Tips for IDE AI Tools
+
+- **Use MCP Inspector First:** Always test your MCP server with the inspector before configuring it in your IDE
+- **Environment Variables:** Ensure your `~/.evergreen.yml` configuration is accessible from your IDE environment
+- **Path Configuration:** Use absolute paths to the virtual environment executable for better reliability
+- **Testing Workflow:** Use inspector to verify tool functionality, then copy working configuration to your IDE
+- **Debugging:** If integration fails in your IDE, return to MCP Inspector to isolate configuration issues
+
+For the most up-to-date list of MCP-compatible tools and their specific configuration requirements, refer to the [Model Context Protocol documentation](https://modelcontextprotocol.io/).
+
 ## MCP Inspector Integration
 
 The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a powerful debugging and testing tool that provides a web-based interface for interacting with MCP servers. It's especially useful for development, testing, and understanding how the Evergreen MCP server works.
