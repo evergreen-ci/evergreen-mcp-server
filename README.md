@@ -355,6 +355,178 @@ Add to your Claude Desktop MCP configuration:
 }
 ```
 
+### IDE AI Tools Integration
+
+The Evergreen MCP server can be integrated with various IDE-based AI tools that support the Model Context Protocol. This section provides setup instructions for popular IDE AI assistants.
+
+#### Augment Code Assistant
+
+[Augment](https://www.augmentcode.com/) is an AI coding assistant that supports MCP integration for enhanced contextual assistance.
+
+**Setup Steps:**
+
+1. **Install Augment Extension**: Install the Augment extension in your IDE (VS Code, IntelliJ, etc.)
+
+2. **Configure MCP Server**: Add the Evergreen MCP server to Augment's configuration:
+
+   **For VS Code with Augment:**
+   ```json
+   {
+     "augment.mcpServers": {
+       "evergreen": {
+         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+         "args": ["--project-id", "your-evergreen-project-id"],
+         "env": {}
+       }
+     }
+   }
+   ```
+
+   **For JetBrains IDEs with Augment:**
+   Add to your Augment settings:
+   ```json
+   {
+     "mcp": {
+       "servers": {
+         "evergreen": {
+           "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+           "args": ["--project-id", "your-evergreen-project-id"]
+         }
+       }
+     }
+   }
+   ```
+
+3. **Authentication**: Ensure your `~/.evergreen.yml` configuration file is properly set up with your Evergreen credentials.
+
+4. **Usage**: Once configured, you can ask Augment to help with CI/CD debugging:
+   - "Show me recent failed patches in Evergreen"
+   - "Analyze the failed jobs for patch XYZ"
+   - "Get the logs for the failing test task"
+
+#### Claude Code (IDE Integration)
+
+Claude's IDE integration provides direct access to Claude AI within your development environment with MCP support.
+
+**Setup for VS Code:**
+
+1. **Install Claude Extension**: Install the official Claude extension from the VS Code marketplace
+
+2. **Configure MCP in VS Code Settings**: Add to your VS Code `settings.json`:
+   ```json
+   {
+     "claude.mcpServers": {
+       "evergreen": {
+         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+         "args": ["--project-id", "your-evergreen-project-id"],
+         "type": "stdio"
+       }
+     }
+   }
+   ```
+
+3. **Alternative Configuration**: Create a `.claude/mcp.json` file in your project root:
+   ```json
+   {
+     "mcpServers": {
+       "evergreen": {
+         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+         "args": ["--project-id", "your-evergreen-project-id"]
+       }
+     }
+   }
+   ```
+
+**Setup for JetBrains IDEs:**
+
+1. **Install Claude Plugin**: Install the Claude plugin from JetBrains marketplace
+
+2. **Configure MCP Server**: In Claude plugin settings, add:
+   ```json
+   {
+     "servers": {
+       "evergreen": {
+         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+         "args": ["--project-id", "your-evergreen-project-id"]
+       }
+     }
+   }
+   ```
+
+#### GitHub Copilot Chat with MCP
+
+GitHub Copilot Chat can be extended with MCP servers through various configuration methods.
+
+**VS Code Configuration:**
+```json
+{
+  "github.copilot.chat.mcp": {
+    "servers": {
+      "evergreen": {
+        "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+        "args": ["--project-id", "your-evergreen-project-id"]
+      }
+    }
+  }
+}
+```
+
+#### Other IDE AI Tools
+
+For other IDE-based AI assistants that support MCP, the general configuration pattern is:
+
+1. **Locate MCP Configuration**: Find your IDE AI tool's MCP server configuration section
+2. **Add Server Entry**: Add an entry for the Evergreen MCP server:
+   ```json
+   {
+     "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+     "args": ["--project-id", "your-evergreen-project-id"],
+     "type": "stdio"
+   }
+   ```
+3. **Set Environment**: Ensure your Evergreen credentials are available in `~/.evergreen.yml`
+
+#### Configuration Tips
+
+**Path Resolution:**
+- Use absolute paths to the virtual environment binary
+- On Windows: Use `.venv\Scripts\evergreen-mcp-server.exe`
+- On macOS/Linux: Use `.venv/bin/evergreen-mcp-server`
+
+**Docker Integration:**
+Many IDE AI tools also support Docker-based MCP servers:
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-e", "EVERGREEN_USER=your_username",
+    "-e", "EVERGREEN_API_KEY=your_api_key",
+    "-e", "EVERGREEN_PROJECT=your_project",
+    "evergreen-mcp-server"
+  ]
+}
+```
+
+**Environment Variables:**
+Instead of using `~/.evergreen.yml`, you can set environment variables:
+```json
+{
+  "command": "/path/to/.venv/bin/evergreen-mcp-server",
+  "args": ["--project-id", "your-evergreen-project-id"],
+  "env": {
+    "EVERGREEN_USER": "your_username",
+    "EVERGREEN_API_KEY": "your_api_key"
+  }
+}
+```
+
+**Troubleshooting:**
+- Verify the MCP server runs correctly: `evergreen-mcp-server --help`
+- Test with MCP Inspector first: `npx @modelcontextprotocol/inspector evergreen-mcp-server`
+- Check IDE AI tool logs for MCP connection errors
+- Ensure proper file permissions on the executable
+
 ## MCP Inspector Integration
 
 The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a powerful debugging and testing tool that provides a web-based interface for interacting with MCP servers. It's especially useful for development, testing, and understanding how the Evergreen MCP server works.
