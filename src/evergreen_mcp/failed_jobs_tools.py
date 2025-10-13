@@ -10,6 +10,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Constants for test status values
+FAILED_TEST_STATUSES = ["fail", "failed"]
+
 
 async def fetch_user_recent_patches(
     client, user_id: str, limit: int = 10
@@ -322,7 +325,7 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
                 }
 
             # Count failed tests
-            if test.get("status", "").lower() in ["fail", "failed"]:
+            if test.get("status", "").lower() in FAILED_TEST_STATUSES:
                 failed_tests += 1
 
             processed_tests.append(test_info)

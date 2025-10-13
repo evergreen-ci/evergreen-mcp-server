@@ -12,6 +12,9 @@ from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
+# Constants for test status values
+FAILED_TEST_STATUSES = ["fail", "failed"]
+
 from .evergreen_queries import (
     GET_PATCH_FAILED_TASKS,
     GET_PROJECT,
@@ -291,7 +294,7 @@ class EvergreenGraphQLClient:
         }
 
         if failed_only:
-            test_filter_options["statuses"] = ["fail", "failed"]
+            test_filter_options["statuses"] = FAILED_TEST_STATUSES
 
         variables = {
             "taskId": task_id,
