@@ -1,7 +1,8 @@
 """GraphQL queries for Evergreen API
 
 This module contains all GraphQL query definitions used by the Evergreen MCP server.
-Queries are separated from the client implementation for better maintainability and reusability.
+Queries are separated from the client implementation for better maintainability
+and reusability.
 """
 
 # Projects query - retrieves all projects grouped by organization
@@ -254,7 +255,11 @@ query GetTaskLogs($taskId: String!, $execution: Int!) {
 
 # Get detailed test results for a specific task
 GET_TASK_TEST_RESULTS = """
-query GetTaskTestResults($taskId: String!, $execution: Int!, $testFilterOptions: TestFilterOptions) {
+query GetTaskTestResults(
+  $taskId: String!,
+  $execution: Int!,
+  $testFilterOptions: TestFilterOptions
+) {
   task(taskId: $taskId, execution: $execution) {
     id
     displayName

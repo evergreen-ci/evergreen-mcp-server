@@ -1,12 +1,12 @@
 """Failed jobs tools for Evergreen MCP server
 
-This module provides the core logic for fetching user patches and failed jobs from Evergreen.
+This module provides the core logic for fetching user patches and failed jobs
+from Evergreen.
 It uses a patch-based approach focused on the authenticated user's recent patches.
 """
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,8 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     Args:
         client: EvergreenGraphQLClient instance
-        arguments: Tool arguments containing task_id, execution, max_lines, filter_errors
+        arguments: Tool arguments containing task_id, execution, max_lines,
+                   filter_errors
 
     Returns:
         Dictionary containing task logs

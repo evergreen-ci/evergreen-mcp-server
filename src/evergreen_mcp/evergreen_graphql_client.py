@@ -7,7 +7,6 @@ It handles authentication, connection management, and query execution.
 import logging
 from typing import Any, Dict, List, Optional
 
-import aiohttp
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
