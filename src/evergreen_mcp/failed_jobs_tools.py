@@ -155,6 +155,21 @@ async def fetch_patch_failed_jobs(
                     "all_logs": logs.get("allLogLink"),
                 }
 
+            # Add test information if available
+            has_test_results = task.get("hasTestResults", False)
+            if has_test_results:
+                task_info["test_info"] = {
+                    "has_test_results": True,
+                    "failed_test_count": task.get("failedTestCount", 0),
+                    "total_test_count": task.get("totalTestCount", 0),
+                }
+            else:
+                task_info["test_info"] = {
+                    "has_test_results": False,
+                    "failed_test_count": 0,
+                    "total_test_count": 0,
+                }
+
             processed_tasks.append(task_info)
             build_variants.add(task.get("buildVariant"))
 
@@ -237,6 +252,104 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception:
         logger.error("Failed to fetch task logs", exc_info=True)
+        raise
+
+
+async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch detailed test results for a specific task
+
+    Args:
+        client: EvergreenGraphQLClient instance
+        arguments: Tool arguments containing task_id, execution, failed_only, limit
+
+    Returns:
+        Dictionary containing detailed test results
+    """
+    try:
+        # Extract and validate arguments
+        task_id = arguments.get("task_id")
+        if not task_id:
+            raise ValueError("task_id parameter is required")
+
+        execution = arguments.get("execution", 0)
+        failed_only = arguments.get("failed_only", True)
+        limit = arguments.get("limit", 100)
+
+        # Fetch task test results
+        task_data = await client.get_task_test_results(task_id, execution, failed_only, limit)
+
+        # Extract task information
+        task_info = {
+            "task_id": task_data.get("id"),
+            "task_name": task_data.get("displayName"),
+            "build_variant": task_data.get("buildVariant"),
+            "status": task_data.get("status"),
+            "execution": task_data.get("execution"),
+            "has_test_results": task_data.get("hasTestResults", False),
+            "failed_test_count": task_data.get("failedTestCount", 0),
+            "total_test_count": task_data.get("totalTestCount", 0),
+        }
+
+        # Process test results
+        test_results_data = task_data.get("tests", {})
+        test_results = test_results_data.get("testResults", [])
+
+        processed_tests = []
+        failed_tests = 0
+
+        for test in test_results:
+            test_info = {
+                "test_id": test.get("id"),
+                "test_file": test.get("testFile"),
+                "status": test.get("status"),
+                "duration": test.get("duration"),
+                "start_time": test.get("startTime"),
+                "end_time": test.get("endTime"),
+                "exit_code": test.get("exitCode"),
+                "group_id": test.get("groupID"),
+            }
+
+            # Add test logs if available
+            logs = test.get("logs", {})
+            if logs:
+                test_info["logs"] = {
+                    "url": logs.get("url"),
+                    "url_parsley": logs.get("urlParsley"),
+                    "url_raw": logs.get("urlRaw"),
+                    "line_num": logs.get("lineNum"),
+                    "rendering_type": logs.get("renderingType"),
+                    "version": logs.get("version"),
+                }
+
+            # Count failed tests
+            if test.get("status", "").lower() in ["fail", "failed"]:
+                failed_tests += 1
+
+            processed_tests.append(test_info)
+
+        # Create summary
+        summary = {
+            "total_test_results": test_results_data.get("totalTestCount", 0),
+            "filtered_test_count": test_results_data.get("filteredTestCount", 0),
+            "returned_tests": len(processed_tests),
+            "failed_tests_in_results": failed_tests,
+            "filter_applied": "failed tests only" if failed_only else "all tests",
+        }
+
+        logger.info(
+            "Successfully processed %s test results for task %s",
+            len(processed_tests),
+            task_id,
+        )
+
+        return {
+            "task_info": task_info,
+            "test_results": processed_tests,
+            "summary": summary,
+        }
+
+    except Exception:
+        logger.error("Failed to fetch task test results", exc_info=True)
         raise
 
 
