@@ -280,7 +280,9 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         limit = arguments.get("limit", 100)
 
         # Fetch task test results
-        task_data = await client.get_task_test_results(task_id, execution, failed_only, limit)
+        task_data = await client.get_task_test_results(
+            task_id, execution, failed_only, limit
+        )
 
         # Extract task information
         task_info = {
@@ -377,7 +379,8 @@ def process_logs(
             severity = log.get("severity", "").lower()
             message = log.get("message", "").lower()
 
-            # Include if severity indicates error or message contains error/fail keywords
+            # Include if severity indicates error or message contains error/fail
+            # keywords
             if (
                 severity in ["error", "fatal"]
                 or "error" in message

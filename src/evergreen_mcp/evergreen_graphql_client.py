@@ -11,9 +11,6 @@ from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
-# Constants for test status values
-FAILED_TEST_STATUSES = ["fail", "failed"]
-
 from .evergreen_queries import (
     GET_PATCH_FAILED_TASKS,
     GET_PROJECT,
@@ -24,6 +21,9 @@ from .evergreen_queries import (
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
 )
+
+# Constants for test status values
+FAILED_TEST_STATUSES = ["fail", "failed"]
 
 logger = logging.getLogger(__name__)
 

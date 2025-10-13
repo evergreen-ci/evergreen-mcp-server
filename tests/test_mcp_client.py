@@ -54,7 +54,7 @@ async def test_mcp_server():
             test_results["tools_listed"] = len(tools_result.tools) > 0
 
             # Test 1: List user recent patches
-            print(f"\nTest 1: list_user_recent_patches")
+            print("\nTest 1: list_user_recent_patches")
             try:
                 result = await session.call_tool(
                     "list_user_recent_patches", {"limit": 3}
@@ -83,7 +83,7 @@ async def test_mcp_server():
                 print(f" Tool call failed: {e}")
 
             # Test 2: Get patch failed jobs (if we have patches)
-            print(f"\nTest 2: get_patch_failed_jobs")
+            print("\nTest 2: get_patch_failed_jobs")
             failed_task_id = None
             try:
                 # First get a patch ID
@@ -123,7 +123,7 @@ async def test_mcp_server():
                 print(f"Tool call failed: {e}")
 
             # Test 3: Get task logs (if we have a failed task)
-            print(f"\nTest 3: get_task_logs")
+            print("\nTest 3: get_task_logs")
             if failed_task_id:
                 try:
                     result = await session.call_tool(
@@ -142,7 +142,8 @@ async def test_mcp_server():
                             # Display tasks don't have logs - this is expected behavior
                             if "display task" in error_msg.lower():
                                 print(
-                                    f"Task is a display task (no logs available) - this is expected"
+                                    "Task is a display task (no logs available) - "
+                                    "this is expected"
                                 )
                                 test_results["get_task_logs"] = (
                                     True  # This is actually correct behavior
@@ -152,7 +153,8 @@ async def test_mcp_server():
                         else:
                             logs = response_data.get("logs", [])
                             print(
-                                f"Retrieved {len(logs)} log entries for task {failed_task_id}"
+                                f"Retrieved {len(logs)} log entries for task "
+                                f"{failed_task_id}"
                             )
                             test_results["get_task_logs"] = True
                     else:
@@ -165,7 +167,7 @@ async def test_mcp_server():
                 test_results["get_task_logs"] = True  # Skip this test gracefully
 
             # Test 4: Error handling
-            print(f"\nTest 4: Error handling (invalid tool)")
+            print("\nTest 4: Error handling (invalid tool)")
             try:
                 result = await session.call_tool("invalid_tool", {})
                 if result.content and len(result.content) > 0:

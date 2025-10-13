@@ -26,13 +26,22 @@ def get_tool_definitions() -> Sequence[types.Tool]:
     return [
         types.Tool(
             name="list_user_recent_patches_evergreen",
-            description="Retrieve the authenticated user's recent Evergreen patches/commits with their CI/CD status. Use this to see your recent code changes, check patch status (success/failed/running), and identify patches that need attention. Returns patch IDs needed for other tools.",
+            description=(
+                "Retrieve the authenticated user's recent Evergreen patches/commits "
+                "with their CI/CD status. Use this to see your recent code changes, "
+                "check patch status (success/failed/running), and identify patches "
+                "that need attention. Returns patch IDs needed for other tools."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Number of recent patches to return. Use smaller numbers (3-5) for quick overview, larger (10-20) for comprehensive analysis. Maximum 50.",
+                        "description": (
+                            "Number of recent patches to return. Use smaller "
+                            "numbers (3-5) for quick overview, larger (10-20) "
+                            "for comprehensive analysis. Maximum 50."
+                        ),
                         "default": 10,
                         "minimum": 1,
                         "maximum": 50,
@@ -44,17 +53,30 @@ def get_tool_definitions() -> Sequence[types.Tool]:
         ),
         types.Tool(
             name="get_patch_failed_jobs_evergreen",
-            description="Analyze failed CI/CD jobs for a specific patch to understand why builds are failing. Shows detailed failure information including failed tasks, build variants, timeout issues, log links, and test failure counts. Essential for debugging patch failures.",
+            description=(
+                "Analyze failed CI/CD jobs for a specific patch to understand why "
+                "builds are failing. Shows detailed failure information including "
+                "failed tasks, build variants, timeout issues, log links, and test "
+                "failure counts. Essential for debugging patch failures."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "patch_id": {
                         "type": "string",
-                        "description": "Patch identifier obtained from list_user_recent_patches. This is the 'patch_id' field from the patches array.",
+                        "description": (
+                            "Patch identifier obtained from "
+                            "list_user_recent_patches. This is the 'patch_id' "
+                            "field from the patches array."
+                        ),
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of failed tasks to analyze. Use 10-20 for focused analysis, 50+ for comprehensive failure review.",
+                        "description": (
+                            "Maximum number of failed tasks to analyze. Use "
+                            "10-20 for focused analysis, 50+ for comprehensive "
+                            "failure review."
+                        ),
                         "default": 50,
                         "minimum": 1,
                         "maximum": 100,
@@ -66,30 +88,49 @@ def get_tool_definitions() -> Sequence[types.Tool]:
         ),
         types.Tool(
             name="get_task_logs_evergreen",
-            description="Extract detailed logs from a specific failed Evergreen task to identify root cause of failures. Filters for error messages by default to focus on relevant failure information. Use task_id from get_patch_failed_jobs results.",
+            description=(
+                "Extract detailed logs from a specific failed Evergreen task to "
+                "identify root cause of failures. Filters for error messages by "
+                "default to focus on relevant failure information. Use task_id "
+                "from get_patch_failed_jobs results."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "Task identifier from get_patch_failed_jobs response. Found in the 'task_id' field of failed_tasks array.",
+                        "description": (
+                            "Task identifier from get_patch_failed_jobs "
+                            "response. Found in the 'task_id' field of "
+                            "failed_tasks array."
+                        ),
                     },
                     "execution": {
                         "type": "integer",
-                        "description": "Task execution number if task was retried. Usually 0 for first execution, 1+ for retries.",
+                        "description": (
+                            "Task execution number if task was retried. Usually "
+                            "0 for first execution, 1+ for retries."
+                        ),
                         "default": 0,
                         "minimum": 0,
                     },
                     "max_lines": {
                         "type": "integer",
-                        "description": "Maximum log lines to return. Use 100-500 for quick error analysis, 1000+ for comprehensive debugging.",
+                        "description": (
+                            "Maximum log lines to return. Use 100-500 for quick "
+                            "error analysis, 1000+ for comprehensive debugging."
+                        ),
                         "default": 1000,
                         "minimum": 10,
                         "maximum": 5000,
                     },
                     "filter_errors": {
                         "type": "boolean",
-                        "description": "Whether to show only error/failure messages (recommended) or all log output. Set to false only when you need complete context.",
+                        "description": (
+                            "Whether to show only error/failure messages "
+                            "(recommended) or all log output. Set to false only "
+                            "when you need complete context."
+                        ),
                         "default": True,
                     },
                 },
@@ -99,28 +140,48 @@ def get_tool_definitions() -> Sequence[types.Tool]:
         ),
         types.Tool(
             name="get_task_test_results_evergreen",
-            description="Fetch detailed test results for a specific Evergreen task, including individual unit test failures. Use this when a task shows failed_test_count > 0 to get specific test failure details. Essential for debugging unit test failures.",
+            description=(
+                "Fetch detailed test results for a specific Evergreen task, "
+                "including individual unit test failures. Use this when a task "
+                "shows failed_test_count > 0 to get specific test failure "
+                "details. Essential for debugging unit test failures."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "Task identifier from get_patch_failed_jobs response. Found in the 'task_id' field of failed_tasks array.",
+                        "description": (
+                            "Task identifier from get_patch_failed_jobs "
+                            "response. Found in the 'task_id' field of "
+                            "failed_tasks array."
+                        ),
                     },
                     "execution": {
                         "type": "integer",
-                        "description": "Task execution number if task was retried. Usually 0 for first execution, 1+ for retries.",
+                        "description": (
+                            "Task execution number if task was retried. Usually "
+                            "0 for first execution, 1+ for retries."
+                        ),
                         "default": 0,
                         "minimum": 0,
                     },
                     "failed_only": {
                         "type": "boolean",
-                        "description": "Whether to fetch only failed tests (recommended) or all test results. Set to false to see all tests including passing ones.",
+                        "description": (
+                            "Whether to fetch only failed tests (recommended) "
+                            "or all test results. Set to false to see all tests "
+                            "including passing ones."
+                        ),
                         "default": True,
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of test results to return. Use 50-100 for focused analysis, 200+ for comprehensive review.",
+                        "description": (
+                            "Maximum number of test results to return. Use "
+                            "50-100 for focused analysis, 200+ for comprehensive "
+                            "review."
+                        ),
                         "default": 100,
                         "minimum": 1,
                         "maximum": 500,
