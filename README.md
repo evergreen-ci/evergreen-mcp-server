@@ -11,6 +11,7 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 - **Project Resources**: Access and list Evergreen projects and build statuses
 - **Failed Jobs Analysis**: Fetch failed jobs and logs for specific commits to help identify CI/CD failures
+- **Unit Test Failure Analysis**: Detailed analysis of individual unit test failures with test-specific logs and metadata
 - **Task Log Retrieval**: Get detailed logs for failed tasks with error filtering
 - **Authentication**: Secure API key-based authentication
 - **Async Operations**: Built on asyncio for efficient concurrent operations
@@ -90,7 +91,7 @@ The server supports a `--project-id` argument to set a default project identifie
 
 ## Available Tools
 
-### `list_user_recent_patches`
+### `list_user_recent_patches_evergreen`
 
 Lists recent patches for the authenticated user, enabling AI agents to browse and select patches for analysis.
 
@@ -100,7 +101,7 @@ Lists recent patches for the authenticated user, enabling AI agents to browse an
 **Example Usage:**
 ```json
 {
-  "tool": "list_user_recent_patches",
+  "tool": "list_user_recent_patches_evergreen",
   "arguments": {
     "limit": 10
   }
@@ -130,18 +131,18 @@ Lists recent patches for the authenticated user, enabling AI agents to browse an
 }
 ```
 
-### `get_patch_failed_jobs`
+### `get_patch_failed_jobs_evergreen`
 
-Retrieves failed jobs for a specific patch, enabling detailed analysis of CI/CD failures.
+Retrieves failed jobs for a specific patch, enabling detailed analysis of CI/CD failures. Now includes unit test failure counts for each task.
 
 **Parameters:**
-- `patch_id` (required): Patch identifier from `list_user_recent_patches`
+- `patch_id` (required): Patch identifier from `list_user_recent_patches_evergreen`
 - `max_results` (optional): Maximum number of failed tasks to return (default: 50)
 
 **Example Usage:**
 ```json
 {
-  "tool": "get_patch_failed_jobs",
+  "tool": "get_patch_failed_jobs_evergreen",
   "arguments": {
     "patch_id": "507f1f77bcf86cd799439011",
     "max_results": 10
@@ -177,6 +178,11 @@ Retrieves failed jobs for a specific patch, enabling detailed analysis of CI/CD 
       },
       "duration_ms": 120000,
       "finish_time": "2025-09-23T10:32:00Z",
+      "test_info": {
+        "has_test_results": true,
+        "failed_test_count": 5,
+        "total_test_count": 150
+      },
       "logs": {
         "task_log": "https://evergreen.mongodb.com/task_log/...",
         "agent_log": "https://evergreen.mongodb.com/agent_log/...",
@@ -194,7 +200,7 @@ Retrieves failed jobs for a specific patch, enabling detailed analysis of CI/CD 
 }
 ```
 
-### `get_task_logs`
+### `get_task_logs_evergreen`
 
 Retrieves detailed logs for a specific Evergreen task, with optional error filtering for focused analysis.
 
@@ -207,7 +213,7 @@ Retrieves detailed logs for a specific Evergreen task, with optional error filte
 **Example Usage:**
 ```json
 {
-  "tool": "get_task_logs",
+  "tool": "get_task_logs_evergreen",
   "arguments": {
     "task_id": "task_456",
     "execution": 0,
@@ -234,6 +240,72 @@ Retrieves detailed logs for a specific Evergreen task, with optional error filte
     }
   ],
   "truncated": false
+}
+```
+
+### `get_task_test_results_evergreen`
+
+Retrieves detailed unit test results for a specific Evergreen task, including individual test failures. Essential for debugging unit test failures when a task shows `failed_test_count > 0`.
+
+**Parameters:**
+- `task_id` (required): Task identifier from failed jobs response
+- `execution` (optional): Task execution number (default: 0)
+- `failed_only` (optional): Whether to fetch only failed tests (default: true)
+- `limit` (optional): Maximum number of test results to return (default: 100)
+
+**Example Usage:**
+```json
+{
+  "tool": "get_task_test_results_evergreen",
+  "arguments": {
+    "task_id": "task_456",
+    "execution": 0,
+    "failed_only": true,
+    "limit": 50
+  }
+}
+```
+
+**Response Format:**
+```json
+{
+  "task_info": {
+    "task_id": "task_456",
+    "task_name": "test-unit",
+    "build_variant": "ubuntu2004",
+    "status": "failed",
+    "execution": 0,
+    "has_test_results": true,
+    "failed_test_count": 5,
+    "total_test_count": 150
+  },
+  "test_results": [
+    {
+      "test_id": "test_auth_login_failure",
+      "test_file": "tests/auth/test_login.py",
+      "status": "failed",
+      "duration": 2.5,
+      "start_time": "2025-09-23T10:30:15Z",
+      "end_time": "2025-09-23T10:30:17Z",
+      "exit_code": 1,
+      "group_id": "auth_tests",
+      "logs": {
+        "url": "https://evergreen.mongodb.com/test_log/...",
+        "url_parsley": "https://parsley.mongodb.com/evergreen/...",
+        "url_raw": "https://evergreen.mongodb.com/test_log_raw/...",
+        "line_num": 45,
+        "rendering_type": "resmoke",
+        "version": 1
+      }
+    }
+  ],
+  "summary": {
+    "total_test_results": 150,
+    "filtered_test_count": 5,
+    "returned_tests": 5,
+    "failed_tests_in_results": 5,
+    "filter_applied": "failed tests only"
+  }
 }
 ```
 
@@ -577,9 +649,10 @@ npx @modelcontextprotocol/inspector python -m evergreen_mcp.server
 The MCP Inspector provides several useful features when working with the Evergreen MCP server:
 
 1. **Tool Testing**: Interactive forms to test all available tools:
-   - `list_user_recent_patches`
-   - `get_patch_failed_jobs`
-   - `get_task_logs`
+   - `list_user_recent_patches_evergreen`
+   - `get_patch_failed_jobs_evergreen`
+   - `get_task_logs_evergreen`
+   - `get_task_test_results_evergreen`
 
 2. **Resource Browsing**: View available Evergreen project resources
 
@@ -613,13 +686,15 @@ When you start the inspector, it will:
 
 Then you can:
 1. Navigate to the "Tools" tab in the web interface
-2. Try `list_user_recent_patches` with `limit: 5`
+2. Try `list_user_recent_patches_evergreen` with `limit: 5`
 3. Copy a patch ID from the response
-4. Use `get_patch_failed_jobs` with the copied patch ID
-5. Copy a task ID from the failed jobs response
-6. Use `get_task_logs` with the task ID to see detailed error logs
+4. Use `get_patch_failed_jobs_evergreen` with the copied patch ID
+5. Look for tasks with `test_info.failed_test_count > 0` in the response
+6. For tasks with test failures, use `get_task_test_results_evergreen` with the task ID to see specific unit test failures
+7. Use `get_task_logs_evergreen` with the task ID to see detailed error logs
+8. Use test-specific log URLs from the test results for focused debugging
 
-This workflow demonstrates the typical debugging process for CI/CD failures using the Evergreen MCP server.
+This workflow demonstrates the comprehensive debugging process for CI/CD failures, including unit test analysis, using the Evergreen MCP server.
 
 ## Available Resources
 
@@ -635,13 +710,13 @@ The server automatically discovers and lists all projects you have access to in 
 
 ## Usage Examples
 
-### Analyzing Failed Jobs - Two-Step Workflow
+### Analyzing Failed Jobs - Multi-Step Workflow
 
 #### Step 1: List Recent Patches
 
 ```json
 {
-  "tool": "list_user_recent_patches",
+  "tool": "list_user_recent_patches_evergreen",
   "arguments": {
     "limit": 10
   }
@@ -654,7 +729,7 @@ This returns your recent patches with status information, allowing you to identi
 
 ```json
 {
-  "tool": "get_patch_failed_jobs",
+  "tool": "get_patch_failed_jobs_evergreen",
   "arguments": {
     "patch_id": "507f1f77bcf86cd799439011",
     "max_results": 20
@@ -662,11 +737,28 @@ This returns your recent patches with status information, allowing you to identi
 }
 ```
 
-### Getting Detailed Logs for a Failed Task
+This now includes test failure counts in the response, showing which tasks have unit test failures.
+
+#### Step 3: Get Detailed Unit Test Results (for tasks with test failures)
 
 ```json
 {
-  "tool": "get_task_logs",
+  "tool": "get_task_test_results_evergreen",
+  "arguments": {
+    "task_id": "task_456",
+    "failed_only": true,
+    "limit": 50
+  }
+}
+```
+
+This provides detailed information about individual unit test failures, including test files, durations, and log URLs.
+
+#### Step 4: Getting Detailed Logs for a Failed Task
+
+```json
+{
+  "tool": "get_task_logs_evergreen",
   "arguments": {
     "task_id": "task_from_failed_jobs_response",
     "filter_errors": true,
@@ -677,11 +769,13 @@ This returns your recent patches with status information, allowing you to identi
 
 ### Agent Workflow Example
 
-1. **Agent lists user patches**: Calls `list_user_recent_patches` to get recent patches
+1. **Agent lists user patches**: Calls `list_user_recent_patches_evergreen` to get recent patches
 2. **Agent selects relevant patch**: Chooses patch based on status, description, or user input
-3. **Agent analyzes failures**: Calls `get_patch_failed_jobs` to get detailed failure information
-4. **Agent gets detailed logs**: Calls `get_task_logs` for specific failed tasks
-5. **Agent suggests fixes**: Based on error patterns and log analysis
+3. **Agent analyzes failures**: Calls `get_patch_failed_jobs_evergreen` to get detailed failure information with test counts
+4. **Agent identifies test failures**: Examines `test_info` in failed tasks to find unit test failures
+5. **Agent gets unit test details**: Calls `get_task_test_results_evergreen` for tasks with `failed_test_count > 0`
+6. **Agent gets detailed logs**: Calls `get_task_logs_evergreen` for specific failed tasks or uses test-specific log URLs
+7. **Agent suggests fixes**: Based on error patterns, specific test failures, and log analysis
 
 ### Typical Agent Selection Logic
 
@@ -695,6 +789,15 @@ for patch in patches:
     elif 'fix' in patch['description'].lower():
         # This might be a fix attempt - worth checking
         selected_patch = patch
+
+# After getting failed jobs, agent can identify test failures:
+failed_jobs = get_patch_failed_jobs_evergreen(selected_patch['patch_id'])
+for task in failed_jobs['failed_tasks']:
+    test_info = task.get('test_info', {})
+    if test_info.get('has_test_results') and test_info.get('failed_test_count', 0) > 0:
+        # This task has unit test failures - get detailed test results
+        test_results = get_task_test_results_evergreen(task['task_id'])
+        # Analyze specific test failures for targeted suggestions
 ```
 
 ## Testing

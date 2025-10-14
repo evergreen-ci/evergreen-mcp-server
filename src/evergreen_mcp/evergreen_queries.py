@@ -1,7 +1,8 @@
 """GraphQL queries for Evergreen API
 
 This module contains all GraphQL query definitions used by the Evergreen MCP server.
-Queries are separated from the client implementation for better maintainability and reusability.
+Queries are separated from the client implementation for better maintainability
+and reusability.
 """
 
 # Projects query - retrieves all projects grouped by organization
@@ -164,6 +165,9 @@ query GetPatchFailedTasks($patchId: String!) {
           execution
           finishTime
           timeTaken
+          hasTestResults
+          failedTestCount
+          totalTestCount
           details {
             description
             status
@@ -206,6 +210,9 @@ query GetVersionWithFailedTasks($versionId: String!) {
         execution
         finishTime
         timeTaken
+        hasTestResults
+        failedTestCount
+        totalTestCount
         details {
           description
           status
@@ -240,6 +247,48 @@ query GetTaskLogs($taskId: String!, $execution: Int!) {
         message
         timestamp
         type
+      }
+    }
+  }
+}
+"""
+
+# Get detailed test results for a specific task
+GET_TASK_TEST_RESULTS = """
+query GetTaskTestResults(
+  $taskId: String!,
+  $execution: Int!,
+  $testFilterOptions: TestFilterOptions
+) {
+  task(taskId: $taskId, execution: $execution) {
+    id
+    displayName
+    buildVariant
+    status
+    execution
+    hasTestResults
+    failedTestCount
+    totalTestCount
+    tests(opts: $testFilterOptions) {
+      totalTestCount
+      filteredTestCount
+      testResults {
+        id
+        status
+        testFile
+        duration
+        startTime
+        endTime
+        exitCode
+        groupID
+        logs {
+          url
+          urlParsley
+          urlRaw
+          lineNum
+          renderingType
+          version
+        }
       }
     }
   }

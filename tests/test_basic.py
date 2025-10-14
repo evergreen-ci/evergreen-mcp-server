@@ -21,9 +21,10 @@ class TestMCPTools(unittest.TestCase):
         # Check that all expected tools are present
         tool_names = [tool.name for tool in tools]
         expected_tools = [
-            "list_user_recent_patches",
-            "get_patch_failed_jobs",
-            "get_task_logs",
+            "list_user_recent_patches_evergreen",
+            "get_patch_failed_jobs_evergreen",
+            "get_task_logs_evergreen",
+            "get_task_test_results_evergreen",
         ]
 
         for expected_tool in expected_tools:
@@ -94,6 +95,7 @@ class TestImports(unittest.TestCase):
                 "GET_USER_RECENT_PATCHES",
                 "GET_PATCH_FAILED_TASKS",
                 "GET_TASK_LOGS",
+                "GET_TASK_TEST_RESULTS",
             ]
             for query in expected_queries:
                 self.assertTrue(

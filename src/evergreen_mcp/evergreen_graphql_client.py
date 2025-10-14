@@ -7,7 +7,6 @@ It handles authentication, connection management, and query execution.
 import logging
 from typing import Any, Dict, List, Optional
 
-import aiohttp
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
@@ -18,9 +17,13 @@ from .evergreen_queries import (
     GET_PROJECT_SETTINGS,
     GET_PROJECTS,
     GET_TASK_LOGS,
+    GET_TASK_TEST_RESULTS,
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
 )
+
+# Constants for test status values
+FAILED_TEST_STATUSES = ["fail", "failed"]
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +266,47 @@ class EvergreenGraphQLClient:
 
         logs_count = len(task.get("taskLogs", {}).get("taskLogs", []))
         logger.info("Retrieved %s log entries for task %s", logs_count, task_id)
+        return task
+
+    async def get_task_test_results(
+        self,
+        task_id: str,
+        execution: int = 0,
+        failed_only: bool = True,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Get detailed test results for a specific task
+
+        Args:
+            task_id: Task identifier
+            execution: Task execution number (default: 0)
+            failed_only: Whether to fetch only failed tests (default: True)
+            limit: Maximum number of test results to return (default: 100)
+
+        Returns:
+            Task test results dictionary
+        """
+        # Build test filter options
+        test_filter_options = {"limit": limit, "page": 0}
+
+        if failed_only:
+            test_filter_options["statuses"] = FAILED_TEST_STATUSES
+
+        variables = {
+            "taskId": task_id,
+            "execution": execution,
+            "testFilterOptions": test_filter_options,
+        }
+
+        result = await self._execute_query(GET_TASK_TEST_RESULTS, variables)
+
+        task = result.get("task")
+        if not task:
+            raise Exception(f"Task not found: {task_id}")
+
+        test_results = task.get("tests", {})
+        test_count = test_results.get("filteredTestCount", 0)
+        logger.info("Retrieved %s test results for task %s", test_count, task_id)
         return task
 
     async def __aenter__(self):
