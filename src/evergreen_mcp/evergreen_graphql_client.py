@@ -273,7 +273,7 @@ class EvergreenGraphQLClient:
         task_id: str,
         execution: int = 0,
         failed_only: bool = True,
-        limit: int = 100
+        limit: int = 100,
     ) -> Dict[str, Any]:
         """Get detailed test results for a specific task
 
@@ -287,10 +287,7 @@ class EvergreenGraphQLClient:
             Task test results dictionary
         """
         # Build test filter options
-        test_filter_options = {
-            "limit": limit,
-            "page": 0
-        }
+        test_filter_options = {"limit": limit, "page": 0}
 
         if failed_only:
             test_filter_options["statuses"] = FAILED_TEST_STATUSES
@@ -298,7 +295,7 @@ class EvergreenGraphQLClient:
         variables = {
             "taskId": task_id,
             "execution": execution,
-            "testFilterOptions": test_filter_options
+            "testFilterOptions": test_filter_options,
         }
 
         result = await self._execute_query(GET_TASK_TEST_RESULTS, variables)
