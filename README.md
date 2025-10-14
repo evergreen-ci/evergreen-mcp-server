@@ -19,11 +19,26 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 ## Prerequisites
 
-- Python 3.13.3 (as specified in `.tool-versions`)
 - Access to an Evergreen instance
 - Valid Evergreen API credentials
+- Docker (recommended) or Python 3.13.3 (for development setup)
 
-## Installation
+## Quick Start (Docker)
+
+The fastest way to get started is using the published Docker image:
+
+```bash
+# Pull and run the MCP server
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+For detailed setup instructions and client configuration, see [Running the Server](#running-the-server) and [MCP Client Configuration](#mcp-client-configuration) sections below.
+
+## Installation (Development Setup)
 
 ### 1. Clone the Repository
 
@@ -313,19 +328,39 @@ Retrieves detailed unit test results for a specific Evergreen task, including in
 
 The Evergreen MCP server is designed to be used with MCP clients (like Claude Desktop, VS Code with MCP extension) or for testing with the MCP Inspector. It communicates via stdio and is not meant to be run as a standalone HTTP server.
 
-### Method 1: With MCP Inspector (Recommended for Testing)
+### Method 1: Using Docker (Recommended)
+
+The easiest way to get started is using the published Docker image:
 
 ```bash
-# Using npx (no installation required)
-npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
+# Pull the latest Docker image
+docker pull ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 
-# This will:
-# - Start the MCP server
-# - Launch a web interface for testing
-# - Open your browser automatically
+# Run the container with required environment variables
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+
+# Run with project ID
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
+  --project-id your-evergreen-project-id
+
+# Run with volume mount for logs
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  -v $(pwd)/logs:/app/logs \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
-### Method 2: Direct Execution (for MCP Clients)
+### Method 2: Direct Execution (for Development)
 
 ```bash
 # Make sure your virtual environment is activated
@@ -340,36 +375,43 @@ evergreen-mcp-server --project-id your-evergreen-project-id
 
 **Note**: When run directly, the server expects to communicate via stdio with an MCP client. It will not provide a command-line interface or HTTP endpoint.
 
-### Method 3: Using Docker
-
-#### Build and Run with Docker
+### Method 3: With MCP Inspector (for Testing and Development)
 
 ```bash
-# Build the Docker image
-docker build -t evergreen-mcp-server .
+# Using npx (no installation required)
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 
-# Run the container with required environment variables
-docker run --rm -it \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  evergreen-mcp-server
-
-# Run with volume mount for logs
-docker run --rm -it \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  -v $(pwd)/logs:/app/logs \
-  evergreen-mcp-server
+# This will:
+# - Start the MCP server
+# - Launch a web interface for testing
+# - Open your browser automatically
 ```
 
 ## MCP Client Configuration
 
 ### VS Code with MCP Extension
 
-Add the following to your MCP client configuration (e.g., `.vscode/mcp.json`):
+**Using Docker (Recommended):**
+```json
+{
+    "servers": {
+        "evergreen-mcp-server": {
+            "type": "stdio",
+            "command": "docker",
+            "args": [
+                "run", "--rm", "-i",
+                "-e", "EVERGREEN_USER=your_username",
+                "-e", "EVERGREEN_API_KEY=your_api_key",
+                "-e", "EVERGREEN_PROJECT=your_project",
+                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+                "--project-id", "your-evergreen-project-id"
+            ]
+        }
+    }
+}
+```
 
+**Using Local Installation:**
 ```json
 {
     "servers": {
@@ -384,8 +426,44 @@ Add the following to your MCP client configuration (e.g., `.vscode/mcp.json`):
 
 ### Claude Desktop
 
-Add to your Claude Desktop MCP configuration:
+**Using Docker (Recommended):**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "EVERGREEN_USER=your_username",
+        "-e", "EVERGREEN_API_KEY=your_api_key",
+        "-e", "EVERGREEN_PROJECT=your_project",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
 
+**With Project ID:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "EVERGREEN_USER=your_username",
+        "-e", "EVERGREEN_API_KEY=your_api_key",
+        "-e", "EVERGREEN_PROJECT=your_project",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+        "--project-id", "your-evergreen-project-id"
+      ]
+    }
+  }
+}
+```
+
+**Using Local Installation:**
 ```json
 {
     "mcpServers": {
@@ -397,31 +475,13 @@ Add to your Claude Desktop MCP configuration:
 }
 ```
 
-**With Project ID Configuration:**
+**Local Installation with Project ID:**
 ```json
 {
   "mcpServers": {
     "evergreen": {
       "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
       "args": ["--project-id", "your-evergreen-project-id"]
-    }
-  }
-}
-```
-
-**Using Docker:**
-```json
-{
-  "mcpServers": {
-    "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "EVERGREEN_USER=your_username",
-        "-e", "EVERGREEN_API_KEY=your_api_key",
-        "-e", "EVERGREEN_PROJECT=your_project",
-        "evergreen-mcp-server"
-      ]
     }
   }
 }
@@ -441,7 +501,27 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
 
 2. **Configure MCP Server**: Add the Evergreen MCP server to Augment's configuration:
 
-   **For VS Code with Augment:**
+   **For VS Code with Augment (using Docker - Recommended):**
+   ```json
+   {
+     "augment.mcpServers": {
+       "evergreen": {
+         "command": "docker",
+         "args": [
+           "run", "--rm", "-i",
+           "-e", "EVERGREEN_USER=your_username",
+           "-e", "EVERGREEN_API_KEY=your_api_key",
+           "-e", "EVERGREEN_PROJECT=your_project",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+           "--project-id", "your-evergreen-project-id"
+         ],
+         "env": {}
+       }
+     }
+   }
+   ```
+
+   **For VS Code with Augment (using local installation):**
    ```json
    {
      "augment.mcpServers": {
@@ -454,8 +534,28 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
    }
    ```
 
-   **For JetBrains IDEs with Augment:**
-   Add to your Augment settings:
+   **For JetBrains IDEs with Augment (using Docker - Recommended):**
+   ```json
+   {
+     "mcp": {
+       "servers": {
+         "evergreen": {
+           "command": "docker",
+           "args": [
+             "run", "--rm", "-i",
+             "-e", "EVERGREEN_USER=your_username",
+             "-e", "EVERGREEN_API_KEY=your_api_key",
+             "-e", "EVERGREEN_PROJECT=your_project",
+             "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+             "--project-id", "your-evergreen-project-id"
+           ]
+         }
+       }
+     }
+   }
+   ```
+
+   **For JetBrains IDEs with Augment (using local installation):**
    ```json
    {
      "mcp": {
@@ -484,7 +584,27 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 1. **Install Claude Extension**: Install the official Claude extension from the VS Code marketplace
 
-2. **Configure MCP in VS Code Settings**: Add to your VS Code `settings.json`:
+2. **Configure MCP in VS Code Settings** (using Docker - Recommended):
+   ```json
+   {
+     "claude.mcpServers": {
+       "evergreen": {
+         "command": "docker",
+         "args": [
+           "run", "--rm", "-i",
+           "-e", "EVERGREEN_USER=your_username",
+           "-e", "EVERGREEN_API_KEY=your_api_key",
+           "-e", "EVERGREEN_PROJECT=your_project",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+           "--project-id", "your-evergreen-project-id"
+         ],
+         "type": "stdio"
+       }
+     }
+   }
+   ```
+
+   **Using local installation:**
    ```json
    {
      "claude.mcpServers": {
@@ -498,6 +618,27 @@ Claude's IDE integration provides direct access to Claude AI within your develop
    ```
 
 3. **Alternative Configuration**: Create a `.claude/mcp.json` file in your project root:
+
+   **Using Docker (Recommended):**
+   ```json
+   {
+     "mcpServers": {
+       "evergreen": {
+         "command": "docker",
+         "args": [
+           "run", "--rm", "-i",
+           "-e", "EVERGREEN_USER=your_username",
+           "-e", "EVERGREEN_API_KEY=your_api_key",
+           "-e", "EVERGREEN_PROJECT=your_project",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+           "--project-id", "your-evergreen-project-id"
+         ]
+       }
+     }
+   }
+   ```
+
+   **Using local installation:**
    ```json
    {
      "mcpServers": {
@@ -513,7 +654,28 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 1. **Install Claude Plugin**: Install the Claude plugin from JetBrains marketplace
 
-2. **Configure MCP Server**: In Claude plugin settings, add:
+2. **Configure MCP Server**: In Claude plugin settings:
+
+   **Using Docker (Recommended):**
+   ```json
+   {
+     "servers": {
+       "evergreen": {
+         "command": "docker",
+         "args": [
+           "run", "--rm", "-i",
+           "-e", "EVERGREEN_USER=your_username",
+           "-e", "EVERGREEN_API_KEY=your_api_key",
+           "-e", "EVERGREEN_PROJECT=your_project",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+           "--project-id", "your-evergreen-project-id"
+         ]
+       }
+     }
+   }
+   ```
+
+   **Using local installation:**
    ```json
    {
      "servers": {
@@ -529,7 +691,28 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 GitHub Copilot Chat can be extended with MCP servers through various configuration methods.
 
-**VS Code Configuration:**
+**VS Code Configuration (using Docker - Recommended):**
+```json
+{
+  "github.copilot.chat.mcp": {
+    "servers": {
+      "evergreen": {
+        "command": "docker",
+        "args": [
+          "run", "--rm", "-i",
+          "-e", "EVERGREEN_USER=your_username",
+          "-e", "EVERGREEN_API_KEY=your_api_key",
+          "-e", "EVERGREEN_PROJECT=your_project",
+          "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+          "--project-id", "your-evergreen-project-id"
+        ]
+      }
+    }
+  }
+}
+```
+
+**VS Code Configuration (using local installation):**
 ```json
 {
   "github.copilot.chat.mcp": {
@@ -549,6 +732,24 @@ For other IDE-based AI assistants that support MCP, the general configuration pa
 
 1. **Locate MCP Configuration**: Find your IDE AI tool's MCP server configuration section
 2. **Add Server Entry**: Add an entry for the Evergreen MCP server:
+
+   **Using Docker (Recommended):**
+   ```json
+   {
+     "command": "docker",
+     "args": [
+       "run", "--rm", "-i",
+       "-e", "EVERGREEN_USER=your_username",
+       "-e", "EVERGREEN_API_KEY=your_api_key",
+       "-e", "EVERGREEN_PROJECT=your_project",
+       "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+       "--project-id", "your-evergreen-project-id"
+     ],
+     "type": "stdio"
+   }
+   ```
+
+   **Using local installation:**
    ```json
    {
      "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
@@ -556,7 +757,10 @@ For other IDE-based AI assistants that support MCP, the general configuration pa
      "type": "stdio"
    }
    ```
-3. **Set Environment**: Ensure your Evergreen credentials are available in `~/.evergreen.yml`
+
+3. **Set Environment**: 
+   - For Docker: Set environment variables as shown in the configuration above
+   - For local installation: Ensure your Evergreen credentials are available in `~/.evergreen.yml`
 
 #### Configuration Tips
 
@@ -565,7 +769,7 @@ For other IDE-based AI assistants that support MCP, the general configuration pa
 - On Windows: Use `.venv\Scripts\evergreen-mcp-server.exe`
 - On macOS/Linux: Use `.venv/bin/evergreen-mcp-server`
 
-**Docker Integration:**
+**Docker Integration (Recommended):**
 Many IDE AI tools also support Docker-based MCP servers:
 ```json
 {
@@ -575,7 +779,7 @@ Many IDE AI tools also support Docker-based MCP servers:
     "-e", "EVERGREEN_USER=your_username",
     "-e", "EVERGREEN_API_KEY=your_api_key",
     "-e", "EVERGREEN_PROJECT=your_project",
-    "evergreen-mcp-server"
+    "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
   ]
 }
 ```
@@ -594,10 +798,11 @@ Instead of using `~/.evergreen.yml`, you can set environment variables:
 ```
 
 **Troubleshooting:**
-- Verify the MCP server runs correctly: `evergreen-mcp-server --help`
-- Test with MCP Inspector first: `npx @modelcontextprotocol/inspector evergreen-mcp-server`
+- Test with Docker first: `docker run --rm -it -e EVERGREEN_USER=your_username -e EVERGREEN_API_KEY=your_api_key -e EVERGREEN_PROJECT=your_project ghcr.io/evergreen-ci/evergreen-mcp-server:latest --help`
+- Test with MCP Inspector: `npx @modelcontextprotocol/inspector docker run --rm -i -e EVERGREEN_USER=your_username -e EVERGREEN_API_KEY=your_api_key -e EVERGREEN_PROJECT=your_project ghcr.io/evergreen-ci/evergreen-mcp-server:latest`
+- For local installation: Verify the MCP server runs correctly: `evergreen-mcp-server --help`
 - Check IDE AI tool logs for MCP connection errors
-- Ensure proper file permissions on the executable
+- Ensure Docker is installed and running for Docker-based configurations
 
 ## MCP Inspector Integration
 
@@ -617,7 +822,26 @@ npm install -g @modelcontextprotocol/inspector
 
 ### Using Inspector with Evergreen MCP Server
 
-#### Method 1: Using npx (Recommended)
+#### Method 1: Using Docker (Recommended)
+
+```bash
+# Start the inspector with the Docker image (requires Docker environment variables)
+npx @modelcontextprotocol/inspector docker run --rm -i \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+
+# With project ID configuration
+npx @modelcontextprotocol/inspector docker run --rm -i \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e EVERGREEN_PROJECT=your_project \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
+  --project-id your-evergreen-project-id
+```
+
+#### Method 2: Using Local Installation with npx
 
 ```bash
 # Start the inspector with the Evergreen MCP server using the full path to the virtual environment
@@ -627,7 +851,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 npx @modelcontextprotocol/inspector evergreen-mcp-server
 ```
 
-#### Method 2: Using Globally Installed Inspector
+#### Method 3: Using Globally Installed Inspector
 
 ```bash
 # If you installed mcp-inspector globally
@@ -637,7 +861,7 @@ mcp-inspector .venv/bin/evergreen-mcp-server
 mcp-inspector .venv/bin/evergreen-mcp-server --project-id your-evergreen-project-id
 ```
 
-#### Method 3: Using Python Module Directly
+#### Method 4: Using Python Module Directly
 
 ```bash
 # Using the Python module directly
