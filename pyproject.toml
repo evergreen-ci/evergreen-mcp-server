@@ -33,10 +33,27 @@ known_first_party = ["evergreen_mcp"]
 [project]
 name = "evergreen-mcp-server"
 version = "0.1.0"
-description = "A server for interacting with the Evergreen API."
+description = "A Model Context Protocol (MCP) server that provides access to the Evergreen CI/CD platform API"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
 ]
+keywords = ["mcp", "evergreen", "ci", "cd", "model-context-protocol", "mongodb"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Build Tools",
+]
+
 dependencies = [
     "urllib3",
     "python-dateutil",
@@ -49,6 +66,12 @@ dependencies = [
     "gql[aiohttp]"
 ]
 
+[project.urls]
+"Homepage" = "https://github.com/evergreen-ci/evergreen-mcp-server"
+"Repository" = "https://github.com/evergreen-ci/evergreen-mcp-server"
+"Bug Tracker" = "https://github.com/evergreen-ci/evergreen-mcp-server/issues"
+"Documentation" = "https://github.com/evergreen-ci/evergreen-mcp-server#readme"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
@@ -59,4 +82,4 @@ dev = [
 ]
 
 [project.scripts]
-evergreen-mcp-server = "evergreen_mcp.server:main"
+evergreen-mcp = "evergreen_mcp.server:main"

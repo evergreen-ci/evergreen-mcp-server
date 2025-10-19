@@ -59,7 +59,7 @@ async def test_mcp_server():
 
     # Start the server
     server_params = mcp.client.stdio.StdioServerParameters(
-        command="evergreen-mcp-server", args=[], env=None
+        command="evergreen-mcp", args=[], env=None
     )
 
     async with mcp.client.stdio.stdio_client(server_params) as (read, write):
