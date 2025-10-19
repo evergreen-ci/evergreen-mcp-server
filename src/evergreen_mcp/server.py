@@ -155,13 +155,14 @@ def main() -> None:
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description="Evergreen MCP Server - Model Context Protocol server for Evergreen CI/CD",
+        description=(
+            "Evergreen MCP Server - Model Context Protocol server for Evergreen CI/CD"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   evergreen-mcp                          # Start MCP server
   evergreen-mcp --project-id mms         # Start with default project ID
-  
 Configuration:
   Create ~/.evergreen.yml with your Evergreen credentials:
     user: your-evergreen-username
@@ -175,10 +176,10 @@ For more information, visit:
         "--version", action="version", version="evergreen-mcp-server 0.1.0"
     )
     parser.add_argument(
-        "--project-id", 
-        type=str, 
+        "--project-id",
+        type=str,
         help="Default Evergreen project identifier",
-        metavar="PROJECT"
+        metavar="PROJECT",
     )
 
     args = parser.parse_args()

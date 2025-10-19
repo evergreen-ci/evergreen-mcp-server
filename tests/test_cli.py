@@ -10,6 +10,7 @@ import sys
 import unittest
 from pathlib import Path
 
+
 class TestCLI(unittest.TestCase):
     """Test CLI functionality"""
 
@@ -33,9 +34,9 @@ except SystemExit:
             [sys.executable, "-c", test_code],
             env={"PYTHONPATH": str(self.src_dir)},
             capture_output=True,
-            text=True
+            text=True,
         )
-        # argparse --help writes to stderr  
+        # argparse --help writes to stderr
         output = result.stdout + result.stderr
         self.assertIn("Evergreen MCP Server", output)
         self.assertIn("--project-id", output)
@@ -56,21 +57,24 @@ except SystemExit:
             [sys.executable, "-c", test_code],
             env={"PYTHONPATH": str(self.src_dir)},
             capture_output=True,
-            text=True
+            text=True,
         )
-        # argparse --version writes to stderr typically  
+        # argparse --version writes to stderr typically
         output = result.stdout + result.stderr
         self.assertIn("evergreen-mcp-server 0.1.0", output)
 
     def test_cli_main_import(self):
         """Test that CLI main function can be imported"""
         result = subprocess.run(
-            [sys.executable, "-c", 
-             "import sys; sys.path.insert(0, '" + str(self.src_dir) + "'); "
-             "from evergreen_mcp.server import main; "
-             "print('CLI main function imported successfully')"],
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.path.insert(0, '" + str(self.src_dir) + "'); "
+                "from evergreen_mcp.server import main; "
+                "print('CLI main function imported successfully')",
+            ],
             capture_output=True,
-            text=True
+            text=True,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("CLI main function imported successfully", result.stdout)
@@ -78,9 +82,9 @@ except SystemExit:
     def test_project_scripts_entry_point(self):
         """Test that the entry point is correctly defined in pyproject.toml"""
         pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
-        with open(pyproject_path, 'r') as f:
+        with open(pyproject_path, "r") as f:
             content = f.read()
-        
+
         self.assertIn("[project.scripts]", content)
         self.assertIn('evergreen-mcp = "evergreen_mcp.server:main"', content)
 
