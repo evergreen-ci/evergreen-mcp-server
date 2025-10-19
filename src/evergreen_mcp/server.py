@@ -196,3 +196,7 @@ For more information, visit:
     except Exception:
         logger.error("Server failed to start", exc_info=True)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

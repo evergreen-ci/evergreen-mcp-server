@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -e .
 USER evergreen
 
 # Set entry point
-ENTRYPOINT ["evergreen-mcp-server"]
+ENTRYPOINT ["evergreen-mcp"]
 
 # Labels
 LABEL maintainer="MongoDB"

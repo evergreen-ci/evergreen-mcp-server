@@ -75,7 +75,7 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
-### Method 3: Using Docker (Alternative)
+### Method 3: Using Docker
 
 If you prefer containerized deployment:
 
