@@ -7,6 +7,9 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 [Evergreen](https://github.com/evergreen-ci/evergreen) is MongoDB's continuous integration platform. This MCP server exposes Evergreen's functionality through the Model Context Protocol, allowing AI assistants to help with CI/CD operations, project management, and build analysis.
 
+<img width="608" height="310" alt="Screenshot 2025-10-23 at 20 49 20" src="https://github.com/user-attachments/assets/c6961ef5-5ab5-450f-a8da-dbaa4253bab7" />
+
+
 ## Features
 
 - **Project Resources**: Access and list Evergreen projects and build statuses
