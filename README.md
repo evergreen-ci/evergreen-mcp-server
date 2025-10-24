@@ -24,11 +24,13 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 - Access to an Evergreen instance
 - Valid Evergreen API credentials
-- Docker (recommended) or Python 3.13.3 (for development setup)
+- Docker (recommended for org-based access users) or Python 3.13.3 (for development setup)
 
 ## Quick Start (Docker)
 
 The fastest way to get started is using the published Docker image:
+
+> **Note**: Docker access to the Evergreen MCP server image requires org-based access. If you don't have org-based access, use the [local installation method](#installation-development-setup) instead.
 
 ```bash
 # Pull and run the MCP server
@@ -335,6 +337,8 @@ The Evergreen MCP server is designed to be used with MCP clients (like Claude De
 
 The easiest way to get started is using the published Docker image:
 
+> **Note**: Docker access requires org-based access to the Evergreen MCP server image. If you don't have org-based access, use [Method 2: Direct Execution](#method-2-direct-execution-for-development) instead.
+
 ```bash
 # Pull the latest Docker image
 docker pull ghcr.io/evergreen-ci/evergreen-mcp-server:latest
@@ -391,6 +395,8 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 ```
 
 ## MCP Client Configuration
+
+> **Note**: Docker-based configurations require org-based access to the Evergreen MCP server image. If you don't have org-based access, use the local installation configurations instead.
 
 ### VS Code with MCP Extension
 
@@ -540,19 +546,17 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
    **For JetBrains IDEs with Augment (using Docker - Recommended):**
    ```json
    {
-     "mcp": {
-       "servers": {
-         "evergreen": {
-           "command": "docker",
-           "args": [
-             "run", "--rm", "-i",
-             "-e", "EVERGREEN_USER=your_username",
-             "-e", "EVERGREEN_API_KEY=your_api_key",
-             "-e", "EVERGREEN_PROJECT=your_project",
-             "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-             "--project-id", "your-evergreen-project-id"
-           ]
-         }
+     "mcpServers": {
+       "evergreen": {
+         "command": "docker",
+         "args": [
+           "run", "--rm", "-i",
+           "-e", "EVERGREEN_USER=your_username",
+           "-e", "EVERGREEN_API_KEY=your_api_key",
+           "-e", "EVERGREEN_PROJECT=your_project",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
+           "--project-id", "your-evergreen-project-id"
+         ]
        }
      }
    }
@@ -561,12 +565,10 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
    **For JetBrains IDEs with Augment (using local installation):**
    ```json
    {
-     "mcp": {
-       "servers": {
-         "evergreen": {
-           "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-           "args": ["--project-id", "your-evergreen-project-id"]
-         }
+     "mcpServers": {
+       "evergreen": {
+         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+         "args": ["--project-id", "your-evergreen-project-id"]
        }
      }
    }
