@@ -37,7 +37,7 @@ jobs:
         python -c "from evergreen_mcp.mcp_tools import get_tool_definitions; print('✓ MCP tools import successfully')"
 
         # Test entry point exists
-        evergreen-mcp-server --help
+        evergreen-mcp --help
 
     - name: Run unit tests
       run: |
@@ -86,5 +86,5 @@ jobs:
     - name: Run integration tests (mock)
       run: |
         # Note: This will fail with authentication but tests the server startup
-        timeout 10s evergreen-mcp-server --help || true
+        timeout 10s evergreen-mcp --help || true
         echo "✓ Server can start (authentication expected to fail in CI)"

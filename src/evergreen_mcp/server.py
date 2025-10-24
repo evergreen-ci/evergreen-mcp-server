@@ -153,15 +153,38 @@ def main() -> None:
     """Main entry point for the MCP server"""
     global DEFAULT_PROJECT_ID
 
-    logger.info("Starting Evergreen MCP Server...")
-
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Evergreen MCP Server")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Evergreen MCP Server - Model Context Protocol server for Evergreen CI/CD"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  evergreen-mcp                          # Start MCP server
+  evergreen-mcp --project-id mms         # Start with default project ID
+Configuration:
+  Create ~/.evergreen.yml with your Evergreen credentials:
+    user: your-evergreen-username
+    api_key: your-evergreen-api-key
+
+For more information, visit:
+  https://github.com/evergreen-ci/evergreen-mcp-server
+        """,
+    )
     parser.add_argument(
-        "--project-id", type=str, help="Default Evergreen project identifier"
+        "--version", action="version", version="evergreen-mcp-server 0.1.0"
+    )
+    parser.add_argument(
+        "--project-id",
+        type=str,
+        help="Default Evergreen project identifier",
+        metavar="PROJECT",
     )
 
     args = parser.parse_args()
+
+    logger.info("Starting Evergreen MCP Server v0.1.0...")
 
     # Set global project ID if provided
     if args.project_id:
@@ -174,3 +197,7 @@ def main() -> None:
     except Exception:
         logger.error("Server failed to start", exc_info=True)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

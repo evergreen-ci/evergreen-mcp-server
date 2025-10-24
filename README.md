@@ -24,53 +24,74 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 - Access to an Evergreen instance
 - Valid Evergreen API credentials
-- Docker (recommended) or Python 3.13.3 (for development setup)
+- Python 3.11+ (for CLI installation) or Docker (for containerized setup)
 
-## Quick Start (Docker)
+## Quick Start (CLI - Recommended)
 
-The fastest way to get started is using the published Docker image:
+The fastest way to get started is using the CLI tool with `uv`:
 
 ```bash
-# Pull and run the MCP server
+# Install with uv (recommended)
+uv tool install evergreen-mcp-server --from git+https://github.com/evergreen-ci/evergreen-mcp-server
+
+# Or install with pip
+pip install git+https://github.com/evergreen-ci/evergreen-mcp-server
+
+# Set up your Evergreen credentials
+cat > ~/.evergreen.yml << EOF
+user: your-evergreen-username
+api_key: your-evergreen-api-key
+EOF
+
+# Run the MCP server
+evergreen-mcp --project-id your-evergreen-project-id
+```
+
+For detailed setup instructions and client configuration, see [Installation](#installation) and [MCP Client Configuration](#mcp-client-configuration) sections below.
+
+## Installation
+
+### Method 1: Using uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is the fastest and most reliable way to install the Evergreen MCP server:
+
+```bash
+# Install the CLI tool
+uv tool install evergreen-mcp-server --from git+https://github.com/evergreen-ci/evergreen-mcp-server
+
+# The evergreen-mcp command will be available in your PATH
+evergreen-mcp --help
+```
+
+### Method 2: Using pip
+
+```bash
+# Install directly from Git
+pip install git+https://github.com/evergreen-ci/evergreen-mcp-server
+
+# Or install from local clone for development
+git clone https://github.com/evergreen-ci/evergreen-mcp-server.git
+cd evergreen-mcp-server
+pip install -e .
+
+# For development (includes testing dependencies)
+pip install -e ".[dev]"
+```
+
+### Method 3: Using Docker
+
+If you prefer containerized deployment:
+
+```bash
+# Pull the Docker image
+docker pull ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+
+# Run with environment variables
 docker run --rm -it \
   -e EVERGREEN_USER=your_username \
   -e EVERGREEN_API_KEY=your_api_key \
   -e EVERGREEN_PROJECT=your_project \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-For detailed setup instructions and client configuration, see [Running the Server](#running-the-server) and [MCP Client Configuration](#mcp-client-configuration) sections below.
-
-## Installation (Development Setup)
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/evergreen-ci/evergreen-mcp-server.git
-cd evergreen-mcp-server
-```
-
-### 2. Set Up Python Environment
-
-```bash
-# Create a virtual environment
-python -m venv .venv
-
-# Activate the virtual environment
-# On macOS/Linux:
-source .venv/bin/activate
-# On Windows:
-# .venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
-# Install the package
-pip install -e .
-
-# For development (includes testing dependencies)
-pip install -e ".[dev]"
 ```
 
 ## Configuration
@@ -331,70 +352,78 @@ Retrieves detailed unit test results for a specific Evergreen task, including in
 
 The Evergreen MCP server is designed to be used with MCP clients (like Claude Desktop, VS Code with MCP extension) or for testing with the MCP Inspector. It communicates via stdio and is not meant to be run as a standalone HTTP server.
 
-### Method 1: Using Docker (Recommended)
+### Method 1: Using CLI (Recommended)
 
-The easiest way to get started is using the published Docker image:
+The easiest way to run the server is using the installed CLI tool:
 
 ```bash
-# Pull the latest Docker image
-docker pull ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+# Basic usage (server will wait for stdio input from MCP client)
+evergreen-mcp
 
-# Run the container with required environment variables
+# With default project ID
+evergreen-mcp --project-id your-evergreen-project-id
+
+# Show help and version
+evergreen-mcp --help
+evergreen-mcp --version
+```
+
+**Note**: The server expects to communicate via stdio with an MCP client. It does not provide an interactive command-line interface or HTTP endpoint when run directly.
+
+### Method 2: With MCP Inspector (for Testing and Development)
+
+```bash
+# Using npx with installed CLI (no path needed)
+npx @modelcontextprotocol/inspector evergreen-mcp
+
+# Using npx with development setup
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp
+
+# This will:
+# - Start the MCP server  
+# - Launch a web interface for testing
+# - Open your browser automatically
+```
+
+### Method 3: Using Docker (Alternative)
+
+If you prefer containerized deployment:
+
+```bash
+# Run with environment variables
 docker run --rm -it \
   -e EVERGREEN_USER=your_username \
   -e EVERGREEN_API_KEY=your_api_key \
   -e EVERGREEN_PROJECT=your_project \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 
-# Run with project ID
+# With project ID  
 docker run --rm -it \
   -e EVERGREEN_USER=your_username \
   -e EVERGREEN_API_KEY=your_api_key \
   -e EVERGREEN_PROJECT=your_project \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
   --project-id your-evergreen-project-id
-
-# Run with volume mount for logs
-docker run --rm -it \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  -v $(pwd)/logs:/app/logs \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-### Method 2: Direct Execution (for Development)
-
-```bash
-# Make sure your virtual environment is activated
-source .venv/bin/activate
-
-# Run the server (will wait for stdio input from an MCP client)
-evergreen-mcp-server
-
-# With project ID
-evergreen-mcp-server --project-id your-evergreen-project-id
-```
-
-**Note**: When run directly, the server expects to communicate via stdio with an MCP client. It will not provide a command-line interface or HTTP endpoint.
-
-### Method 3: With MCP Inspector (for Testing and Development)
-
-```bash
-# Using npx (no installation required)
-npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
-
-# This will:
-# - Start the MCP server
-# - Launch a web interface for testing
-# - Open your browser automatically
 ```
 
 ## MCP Client Configuration
 
 ### VS Code with MCP Extension
 
-**Using Docker (Recommended):**
+**Using CLI (Recommended):**
+```json
+{
+    "servers": {
+        "evergreen-mcp-server": {
+            "type": "stdio",
+            "command": "evergreen-mcp",
+            "args": ["--project-id", "your-evergreen-project-id"]
+        }
+    }
+}
+```
+
+**Using Docker (Alternative):**
 ```json
 {
     "servers": {
@@ -414,40 +443,21 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**Using Local Installation:**
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": ["--project-id", "your-evergreen-project-id"]
-        }
-    }
-}
-```
-
 ### Claude Desktop
 
-**Using Docker (Recommended):**
+**Using CLI (Recommended):**
 ```json
 {
   "mcpServers": {
     "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "EVERGREEN_USER=your_username",
-        "-e", "EVERGREEN_API_KEY=your_api_key",
-        "-e", "EVERGREEN_PROJECT=your_project",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-      ]
+      "command": "evergreen-mcp",
+      "args": ["--project-id", "your-evergreen-project-id"]
     }
   }
 }
 ```
 
-**With Project ID:**
+**Using Docker (Alternative):**
 ```json
 {
   "mcpServers": {
@@ -461,30 +471,6 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
         "--project-id", "your-evergreen-project-id"
       ]
-    }
-  }
-}
-```
-
-**Using Local Installation:**
-```json
-{
-    "mcpServers": {
-        "evergreen": {
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": []
-        }
-    }
-}
-```
-
-**Local Installation with Project ID:**
-```json
-{
-  "mcpServers": {
-    "evergreen": {
-      "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-      "args": ["--project-id", "your-evergreen-project-id"]
     }
   }
 }
