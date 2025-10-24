@@ -111,7 +111,7 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
     # Call the appropriate handler
     try:
         logger.debug("Executing tool: %s", name)
-        if name == "list_user_recent_patches":
+        if name == "list_user_recent_patches_evergreen":
             result = await handler(arguments, client, USER_ID)
         else:
             result = await handler(arguments, client)
