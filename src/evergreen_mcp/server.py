@@ -43,10 +43,10 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
         logger.info("Using environment variables for Evergreen configuration")
         evergreen_config = {
             "user": evergreen_user,
-            "api_key": evergreen_api_key
+            "api_key": evergreen_api_key,
         }
 
-        # Set default project ID from environment if provided and not already set
+        # Set default project ID from environment if provided and not set
         if evergreen_project and not DEFAULT_PROJECT_ID:
             DEFAULT_PROJECT_ID = evergreen_project
             logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
