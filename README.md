@@ -30,8 +30,6 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 The fastest way to get started is using the published Docker image:
 
-> **Note**: Docker access to the Evergreen MCP server image requires org-based access. If you don't have org-based access, use the [local installation method](#installation-development-setup) instead.
-
 ```bash
 # Pull and run the MCP server
 docker run --rm -it \
@@ -336,8 +334,6 @@ The Evergreen MCP server is designed to be used with MCP clients (like Claude De
 ### Method 1: Using Docker (Recommended)
 
 The easiest way to get started is using the published Docker image:
-
-> **Note**: Docker access requires org-based access to the Evergreen MCP server image. If you don't have org-based access, use [Method 2: Direct Execution](#method-2-direct-execution-for-development) instead.
 
 ```bash
 # Pull the latest Docker image
