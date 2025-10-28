@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import os
 import os.path
 import sys
 from asyncio import run
@@ -30,10 +31,30 @@ DEFAULT_PROJECT_ID = None
 @asynccontextmanager
 async def _server_lifespan(_) -> AsyncIterator[dict]:
     """Server lifespan manager - handles GraphQL client lifecycle"""
-    global USER_ID
+    global USER_ID, DEFAULT_PROJECT_ID
 
-    with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
-        evergreen_config = yaml.safe_load(f)
+    # Check for environment variables first (Docker setup)
+    evergreen_user = os.getenv("EVERGREEN_USER")
+    evergreen_api_key = os.getenv("EVERGREEN_API_KEY")
+    evergreen_project = os.getenv("EVERGREEN_PROJECT")
+
+    if evergreen_user and evergreen_api_key:
+        # Use environment variables (Docker setup)
+        logger.info("Using environment variables for Evergreen configuration")
+        evergreen_config = {
+            "user": evergreen_user,
+            "api_key": evergreen_api_key
+        }
+
+        # Set default project ID from environment if provided and not already set
+        if evergreen_project and not DEFAULT_PROJECT_ID:
+            DEFAULT_PROJECT_ID = evergreen_project
+            logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
+    else:
+        # Fall back to config file (local setup)
+        logger.info("Using ~/.evergreen.yml for Evergreen configuration")
+        with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
+            evergreen_config = yaml.safe_load(f)
 
     client = EvergreenGraphQLClient(
         user=evergreen_config["user"], api_key=evergreen_config["api_key"]
