@@ -32,43 +32,43 @@ def detect_project_from_workspace(
     config_data: dict, workspace_dir: str = None
 ) -> str | None:
     """Detect project ID from workspace directory using Evergreen config
-    
+
     Args:
         config_data: Parsed ~/.evergreen.yml configuration
         workspace_dir: Workspace directory path (optional)
-    
+
     Returns:
         Detected project ID or None if no match found
     """
     if not workspace_dir:
         workspace_dir = os.getenv("WORKSPACE_PATH") or os.getenv("PWD") or os.getcwd()
-    
+
     if not workspace_dir:
         logger.debug("No workspace directory available for project detection")
         return None
-    
+
     workspace_dir = os.path.abspath(os.path.expanduser(workspace_dir))
-    
+
     projects_for_directory = config_data.get("projects_for_directory", {})
-    
+
     if not projects_for_directory:
         logger.debug("No projects_for_directory section in config")
         return None
-    
+
     logger.debug("Checking workspace: %s", workspace_dir)
     logger.debug("Available project mappings: %s", projects_for_directory)
-    
+
     if workspace_dir in projects_for_directory:
         project_id = projects_for_directory[workspace_dir]
         logger.info("Exact match found: %s -> %s", workspace_dir, project_id)
         return project_id
-    
+
     best_match = None
     best_match_len = 0
-    
+
     for config_path, project_id in projects_for_directory.items():
         config_path = os.path.abspath(os.path.expanduser(config_path))
-        
+
         try:
             common = os.path.commonpath([workspace_dir, config_path])
             if common == config_path and len(config_path) > best_match_len:
@@ -76,11 +76,11 @@ def detect_project_from_workspace(
                 best_match_len = len(config_path)
         except ValueError:
             continue
-    
+
     if best_match:
         logger.info("Parent directory match found: %s", best_match)
         return best_match
-    
+
     logger.debug("No project match found for workspace: %s", workspace_dir)
     return None
 
@@ -115,10 +115,14 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
             evergreen_config = yaml.safe_load(f)
 
     if not DEFAULT_PROJECT_ID:
-        detected_project = detect_project_from_workspace(evergreen_config, workspace_dir)
+        detected_project = detect_project_from_workspace(
+            evergreen_config, workspace_dir
+        )
         if detected_project:
             DEFAULT_PROJECT_ID = detected_project
-            logger.info("Auto-detected project ID from workspace: %s", DEFAULT_PROJECT_ID)
+            logger.info(
+                "Auto-detected project ID from workspace: %s", DEFAULT_PROJECT_ID
+            )
 
     client = EvergreenGraphQLClient(
         user=evergreen_config["user"], api_key=evergreen_config["api_key"]
@@ -132,7 +136,9 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
         if DEFAULT_PROJECT_ID:
             logger.info("Default project ID configured: %s", DEFAULT_PROJECT_ID)
         else:
-            logger.info("No default project ID configured - tools will require explicit project_id parameter")
+            logger.info(
+                "No default project ID configured - tools will require explicit project_id parameter"
+            )
         yield {"evergreen_client": client}
 
 
@@ -245,14 +251,14 @@ def main() -> None:
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Evergreen MCP Server")
     parser.add_argument(
-        "--project-id", 
-        type=str, 
-        help="Default Evergreen project identifier (optional, can be auto-detected from workspace)"
+        "--project-id",
+        type=str,
+        help="Default Evergreen project identifier (optional, can be auto-detected from workspace)",
     )
     parser.add_argument(
         "--workspace-dir",
         type=str,
-        help="Workspace directory for auto-detecting project ID (optional, defaults to current directory)"
+        help="Workspace directory for auto-detecting project ID (optional, defaults to current directory)",
     )
 
     args = parser.parse_args()
