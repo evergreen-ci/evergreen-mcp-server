@@ -6,6 +6,7 @@ These tests validate individual components without requiring Evergreen credentia
 """
 
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from evergreen_mcp.mcp_tools import TOOL_HANDLERS, get_tool_definitions
 
@@ -104,6 +105,86 @@ class TestImports(unittest.TestCase):
                 )
         except ImportError as e:
             self.fail(f"Failed to import evergreen_queries: {e}")
+
+
+class TestVersion(unittest.TestCase):
+    """Test version constant"""
+
+    def test_version_exists(self):
+        """Test that __version__ constant exists"""
+        from evergreen_mcp import __version__
+
+        self.assertIsNotNone(__version__, "Version should be defined")
+        self.assertIsInstance(__version__, str, "Version should be a string")
+        self.assertGreater(len(__version__), 0, "Version should not be empty")
+
+    def test_version_format(self):
+        """Test that version follows expected format"""
+        from evergreen_mcp import __version__
+
+        # Version should be in format like "0.1.0"
+        self.assertRegex(
+            __version__,
+            r"^\d+\.\d+\.\d+$",
+            "Version should follow semantic versioning format (e.g., 0.1.0)",
+        )
+
+
+class TestUserAgent(unittest.TestCase):
+    """Test User-Agent header in GraphQL client"""
+
+    @patch("evergreen_mcp.evergreen_graphql_client.AIOHTTPTransport")
+    @patch("evergreen_mcp.evergreen_graphql_client.Client")
+    def test_user_agent_header_set(self, mock_client, mock_transport):
+        """Test that User-Agent header is set correctly"""
+        import asyncio
+
+        from evergreen_mcp import __version__
+        from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+
+        async def run_test():
+            # Create client instance
+            client = EvergreenGraphQLClient(
+                user="test_user",
+                api_key="test_key",
+                endpoint="https://test.example.com",
+            )
+
+            # Connect (which should set headers)
+            await client.connect()
+
+            # Verify that AIOHTTPTransport was called with correct headers
+            mock_transport.assert_called_once()
+            call_kwargs = mock_transport.call_args.kwargs
+
+            # Check that headers were passed
+            self.assertIn("headers", call_kwargs)
+            headers = call_kwargs["headers"]
+
+            # Verify User-Agent header exists and has correct format
+            self.assertIn("User-Agent", headers)
+            expected_user_agent = f"evergreen-mcp-server/{__version__}"
+            self.assertEqual(
+                headers["User-Agent"],
+                expected_user_agent,
+                f"User-Agent should be '{expected_user_agent}'",
+            )
+
+        # Run the async test
+        asyncio.run(run_test())
+
+    def test_user_agent_format(self):
+        """Test that User-Agent follows expected format"""
+        from evergreen_mcp import __version__
+
+        expected_user_agent = f"evergreen-mcp-server/{__version__}"
+
+        # Should be in format "evergreen-mcp-server/x.y.z"
+        self.assertRegex(
+            expected_user_agent,
+            r"^evergreen-mcp-server/\d+\.\d+\.\d+$",
+            "User-Agent should be in format 'evergreen-mcp-server/x.y.z'",
+        )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
+from . import __version__
 from .evergreen_queries import (
     GET_PATCH_FAILED_TASKS,
     GET_PROJECT,
@@ -54,6 +55,7 @@ class EvergreenGraphQLClient:
             "Api-User": self.user,
             "Api-Key": self.api_key,
             "Content-Type": "application/json",
+            "User-Agent": f"evergreen-mcp-server/{__version__}",
         }
 
         logger.debug("Connecting to GraphQL endpoint: %s", self.endpoint)
