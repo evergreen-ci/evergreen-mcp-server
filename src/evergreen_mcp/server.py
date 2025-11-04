@@ -103,17 +103,13 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
             "user": evergreen_user,
             "api_key": evergreen_api_key,
         }
-
-        # Set default project ID from environment if provided and not set
-        if evergreen_project and not DEFAULT_PROJECT_ID:
-            DEFAULT_PROJECT_ID = evergreen_project
-            logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
     else:
         # Fall back to config file (local setup)
         logger.info("Using ~/.evergreen.yml for Evergreen configuration")
         with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
             evergreen_config = yaml.safe_load(f)
 
+    # Priority 2: Try auto-detection from workspace (if not set by CLI)
     if not DEFAULT_PROJECT_ID:
         detected_project = detect_project_from_workspace(
             evergreen_config, workspace_dir
@@ -123,6 +119,11 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
             logger.info(
                 "Auto-detected project ID from workspace: %s", DEFAULT_PROJECT_ID
             )
+
+    # Priority 3: Fall back to EVERGREEN_PROJECT environment variable
+    if not DEFAULT_PROJECT_ID and evergreen_project:
+        DEFAULT_PROJECT_ID = evergreen_project
+        logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
 
     client = EvergreenGraphQLClient(
         user=evergreen_config["user"], api_key=evergreen_config["api_key"]
@@ -168,6 +169,45 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
         logger.error("Failed to retrieve projects", exc_info=True)
         # Return empty list on error to prevent server crash
         return []
+
+
+@server.list_prompts()
+async def _handle_list_prompts() -> Sequence[types.Prompt]:
+    """List available prompts - provides automatic context to the agent"""
+    prompts = []
+    
+    # If we have a default project, create a prompt to inform the agent
+    if DEFAULT_PROJECT_ID:
+        prompts.append(
+            types.Prompt(
+                name="evergreen-context",
+                description=f"Context about the current Evergreen project",
+                arguments=[],
+            )
+        )
+    
+    return prompts
+
+
+@server.get_prompt()
+async def _handle_get_prompt(name: str, arguments: dict) -> types.GetPromptResult:
+    """Get prompt content - automatically injects project context into agent memory"""
+    if name == "evergreen-context" and DEFAULT_PROJECT_ID:
+        return types.GetPromptResult(
+            description="Evergreen project context",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(
+                        type="text",
+                        text=f"Remember: The Evergreen project for this workspace is '{DEFAULT_PROJECT_ID}'. "
+                        f"When I ask about Evergreen patches, builds, or tasks, assume I'm referring to the '{DEFAULT_PROJECT_ID}' project unless I specify otherwise."
+                    ),
+                ),
+            ],
+        )
+    
+    raise ValueError(f"Unknown prompt: {name}")
 
 
 @server.list_tools()
@@ -279,3 +319,4 @@ def main() -> None:
     except Exception:
         logger.error("Server failed to start", exc_info=True)
         sys.exit(1)
+
