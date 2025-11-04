@@ -175,7 +175,7 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
 async def _handle_list_prompts() -> Sequence[types.Prompt]:
     """List available prompts - provides automatic context to the agent"""
     prompts = []
-    
+
     # If we have a default project, create a prompt to inform the agent
     if DEFAULT_PROJECT_ID:
         prompts.append(
@@ -185,7 +185,7 @@ async def _handle_list_prompts() -> Sequence[types.Prompt]:
                 arguments=[],
             )
         )
-    
+
     return prompts
 
 
@@ -201,12 +201,12 @@ async def _handle_get_prompt(name: str, arguments: dict) -> types.GetPromptResul
                     content=types.TextContent(
                         type="text",
                         text=f"Remember: The Evergreen project for this workspace is '{DEFAULT_PROJECT_ID}'. "
-                        f"When I ask about Evergreen patches, builds, or tasks, assume I'm referring to the '{DEFAULT_PROJECT_ID}' project unless I specify otherwise."
+                        f"When I ask about Evergreen patches, builds, or tasks, assume I'm referring to the '{DEFAULT_PROJECT_ID}' project unless I specify otherwise.",
                     ),
                 ),
             ],
         )
-    
+
     raise ValueError(f"Unknown prompt: {name}")
 
 
@@ -319,4 +319,3 @@ def main() -> None:
     except Exception:
         logger.error("Server failed to start", exc_info=True)
         sys.exit(1)
-
