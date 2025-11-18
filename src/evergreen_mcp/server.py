@@ -170,46 +170,6 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
         # Return empty list on error to prevent server crash
         return []
 
-
-@server.list_prompts()
-async def _handle_list_prompts() -> Sequence[types.Prompt]:
-    """List available prompts - provides automatic context to the agent"""
-    prompts = []
-
-    # If we have a default project, create a prompt to inform the agent
-    if DEFAULT_PROJECT_ID:
-        prompts.append(
-            types.Prompt(
-                name="evergreen-context",
-                description=f"Context about the current Evergreen project",
-                arguments=[],
-            )
-        )
-
-    return prompts
-
-
-@server.get_prompt()
-async def _handle_get_prompt(name: str, arguments: dict) -> types.GetPromptResult:
-    """Get prompt content - automatically injects project context into agent memory"""
-    if name == "evergreen-context" and DEFAULT_PROJECT_ID:
-        return types.GetPromptResult(
-            description="Evergreen project context",
-            messages=[
-                types.PromptMessage(
-                    role="user",
-                    content=types.TextContent(
-                        type="text",
-                        text=f"Remember: The Evergreen project for this workspace is '{DEFAULT_PROJECT_ID}'. "
-                        f"When I ask about Evergreen patches, builds, or tasks, assume I'm referring to the '{DEFAULT_PROJECT_ID}' project unless I specify otherwise.",
-                    ),
-                ),
-            ],
-        )
-
-    raise ValueError(f"Unknown prompt: {name}")
-
-
 @server.list_tools()
 async def _handle_list_tools() -> Sequence[types.Tool]:
     """List available MCP tools"""
@@ -244,6 +204,12 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
     # Call the appropriate handler
     try:
         logger.debug("Executing tool: %s", name)
+        
+        # Use DEFAULT_PROJECT_ID as fallback if not provided in arguments
+        if "project_id" not in arguments and DEFAULT_PROJECT_ID:
+            arguments = {**arguments, "project_id": DEFAULT_PROJECT_ID}
+            logger.info("Using default project ID: %s", DEFAULT_PROJECT_ID)
+        
         if name == "list_user_recent_patches_evergreen":
             result = await handler(arguments, client, USER_ID)
         else:

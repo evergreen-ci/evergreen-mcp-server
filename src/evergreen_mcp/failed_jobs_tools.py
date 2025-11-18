@@ -15,7 +15,7 @@ FAILED_TEST_STATUSES = ["fail", "failed"]
 
 
 async def fetch_user_recent_patches(
-    client, user_id: str, limit: int = 10
+    client, user_id: str, limit: int = 10, arguments: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """Fetch recent patches for the authenticated user
 
@@ -23,12 +23,18 @@ async def fetch_user_recent_patches(
         client: Evergreen GraphQL client
         user_id: User identifier (typically email)
         limit: Number of patches to return (default: 10, max: 50)
+        arguments: Tool arguments containing optional filters
 
     Returns:
         Dictionary containing user's recent patches
     """
     try:
+        arguments = arguments or {}
+        project_id = arguments.get("project_id")
+        
         logger.info("Fetching %s recent patches for user %s", limit, user_id)
+        if project_id:
+            logger.info("Project context: %s", project_id)
 
         # Get user's recent patches
         patches = await client.get_user_recent_patches(user_id, limit)
@@ -36,6 +42,8 @@ async def fetch_user_recent_patches(
         # Process and format patches
         processed_patches = []
         for patch in patches:
+            if project_id and patch.get("projectIdentifier") != project_id:
+                continue
             patch_info = {
                 "patch_id": patch.get("id"),
                 "patch_number": patch.get("patchNumber"),
@@ -59,6 +67,7 @@ async def fetch_user_recent_patches(
 
         return {
             "user_id": user_id,
+            "project_id": project_id,
             "patches": processed_patches,
             "total_patches": len(processed_patches),
         }
@@ -69,7 +78,7 @@ async def fetch_user_recent_patches(
 
 
 async def fetch_patch_failed_jobs(
-    client, patch_id: str, max_results: int = 50
+    client, patch_id: str, max_results: int = 50, arguments: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """Fetch failed jobs for a specific patch
 
@@ -83,10 +92,15 @@ async def fetch_patch_failed_jobs(
     """
     try:
         logger.info("Fetching failed jobs for patch %s", patch_id)
+        arguments = arguments or {}
+        project_id = arguments.get("project_id")
+        if project_id:
+            logger.info("Project context: %s", project_id)
 
         # Get patch with failed tasks
         patch = await client.get_patch_failed_tasks(patch_id)
-
+        if project_id and patch.get("projectIdentifier") != project_id:
+            raise ValueError("Patch does not belong to the specified project")
         # Extract patch information
         patch_info = {
             "patch_id": patch.get("id"),
@@ -195,6 +209,7 @@ async def fetch_patch_failed_jobs(
             "version_info": version_info,
             "failed_tasks": processed_tasks,
             "summary": summary,
+            "project_id": project_id,
         }
 
     except Exception as e:
