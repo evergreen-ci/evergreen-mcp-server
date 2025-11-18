@@ -41,6 +41,8 @@ docker run --rm -it \
 
 **💡 Pro Tip:** The server can automatically detect your project ID from your workspace directory! Add a `projects_for_directory` section to your `~/.evergreen.yml` config file (see [Automatic Project Detection](#automatic-project-detection)) and skip the manual `--project-id` argument.
 
+**Note:** If you use the Evergreen CLI and have previously answered "yes" to prompts about configuring a default project for a directory, you likely already have this configuration in place!
+
 For detailed setup instructions and client configuration, see [Running the Server](#running-the-server) and [MCP Client Configuration](#mcp-client-configuration) sections below.
 
 ## Installation (Development Setup)
