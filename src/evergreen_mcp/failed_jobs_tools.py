@@ -31,7 +31,7 @@ async def fetch_user_recent_patches(
     try:
         arguments = arguments or {}
         project_id = arguments.get("project_id")
-        
+
         logger.info("Fetching %s recent patches for user %s", limit, user_id)
         if project_id:
             logger.info("Project context: %s", project_id)

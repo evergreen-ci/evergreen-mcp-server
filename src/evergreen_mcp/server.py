@@ -170,6 +170,7 @@ async def _handle_project_resources() -> Sequence[types.Resource]:
         # Return empty list on error to prevent server crash
         return []
 
+
 @server.list_tools()
 async def _handle_list_tools() -> Sequence[types.Tool]:
     """List available MCP tools"""
@@ -204,12 +205,12 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
     # Call the appropriate handler
     try:
         logger.debug("Executing tool: %s", name)
-        
+
         # Use DEFAULT_PROJECT_ID as fallback if not provided in arguments
         if "project_id" not in arguments and DEFAULT_PROJECT_ID:
             arguments = {**arguments, "project_id": DEFAULT_PROJECT_ID}
             logger.info("Using default project ID: %s", DEFAULT_PROJECT_ID)
-        
+
         if name == "list_user_recent_patches_evergreen":
             result = await handler(arguments, client, USER_ID)
         else:

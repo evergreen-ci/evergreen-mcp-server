@@ -52,7 +52,7 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                         "default": 10,
                         "minimum": 1,
                         "maximum": 50,
-                    }
+                    },
                 },
                 "required": [],
                 "additionalProperties": False,
