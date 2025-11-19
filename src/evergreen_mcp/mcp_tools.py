@@ -214,7 +214,10 @@ async def handle_list_user_recent_patches(
     """Handle list_user_recent_patches_evergreen tool call"""
     try:
         limit = arguments.get("limit", 10)
-        result = await fetch_user_recent_patches(client, user_id, limit, arguments)
+        project_id = arguments.get("project_id", "")
+        result = await fetch_user_recent_patches(
+            client, user_id, limit, project_id=project_id
+        )
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
         logger.error("Failed to fetch user patches: %s", e)
@@ -238,7 +241,10 @@ async def handle_get_patch_failed_jobs(
             raise ValueError("patch_id parameter is required")
 
         max_results = arguments.get("max_results", 50)
-        result = await fetch_patch_failed_jobs(client, patch_id, max_results, arguments)
+        project_id = arguments.get("project_id")
+        result = await fetch_patch_failed_jobs(
+            client, patch_id, max_results, project_id=project_id
+        )
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
         logger.error("Failed to fetch patch failed jobs: %s", e)

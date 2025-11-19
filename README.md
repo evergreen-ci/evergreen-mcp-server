@@ -97,7 +97,7 @@ api_key: your-evergreen-api-key
 
 ### Project Configuration (Optional)
 
-**Good news! Project configuration is optional.** The AI agent can determine the project from context naturally.
+The AI agent can determine the project from context naturally.
 
 #### Agent-Driven Approach (Recommended)
 

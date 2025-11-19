@@ -15,7 +15,10 @@ FAILED_TEST_STATUSES = ["fail", "failed"]
 
 
 async def fetch_user_recent_patches(
-    client, user_id: str, limit: int = 10, arguments: Dict[str, Any] = None
+    client,
+    user_id: str,
+    limit: int = 10,
+    project_id: str = None,
 ) -> Dict[str, Any]:
     """Fetch recent patches for the authenticated user
 
@@ -23,15 +26,12 @@ async def fetch_user_recent_patches(
         client: Evergreen GraphQL client
         user_id: User identifier (typically email)
         limit: Number of patches to return (default: 10, max: 50)
-        arguments: Tool arguments containing optional filters
+        project_id: Optional project identifier to filter patches
 
     Returns:
         Dictionary containing user's recent patches
     """
     try:
-        arguments = arguments or {}
-        project_id = arguments.get("project_id")
-
         logger.info("Fetching %s recent patches for user %s", limit, user_id)
         if project_id:
             logger.info("Project context: %s", project_id)
@@ -78,7 +78,10 @@ async def fetch_user_recent_patches(
 
 
 async def fetch_patch_failed_jobs(
-    client, patch_id: str, max_results: int = 50, arguments: Dict[str, Any] = None
+    client,
+    patch_id: str,
+    max_results: int = 50,
+    project_id: str = None,
 ) -> Dict[str, Any]:
     """Fetch failed jobs for a specific patch
 
@@ -86,14 +89,13 @@ async def fetch_patch_failed_jobs(
         client: Evergreen GraphQL client
         patch_id: Patch identifier
         max_results: Maximum number of failed tasks to return
+        project_id: Optional project identifier to validate patch ownership
 
     Returns:
         Dictionary containing patch info and failed jobs data
     """
     try:
         logger.info("Fetching failed jobs for patch %s", patch_id)
-        arguments = arguments or {}
-        project_id = arguments.get("project_id")
         if project_id:
             logger.info("Project context: %s", project_id)
 
