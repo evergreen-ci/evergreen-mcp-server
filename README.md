@@ -39,6 +39,10 @@ docker run --rm -it \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
+**💡 Pro Tip:** The server can automatically detect your project ID from your workspace directory! Add a `projects_for_directory` section to your `~/.evergreen.yml` config file (see [Automatic Project Detection](#automatic-project-detection)) and skip the manual `--project-id` argument.
+
+**Note:** If you use the Evergreen CLI and have previously answered "yes" to prompts about configuring a default project for a directory, you likely already have this configuration in place!
+
 For detailed setup instructions and client configuration, see [Running the Server](#running-the-server) and [MCP Client Configuration](#mcp-client-configuration) sections below.
 
 ## Installation (Development Setup)
@@ -91,21 +95,102 @@ api_key: your-evergreen-api-key
 3. Generate or copy your API key
 4. Use your username and the generated API key in the configuration file
 
+### Project Configuration (Optional)
+
+The AI agent can determine the project from context naturally.
+
+#### Agent-Driven Approach (Recommended)
+
+AI agents automatically understand your project context through:
+
+1. **Automatic Memory** - When a project is detected, the agent receives it in context
+2. **Natural Language** - Simply mention your project: "Check my MMS patches"
+3. **Response Context** - All tool responses include project information
+4. **Conversation Memory** - Tell the agent once: "My project is mongodb" and it remembers
+
+**No configuration files needed!** The agent handles project context intelligently.
+
+#### Auto-Detection (Local Development Convenience)
+
+For local development, you can optionally enable auto-detection to pre-populate project context:
+
+**Add to `~/.evergreen.yml`:**
+
+```yaml
+user: your-evergreen-username
+api_key: your-evergreen-api-key
+projects_for_directory:  # Optional!
+  /path/to/mongodb: mongodb
+  /path/to/mms: mms
+```
+
+**Benefits:**
+- Automatically injects project context into agent memory
+- No need to mention project in conversation
+- Works great for local development with multiple projects
+
+**Note:** This is a convenience feature for local development. In Docker or production, the agent-driven approach is simpler and recommended.
+
+#### Priority Order (If You Use Multiple Methods)
+
+1. Command-line `--project-id` argument (explicit override)
+2. Auto-detected from workspace directory (convenience)
+3. `EVERGREEN_PROJECT` environment variable (Docker/CI)
+4. Agent determines from context (natural language)
+
+### How Agent Memory Works
+
+When the server detects a project (via auto-detection or configuration), it automatically provides a **context prompt** to the AI agent. This happens behind the scenes without user intervention.
+
+**What the agent receives:**
+```
+"Remember: The Evergreen project for this workspace is 'mongodb'. 
+When I ask about Evergreen patches, builds, or tasks, assume I'm 
+referring to the 'mongodb' project unless I specify otherwise."
+```
+
+**This means:**
+- Agent automatically knows your project context
+- No need to repeat project name in every conversation
+- Agent provides more accurate, contextual responses
+- Works seamlessly with auto-detection or environment variables
+
+**Even without auto-detection:**
+- All tool responses include `project_identifier` fields
+- Agent learns project from the data naturally
+- You can tell the agent: "My project is MMS" - it remembers
+
 ### Server Configuration Options
 
 The MCP server supports additional configuration options via command-line arguments:
 
 **Available Arguments:**
-- `--project-id <PROJECT_ID>`: Specify the default Evergreen project identifier
+- `--project-id <PROJECT_ID>`: Specify the default Evergreen project identifier (optional, can be auto-detected)
+- `--workspace-dir <PATH>`: Workspace directory for auto-detecting project ID (optional, defaults to current directory)
 - `--help`: Show help information
 
-**Example with project ID:**
+**Examples:**
+
 ```bash
+# Auto-detect project from current directory (if configured in ~/.evergreen.yml)
+evergreen-mcp-server
+
+# Explicitly specify project ID (overrides auto-detection)
 evergreen-mcp-server --project-id mms
+
+# Specify workspace directory for auto-detection
+evergreen-mcp-server --workspace-dir /path/to/mongodb
+
+# Combine both (project-id takes precedence)
+evergreen-mcp-server --workspace-dir /path/to/mongodb --project-id custom-project
 ```
 
-**Project ID Configuration:**
-The server supports a `--project-id` argument to set a default project identifier. If no `--project-id` is specified in the server configuration, the project identifier must be provided explicitly in each tool call. This ensures clear and predictable behavior.
+**Environment Variables for Workspace Detection:**
+
+The server checks these environment variables for workspace directory (in order):
+1. `WORKSPACE_PATH` - explicitly set workspace path
+2. `PWD` - current working directory
+3. Falls back to `os.getcwd()` - Python's current directory
 
 ## Available Tools
 
@@ -333,35 +418,71 @@ The Evergreen MCP server is designed to be used with MCP clients (like Claude De
 
 ### Method 1: Using Docker (Recommended)
 
-The easiest way to get started is using the published Docker image:
+The easiest way to get started is using the published Docker image.
 
 ```bash
 # Pull the latest Docker image
 docker pull ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
 
-# Run the container with required environment variables
-docker run --rm -it \
+#### Recommended: Use Environment Variables
+
+The simplest and most Docker-friendly approach is to use environment variables for all configuration:
+
+```bash
+# With project specified (recommended for production/CI)
+docker run --rm -i \
   -e EVERGREEN_USER=your_username \
   -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-
-# Run with project ID
-docker run --rm -it \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
-  --project-id your-evergreen-project-id
-
-# Run with volume mount for logs
-docker run --rm -it \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  -v $(pwd)/logs:/app/logs \
+  -e EVERGREEN_PROJECT=mongodb \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
+
+This approach:
+- Works in Kubernetes ConfigMaps/Secrets
+- Compatible with Docker Compose
+- Follows 12-factor app principles
+- No file mounts required
+
+#### Without Project Configuration
+
+If you don't specify a project, the agent will determine it from context:
+
+```bash
+# Agent determines project from conversation
+docker run --rm -i \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+The agent understands project from:
+- Natural language: "Check my MMS patches"
+- Response data: All responses include project information
+- Conversation memory: Tell it once, it remembers
+
+#### Advanced Options
+
+**Using auto-detection with workspace path (local development):**
+```bash
+docker run --rm -i \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  -e WORKSPACE_PATH=/path/to/workspace \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+**Using command-line argument (explicit override):**
+```bash
+docker run --rm -i \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
+  --project-id mongodb
+```
+
+**Note:** The `--project-id` argument takes precedence over `EVERGREEN_PROJECT` environment variable if both are provided.
 
 ### Method 2: Direct Execution (for Development)
 
@@ -372,7 +493,10 @@ source .venv/bin/activate
 # Run the server (will wait for stdio input from an MCP client)
 evergreen-mcp-server
 
-# With project ID
+# With explicit workspace directory
+evergreen-mcp-server --workspace-dir /path/to/mongodb
+
+# With explicit project ID (overrides auto-detection)
 evergreen-mcp-server --project-id your-evergreen-project-id
 ```
 
@@ -396,7 +520,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 
 ### VS Code with MCP Extension
 
-**Using Docker (Recommended):**
+**Using Docker with Auto-Detection (Recommended):**
 ```json
 {
     "servers": {
@@ -407,7 +531,26 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
                 "run", "--rm", "-i",
                 "-e", "EVERGREEN_USER=your_username",
                 "-e", "EVERGREEN_API_KEY=your_api_key",
-                "-e", "EVERGREEN_PROJECT=your_project",
+                "-e", "WORKSPACE_PATH=${workspaceFolder}",
+                "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+            ]
+        }
+    }
+}
+```
+
+**Using Docker with Explicit Project ID:**
+```json
+{
+    "servers": {
+        "evergreen-mcp-server": {
+            "type": "stdio",
+            "command": "docker",
+            "args": [
+                "run", "--rm", "-i",
+                "-e", "EVERGREEN_USER=your_username",
+                "-e", "EVERGREEN_API_KEY=your_api_key",
                 "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
                 "--project-id", "your-evergreen-project-id"
             ]
@@ -416,7 +559,20 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**Using Local Installation:**
+**Using Local Installation with Auto-Detection:**
+```json
+{
+    "servers": {
+        "evergreen-mcp-server": {
+            "type": "stdio",
+            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
+            "args": ["--workspace-dir", "${workspaceFolder}"]
+        }
+    }
+}
+```
+
+**Using Local Installation with Explicit Project ID:**
 ```json
 {
     "servers": {

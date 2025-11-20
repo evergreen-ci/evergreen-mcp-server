@@ -35,6 +35,13 @@ def get_tool_definitions() -> Sequence[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "project_id": {
+                        "type": "string",
+                        "description": (
+                            "Evergreen project identifier to filter patches. "
+                            "Use this when working with a specific project context."
+                        ),
+                    },
                     "limit": {
                         "type": "integer",
                         "description": (
@@ -45,7 +52,7 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                         "default": 10,
                         "minimum": 1,
                         "maximum": 50,
-                    }
+                    },
                 },
                 "required": [],
                 "additionalProperties": False,
@@ -68,6 +75,13 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                             "Patch identifier obtained from "
                             "list_user_recent_patches. This is the 'patch_id' "
                             "field from the patches array."
+                        ),
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": (
+                            "Evergreen project identifier to filter patches. "
+                            "Use this when working with a specific project context."
                         ),
                     },
                     "max_results": {
@@ -200,7 +214,10 @@ async def handle_list_user_recent_patches(
     """Handle list_user_recent_patches_evergreen tool call"""
     try:
         limit = arguments.get("limit", 10)
-        result = await fetch_user_recent_patches(client, user_id, limit)
+        project_id = arguments.get("project_id", "")
+        result = await fetch_user_recent_patches(
+            client, user_id, limit, project_id=project_id
+        )
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
         logger.error("Failed to fetch user patches: %s", e)
@@ -224,7 +241,10 @@ async def handle_get_patch_failed_jobs(
             raise ValueError("patch_id parameter is required")
 
         max_results = arguments.get("max_results", 50)
-        result = await fetch_patch_failed_jobs(client, patch_id, max_results)
+        project_id = arguments.get("project_id")
+        result = await fetch_patch_failed_jobs(
+            client, patch_id, max_results, project_id=project_id
+        )
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
         logger.error("Failed to fetch patch failed jobs: %s", e)

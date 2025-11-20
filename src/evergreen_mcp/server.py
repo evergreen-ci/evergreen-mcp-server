@@ -28,6 +28,63 @@ USER_ID = None
 DEFAULT_PROJECT_ID = None
 
 
+def detect_project_from_workspace(
+    config_data: dict, workspace_dir: str = None
+) -> str | None:
+    """Detect project ID from workspace directory using Evergreen config
+
+    Args:
+        config_data: Parsed ~/.evergreen.yml configuration
+        workspace_dir: Workspace directory path (optional)
+
+    Returns:
+        Detected project ID or None if no match found
+    """
+    if not workspace_dir:
+        workspace_dir = os.getenv("WORKSPACE_PATH") or os.getenv("PWD") or os.getcwd()
+
+    if not workspace_dir:
+        logger.debug("No workspace directory available for project detection")
+        return None
+
+    workspace_dir = os.path.abspath(os.path.expanduser(workspace_dir))
+
+    projects_for_directory = config_data.get("projects_for_directory", {})
+
+    if not projects_for_directory:
+        logger.debug("No projects_for_directory section in config")
+        return None
+
+    logger.debug("Checking workspace: %s", workspace_dir)
+    logger.debug("Available project mappings: %s", projects_for_directory)
+
+    if workspace_dir in projects_for_directory:
+        project_id = projects_for_directory[workspace_dir]
+        logger.info("Exact match found: %s -> %s", workspace_dir, project_id)
+        return project_id
+
+    best_match = None
+    best_match_len = 0
+
+    for config_path, project_id in projects_for_directory.items():
+        config_path = os.path.abspath(os.path.expanduser(config_path))
+
+        try:
+            common = os.path.commonpath([workspace_dir, config_path])
+            if common == config_path and len(config_path) > best_match_len:
+                best_match = project_id
+                best_match_len = len(config_path)
+        except ValueError:
+            continue
+
+    if best_match:
+        logger.info("Parent directory match found: %s", best_match)
+        return best_match
+
+    logger.debug("No project match found for workspace: %s", workspace_dir)
+    return None
+
+
 @asynccontextmanager
 async def _server_lifespan(_) -> AsyncIterator[dict]:
     """Server lifespan manager - handles GraphQL client lifecycle"""
@@ -37,6 +94,7 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
     evergreen_user = os.getenv("EVERGREEN_USER")
     evergreen_api_key = os.getenv("EVERGREEN_API_KEY")
     evergreen_project = os.getenv("EVERGREEN_PROJECT")
+    workspace_dir = os.getenv("WORKSPACE_PATH")
 
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
@@ -45,16 +103,27 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
             "user": evergreen_user,
             "api_key": evergreen_api_key,
         }
-
-        # Set default project ID from environment if provided and not set
-        if evergreen_project and not DEFAULT_PROJECT_ID:
-            DEFAULT_PROJECT_ID = evergreen_project
-            logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
     else:
         # Fall back to config file (local setup)
         logger.info("Using ~/.evergreen.yml for Evergreen configuration")
         with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
             evergreen_config = yaml.safe_load(f)
+
+    # Priority 2: Try auto-detection from workspace (if not set by CLI)
+    if not DEFAULT_PROJECT_ID:
+        detected_project = detect_project_from_workspace(
+            evergreen_config, workspace_dir
+        )
+        if detected_project:
+            DEFAULT_PROJECT_ID = detected_project
+            logger.info(
+                "Auto-detected project ID from workspace: %s", DEFAULT_PROJECT_ID
+            )
+
+    # Priority 3: Fall back to EVERGREEN_PROJECT environment variable
+    if not DEFAULT_PROJECT_ID and evergreen_project:
+        DEFAULT_PROJECT_ID = evergreen_project
+        logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
 
     client = EvergreenGraphQLClient(
         user=evergreen_config["user"], api_key=evergreen_config["api_key"]
@@ -67,6 +136,10 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
         logger.info("Evergreen GraphQL client initialized")
         if DEFAULT_PROJECT_ID:
             logger.info("Default project ID configured: %s", DEFAULT_PROJECT_ID)
+        else:
+            logger.info(
+                "No default project ID configured - tools will require explicit project_id parameter"
+            )
         yield {"evergreen_client": client}
 
 
@@ -132,6 +205,12 @@ async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextCo
     # Call the appropriate handler
     try:
         logger.debug("Executing tool: %s", name)
+
+        # Use DEFAULT_PROJECT_ID as fallback if not provided in arguments
+        if "project_id" not in arguments and DEFAULT_PROJECT_ID:
+            arguments = {**arguments, "project_id": DEFAULT_PROJECT_ID}
+            logger.info("Using default project ID: %s", DEFAULT_PROJECT_ID)
+
         if name == "list_user_recent_patches_evergreen":
             result = await handler(arguments, client, USER_ID)
         else:
@@ -179,15 +258,27 @@ def main() -> None:
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Evergreen MCP Server")
     parser.add_argument(
-        "--project-id", type=str, help="Default Evergreen project identifier"
+        "--project-id",
+        type=str,
+        help="Default Evergreen project identifier (optional, can be auto-detected from workspace)",
+    )
+    parser.add_argument(
+        "--workspace-dir",
+        type=str,
+        help="Workspace directory for auto-detecting project ID (optional, defaults to current directory)",
     )
 
     args = parser.parse_args()
 
-    # Set global project ID if provided
+    # Set workspace directory as environment variable if provided
+    if args.workspace_dir:
+        os.environ["WORKSPACE_PATH"] = args.workspace_dir
+        logger.info("Using workspace directory: %s", args.workspace_dir)
+
+    # Set global project ID if provided (takes precedence over auto-detection)
     if args.project_id:
         DEFAULT_PROJECT_ID = args.project_id
-        logger.info("Using default project ID: %s", DEFAULT_PROJECT_ID)
+        logger.info("Using explicit project ID: %s", DEFAULT_PROJECT_ID)
 
     logger.info("Initializing MCP server...")
     try:
