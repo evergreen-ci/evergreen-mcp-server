@@ -23,6 +23,7 @@ from .evergreen_queries import (
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
 )
+from .schemas import ProjectDict
 
 # Constants for test status values
 FAILED_TEST_STATUSES = ["fail", "failed"]
@@ -127,7 +128,7 @@ class EvergreenGraphQLClient:
         logger.info("Retrieved %s projects", len(projects))
         return projects
 
-    async def get_user_projects(self) -> List[Dict[str, Any]]:
+    async def get_user_projects(self) -> List[ProjectDict]:
         """Get projects viewable by the authenticated user
 
         Returns:
@@ -136,10 +137,16 @@ class EvergreenGraphQLClient:
         """
         result = await self._execute_query(GET_USER_PROJECTS)
 
+        # Add validation for unexpected result format
+        if not isinstance(result, dict):
+            logger.warning("Unexpected result format from GET_USER_PROJECTS")
+            return []
+
         # Flatten grouped projects into simple list
         projects = []
         for group in result.get("viewableProjectRefs", []):
-            projects.extend(group.get("projects", []))
+            if isinstance(group, dict):
+                projects.extend(group.get("projects", []))
 
         logger.info("Retrieved %s user-accessible projects", len(projects))
         return projects

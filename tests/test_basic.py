@@ -23,6 +23,7 @@ class TestMCPTools(unittest.TestCase):
         tool_names = [tool.name for tool in tools]
         expected_tools = [
             "list_user_recent_patches_evergreen",
+            "list_user_projects_evergreen",
             "get_patch_failed_jobs_evergreen",
             "get_task_logs_evergreen",
             "get_task_test_results_evergreen",
@@ -92,6 +93,7 @@ class TestImports(unittest.TestCase):
             # Check that some expected queries exist
             expected_queries = [
                 "GET_PROJECTS",
+                "GET_USER_PROJECTS",
                 "GET_PROJECT",
                 "GET_USER_RECENT_PATCHES",
                 "GET_PATCH_FAILED_TASKS",
@@ -105,6 +107,15 @@ class TestImports(unittest.TestCase):
                 )
         except ImportError as e:
             self.fail(f"Failed to import evergreen_queries: {e}")
+
+    def test_import_schemas(self):
+        """Test that schemas module can be imported"""
+        try:
+            from evergreen_mcp.schemas import ProjectDict
+
+            self.assertIsNotNone(ProjectDict, "ProjectDict should be importable")
+        except ImportError as e:
+            self.fail(f"Failed to import schemas module: {e}")
 
 
 class TestVersion(unittest.TestCase):
@@ -128,6 +139,107 @@ class TestVersion(unittest.TestCase):
             r"^\d+\.\d+\.\d+$",
             "Version should follow semantic versioning format (e.g., 0.1.0)",
         )
+
+
+class TestGraphQLClient(unittest.TestCase):
+    """Test GraphQL client functionality"""
+
+    @patch("evergreen_mcp.evergreen_graphql_client.EvergreenGraphQLClient._execute_query")
+    def test_get_user_projects_validation(self, mock_execute):
+        """Test that get_user_projects validates response format"""
+        import asyncio
+
+        from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+
+        async def run_test():
+            client = EvergreenGraphQLClient(
+                user="test_user", api_key="test_key"
+            )
+            client._client = MagicMock()  # Mock the client so we don't need to connect
+
+            # Test 1: Invalid result format (not a dict)
+            mock_execute.return_value = "invalid"
+            result = await client.get_user_projects()
+            self.assertEqual(result, [], "Should return empty list for invalid format")
+
+            # Test 2: Valid result with projects
+            mock_execute.return_value = {
+                "viewableProjectRefs": [
+                    {
+                        "groupDisplayName": "MongoDB",
+                        "projects": [
+                            {
+                                "id": "123",
+                                "identifier": "mongodb-mongo-master",
+                                "displayName": "MongoDB Master",
+                                "enabled": True,
+                                "owner": "mongodb",
+                                "repo": "mongo",
+                                "branch": "master",
+                            }
+                        ],
+                    }
+                ]
+            }
+            result = await client.get_user_projects()
+            self.assertEqual(len(result), 1, "Should return one project")
+            self.assertEqual(result[0]["identifier"], "mongodb-mongo-master")
+
+            # Test 3: Result with invalid group (not a dict)
+            mock_execute.return_value = {
+                "viewableProjectRefs": [
+                    "invalid_group",
+                    {"projects": [{"identifier": "test"}]},
+                ]
+            }
+            result = await client.get_user_projects()
+            self.assertEqual(len(result), 1, "Should skip invalid groups")
+
+        asyncio.run(run_test())
+
+    @patch("evergreen_mcp.evergreen_graphql_client.EvergreenGraphQLClient.get_user_projects")
+    def test_handle_list_user_projects(self, mock_get_projects):
+        """Test handle_list_user_projects tool handler"""
+        import asyncio
+        import json
+
+        from evergreen_mcp.mcp_tools import handle_list_user_projects
+
+        async def run_test():
+            mock_client = MagicMock()
+            mock_client.get_user_projects = AsyncMock(
+                return_value=[
+                    {
+                        "id": "123",
+                        "identifier": "mongodb-mongo-master",
+                        "displayName": "MongoDB Master",
+                        "enabled": True,
+                        "owner": "mongodb",
+                        "repo": "mongo",
+                        "branch": "master",
+                    }
+                ]
+            )
+
+            # Test successful call
+            result = await handle_list_user_projects({}, mock_client)
+            self.assertEqual(len(result), 1, "Should return one content item")
+            response = json.loads(result[0].text)
+            self.assertEqual(response["total_projects"], 1)
+            self.assertIn("projects", response)
+            self.assertEqual(response["projects"][0]["identifier"], "mongodb-mongo-master")
+            self.assertEqual(response["projects"][0]["id"], "123")
+
+            # Test error handling
+            mock_client.get_user_projects = AsyncMock(
+                side_effect=Exception("Test error")
+            )
+            result = await handle_list_user_projects({}, mock_client)
+            response = json.loads(result[0].text)
+            self.assertIn("error", response)
+            self.assertEqual(response["error"], "Test error")
+
+        asyncio.run(run_test())
 
 
 class TestUserAgent(unittest.TestCase):

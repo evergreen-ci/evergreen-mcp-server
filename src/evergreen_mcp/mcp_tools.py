@@ -45,7 +45,8 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                         "description": (
                             "Evergreen project identifier (e.g., 'mongodb-mongo-master') to filter patches. "
                             "If not known, call list_user_projects_evergreen first to discover available "
-                            "projects, then match the project to the current directory context."
+                            "projects, then match the project to the current directory context. "
+                            "Example: For the mongo repository, use 'mongodb-mongo-master'."
                         ),
                     },
                     "limit": {
@@ -104,8 +105,9 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                     "project_id": {
                         "type": "string",
                         "description": (
-                            "Evergreen project identifier for the patch. If not known, call "
-                            "list_user_projects_evergreen first to discover available projects."
+                            "Evergreen project identifier for the patch (e.g., 'mongodb-mongo-master'). "
+                            "If not known, call list_user_projects_evergreen first to discover available projects. "
+                            "Example: For the mongo repository, use 'mongodb-mongo-master'."
                         ),
                     },
                     "max_results": {
@@ -262,12 +264,13 @@ async def handle_list_user_projects(
     try:
         # Use get_user_projects() to filter by user permissions
         projects = await client.get_user_projects()
-        
+
         # Format the response with useful information
         result = {
             "total_projects": len(projects),
             "projects": [
                 {
+                    "id": p.get("id"),
                     "identifier": p.get("identifier"),
                     "display_name": p.get("displayName"),
                     "enabled": p.get("enabled", False),
@@ -278,10 +281,10 @@ async def handle_list_user_projects(
                 for p in projects
             ],
         }
-        
+
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
     except Exception as e:
-        logger.error("Failed to fetch user projects: %s", e)
+        logger.error("Failed to fetch user projects: %s", e, exc_info=True)
         error_response = {
             "error": str(e),
             "tool": "list_user_projects_evergreen",
