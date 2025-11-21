@@ -30,7 +30,12 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                 "Retrieve the authenticated user's recent Evergreen patches/commits "
                 "with their CI/CD status. Use this to see your recent code changes, "
                 "check patch status (success/failed/running), and identify patches "
-                "that need attention. Returns patch IDs needed for other tools."
+                "that need attention. Returns patch IDs needed for other tools. "
+                "\n\nBEST PRACTICE: If project_id is not provided, first call "
+                "list_user_projects_evergreen to discover available projects, then "
+                "correlate the project identifier to the current working directory "
+                "(e.g., 'mongodb-mongo-master' for mongo repo) and use that as the "
+                "project_id parameter."
             ),
             inputSchema={
                 "type": "object",
@@ -38,8 +43,9 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                     "project_id": {
                         "type": "string",
                         "description": (
-                            "Evergreen project identifier to filter patches. "
-                            "Use this when working with a specific project context."
+                            "Evergreen project identifier (e.g., 'mongodb-mongo-master') to filter patches. "
+                            "If not known, call list_user_projects_evergreen first to discover available "
+                            "projects, then match the project to the current directory context."
                         ),
                     },
                     "limit": {
@@ -59,12 +65,30 @@ def get_tool_definitions() -> Sequence[types.Tool]:
             },
         ),
         types.Tool(
+            name="list_user_projects_evergreen",
+            description=(
+                "List all Evergreen projects accessible to the authenticated user. "
+                "Returns project details including identifiers, display names, owners, "
+                "repositories, and enabled status. Use this to discover available projects "
+                "before querying patches or tasks."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
             name="get_patch_failed_jobs_evergreen",
             description=(
                 "Analyze failed CI/CD jobs for a specific patch to understand why "
                 "builds are failing. Shows detailed failure information including "
                 "failed tasks, build variants, timeout issues, log links, and test "
                 "failure counts. Essential for debugging patch failures."
+                "\n\nBEST PRACTICE: If project_id is not provided, first call "
+                "list_user_projects_evergreen to discover available projects, then "
+                "read the output of the list_user_projects_evergreen tool and correlate the project identifier to the current working directory "
+                "to determine the correct project_id parameter."
             ),
             inputSchema={
                 "type": "object",
@@ -80,8 +104,8 @@ def get_tool_definitions() -> Sequence[types.Tool]:
                     "project_id": {
                         "type": "string",
                         "description": (
-                            "Evergreen project identifier to filter patches. "
-                            "Use this when working with a specific project context."
+                            "Evergreen project identifier for the patch. If not known, call "
+                            "list_user_projects_evergreen first to discover available projects."
                         ),
                     },
                     "max_results": {
@@ -231,6 +255,43 @@ async def handle_list_user_recent_patches(
         ]
 
 
+async def handle_list_user_projects(
+    arguments: Dict[str, Any], client
+) -> Sequence[types.TextContent]:
+    """Handle list_user_projects_evergreen tool call"""
+    try:
+        # Use get_user_projects() to filter by user permissions
+        projects = await client.get_user_projects()
+        
+        # Format the response with useful information
+        result = {
+            "total_projects": len(projects),
+            "projects": [
+                {
+                    "identifier": p.get("identifier"),
+                    "display_name": p.get("displayName"),
+                    "enabled": p.get("enabled", False),
+                    "owner": p.get("owner", ""),
+                    "repo": p.get("repo", ""),
+                    "branch": p.get("branch", ""),
+                }
+                for p in projects
+            ],
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+    except Exception as e:
+        logger.error("Failed to fetch user projects: %s", e)
+        error_response = {
+            "error": str(e),
+            "tool": "list_user_projects_evergreen",
+            "arguments": arguments,
+        }
+        return [
+            types.TextContent(type="text", text=json.dumps(error_response, indent=2))
+        ]
+
+
 async def handle_get_patch_failed_jobs(
     arguments: Dict[str, Any], client
 ) -> Sequence[types.TextContent]:
@@ -299,6 +360,7 @@ async def handle_get_task_test_results(
 # Tool handler registry for easy lookup
 TOOL_HANDLERS = {
     "list_user_recent_patches_evergreen": handle_list_user_recent_patches,
+    "list_user_projects_evergreen": handle_list_user_projects,
     "get_patch_failed_jobs_evergreen": handle_get_patch_failed_jobs,
     "get_task_logs_evergreen": handle_get_task_logs,
     "get_task_test_results_evergreen": handle_get_task_test_results,

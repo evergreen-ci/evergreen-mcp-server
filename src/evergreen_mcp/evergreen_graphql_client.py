@@ -19,6 +19,7 @@ from .evergreen_queries import (
     GET_PROJECTS,
     GET_TASK_LOGS,
     GET_TASK_TEST_RESULTS,
+    GET_USER_PROJECTS,
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
 )
@@ -124,6 +125,23 @@ class EvergreenGraphQLClient:
             projects.extend(group.get("projects", []))
 
         logger.info("Retrieved %s projects", len(projects))
+        return projects
+
+    async def get_user_projects(self) -> List[Dict[str, Any]]:
+        """Get projects viewable by the authenticated user
+
+        Returns:
+            List of project dictionaries with flattened structure,
+            filtered to only projects the user has access to
+        """
+        result = await self._execute_query(GET_USER_PROJECTS)
+
+        # Flatten grouped projects into simple list
+        projects = []
+        for group in result.get("viewableProjectRefs", []):
+            projects.extend(group.get("projects", []))
+
+        logger.info("Retrieved %s user-accessible projects", len(projects))
         return projects
 
     async def get_project(self, project_id: str) -> Dict[str, Any]:

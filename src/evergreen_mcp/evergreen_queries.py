@@ -6,9 +6,28 @@ and reusability.
 """
 
 # Projects query - retrieves all projects grouped by organization
+# NOTE: This query returns ALL projects, not filtered by user permissions
 GET_PROJECTS = """
 query GetProjects {
   projects {
+    groupDisplayName
+    projects {
+      id
+      displayName
+      identifier
+      enabled
+      owner
+      repo
+      branch
+    }
+  }
+}
+"""
+
+# User projects query - retrieves only projects viewable by authenticated user
+GET_USER_PROJECTS = """
+query GetUserProjects {
+  viewableProjectRefs {
     groupDisplayName
     projects {
       id
