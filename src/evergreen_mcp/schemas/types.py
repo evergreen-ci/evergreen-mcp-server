@@ -9,9 +9,9 @@ from typing import TypedDict
 
 class ProjectDict(TypedDict, total=False):
     """Type definition for project dictionary structure
-    
+
     Represents a project in the Evergreen CI/CD system.
-    
+
     Attributes:
         id: Internal database ID for the project
         identifier: Project identifier used in API calls (e.g., 'mongodb-mongo-master')
@@ -21,6 +21,7 @@ class ProjectDict(TypedDict, total=False):
         repo: Repository name
         branch: Default branch for the project
     """
+
     id: str
     identifier: str
     displayName: str
@@ -28,4 +29,3 @@ class ProjectDict(TypedDict, total=False):
     owner: str
     repo: str
     branch: str
-

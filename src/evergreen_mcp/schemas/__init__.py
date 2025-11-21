@@ -7,4 +7,3 @@ improved type safety and IDE support.
 from .types import ProjectDict
 
 __all__ = ["ProjectDict"]
-
