@@ -28,22 +28,15 @@ def register_tools(mcp: FastMCP) -> None:
             "Retrieve the authenticated user's recent Evergreen patches/commits "
             "with their CI/CD status. Use this to see your recent code changes, "
             "check patch status (success/failed/running), and identify patches "
-            "that need attention. Returns patch IDs needed for other tools. "
-            "\n\nBEST PRACTICE: If project_id is not provided, first call "
-            "list_user_projects_evergreen to discover available projects, then "
-            "correlate the project identifier to the current working directory "
-            "(e.g., 'mongodb-mongo-master' for mongo repo) and use that as the "
-            "project_id parameter."
+            "that need attention. Returns patch IDs needed for other tools."
         )
     )
     async def list_user_recent_patches_evergreen(
         ctx: Context,
         project_id: Annotated[
             str | None,
-            "Evergreen project identifier (e.g., 'mongodb-mongo-master') to filter "
-            "patches. If not known, call list_user_projects_evergreen first to "
-            "discover available projects, then match the project to the current "
-            "directory context.",
+            "Evergreen project identifier (e.g., 'mongodb-mongo-master', 'mms') to "
+            "filter patches. If not provided, returns patches from all projects.",
         ] = None,
         limit: Annotated[
             int,
@@ -83,10 +76,6 @@ def register_tools(mcp: FastMCP) -> None:
             "builds are failing. Shows detailed failure information including "
             "failed tasks, build variants, timeout issues, log links, and test "
             "failure counts. Essential for debugging patch failures."
-            "\n\nBEST PRACTICE: If project_id is not provided, first call "
-            "list_user_projects_evergreen to discover available projects, then "
-            "read the output and correlate the project identifier to the current "
-            "working directory to determine the correct project_id parameter."
         )
     )
     async def get_patch_failed_jobs_evergreen(
@@ -98,8 +87,7 @@ def register_tools(mcp: FastMCP) -> None:
         ],
         project_id: Annotated[
             str | None,
-            "Evergreen project identifier for the patch. If not known, call "
-            "list_user_projects_evergreen first to discover available projects.",
+            "Evergreen project identifier for the patch (e.g., 'mongodb-mongo-master', 'mms').",
         ] = None,
         max_results: Annotated[
             int,
@@ -230,43 +218,4 @@ def register_tools(mcp: FastMCP) -> None:
             }
             return json.dumps(error_response, indent=2)
 
-    @mcp.tool(
-        description=(
-            "List all Evergreen projects accessible to the authenticated user. "
-            "Returns project details including identifiers, display names, owners, "
-            "repositories, and enabled status. Use this to discover available "
-            "projects before querying patches or tasks."
-        )
-    )
-    async def list_user_projects_evergreen(ctx: Context) -> str:
-        """List all projects accessible to the user."""
-        try:
-            evg_ctx = ctx.request_context.lifespan_context
-
-            projects = await evg_ctx.client.get_projects()
-            logger.info("Retrieved %s projects", len(projects))
-
-            result = {
-                "projects": [
-                    {
-                        "identifier": p.get("identifier"),
-                        "display_name": p.get("displayName"),
-                        "owner": p.get("owner"),
-                        "repo": p.get("repo"),
-                        "branch": p.get("branch"),
-                        "enabled": p.get("enabled"),
-                    }
-                    for p in projects
-                ],
-                "total_count": len(projects),
-            }
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            logger.error("Failed to fetch projects: %s", e)
-            error_response = {
-                "error": str(e),
-                "tool": "list_user_projects_evergreen",
-            }
-            return json.dumps(error_response, indent=2)
-
-    logger.info("Registered %d tools with FastMCP server", 5)
+    logger.info("Registered %d tools with FastMCP server", 4)
