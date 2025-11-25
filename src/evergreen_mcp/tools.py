@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastmcp import Context, FastMCP
 
-from evergreen_mcp.failed_jobs_tools import (
+from .failed_jobs_tools import (
     fetch_patch_failed_jobs,
     fetch_task_logs,
     fetch_task_test_results,
@@ -270,4 +270,3 @@ def register_tools(mcp: FastMCP) -> None:
             return json.dumps(error_response, indent=2)
 
     logger.info("Registered %d tools with FastMCP server", 5)
-
