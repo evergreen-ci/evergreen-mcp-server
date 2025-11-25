@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["evergreen_mcp*"]
+include = ["evergreen_mcp*", "evergreen_fast_mcp*"]
 
 [tool.black]
 line-length = 88
@@ -28,11 +28,11 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["evergreen_mcp"]
+known_first_party = ["evergreen_mcp", "evergreen_fast_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
-version = "0.1.0"
+version = "0.4.0"
 description = "A server for interacting with the Evergreen API."
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
@@ -46,6 +46,7 @@ dependencies = [
     "typing-extensions",
     "pyyaml",
     "mcp",
+    "fastmcp>=2.0.0",
     "gql[aiohttp]"
 ]
 
@@ -59,4 +60,7 @@ dev = [
 ]
 
 [project.scripts]
+# Legacy server (deprecated)
 evergreen-mcp-server = "evergreen_mcp.server:main"
+# New FastMCP-based server (recommended)
+evergreen-fastmcp-server = "evergreen_fast_mcp.server:main"
