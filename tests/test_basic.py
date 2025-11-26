@@ -25,10 +25,10 @@ class TestImports(unittest.TestCase):
     def test_import_tools(self):
         """Test that tools module can be imported"""
         try:
-            from evergreen_mcp import tools
+            from evergreen_mcp import mcp_tools
 
             self.assertTrue(
-                hasattr(tools, "register_tools"),
+                hasattr(mcp_tools, "register_tools"),
                 "Tools module should have register_tools function",
             )
         except ImportError as e:
