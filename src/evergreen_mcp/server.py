@@ -174,7 +174,7 @@ mcp = FastMCP(
 
 
 # Import and register tools after mcp is created
-from evergreen_mcp.tools import register_tools  # noqa: E402
+from evergreen_mcp.mcp_tools import register_tools  # noqa: E402
 
 register_tools(mcp)
 

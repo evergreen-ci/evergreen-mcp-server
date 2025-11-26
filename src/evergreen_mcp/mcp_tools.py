@@ -2,9 +2,6 @@
 
 This module contains all MCP tool definitions using FastMCP decorators.
 Tools are registered with the FastMCP server instance.
-
-Note: FastMCP handles exceptions automatically, converting them to MCP error
-responses. No try/except blocks are needed unless custom error handling is required.
 """
 
 import json
@@ -29,9 +26,9 @@ def register_tools(mcp: FastMCP) -> None:
     @mcp.tool(
         description=(
             "Retrieve the authenticated user's recent Evergreen patches/commits "
-            "with their CI/CD status. Supports pagination - check 'has_more' in "
-            "response and use 'next_page' to fetch additional results. "
-            "Returns patch IDs needed for other tools."
+            "with their CI/CD status. Use this to see your recent code changes, "
+            "check patch status (success/failed/running), and identify patches "
+            "that need attention. Returns patch IDs needed for other tools."
         )
     )
     async def list_user_recent_patches_evergreen(
@@ -41,37 +38,37 @@ def register_tools(mcp: FastMCP) -> None:
             "Evergreen project identifier (e.g., 'mongodb-mongo-master', 'mms') to "
             "filter patches. If not provided, returns patches from all projects.",
         ] = None,
-        page: Annotated[
+        limit: Annotated[
             int,
-            "Page number (0-indexed). Start with 0, then use 'next_page' from "
-            "response to fetch more results.",
-        ] = 0,
-        page_size: Annotated[
-            int,
-            "Number of patches per page. Default 10, maximum 50.",
+            "Number of recent patches to return. Use smaller numbers (3-5) for "
+            "quick overview, larger (10-20) for comprehensive analysis. Maximum 50.",
         ] = 10,
     ) -> str:
-        """List the user's recent patches with pagination.
+        """List the user's recent patches from Evergreen."""
+        try:
+            # Get context from lifespan
+            evg_ctx = ctx.request_context.lifespan_context
 
-        Returns patches for the current page. Check 'has_more' to see if more
-        pages are available, and use 'next_page' value for the next call.
-        """
-        evg_ctx = ctx.request_context.lifespan_context
+            # Use default project ID if not provided
+            effective_project_id = project_id or evg_ctx.default_project_id
 
-        # Use default project ID if not provided
-        effective_project_id = project_id or evg_ctx.default_project_id
+            if effective_project_id:
+                logger.info("Using project ID: %s", effective_project_id)
 
-        if effective_project_id:
-            logger.info("Using project ID: %s", effective_project_id)
-
-        result = await fetch_user_recent_patches(
-            evg_ctx.client,
-            evg_ctx.user_id,
-            page_size=page_size,
-            page=page,
-            project_id=effective_project_id,
-        )
-        return json.dumps(result, indent=2)
+            result = await fetch_user_recent_patches(
+                evg_ctx.client,
+                evg_ctx.user_id,
+                limit,
+                project_id=effective_project_id,
+            )
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            logger.error("Failed to fetch user patches: %s", e)
+            error_response = {
+                "error": str(e),
+                "tool": "list_user_recent_patches_evergreen",
+            }
+            return json.dumps(error_response, indent=2)
 
     @mcp.tool(
         description=(
@@ -99,15 +96,23 @@ def register_tools(mcp: FastMCP) -> None:
         ] = 50,
     ) -> str:
         """Get failed jobs for a specific patch."""
-        evg_ctx = ctx.request_context.lifespan_context
+        try:
+            evg_ctx = ctx.request_context.lifespan_context
 
-        # Use default project ID if not provided
-        effective_project_id = project_id or evg_ctx.default_project_id
+            # Use default project ID if not provided
+            effective_project_id = project_id or evg_ctx.default_project_id
 
-        result = await fetch_patch_failed_jobs(
-            evg_ctx.client, patch_id, max_results, project_id=effective_project_id
-        )
-        return json.dumps(result, indent=2)
+            result = await fetch_patch_failed_jobs(
+                evg_ctx.client, patch_id, max_results, project_id=effective_project_id
+            )
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            logger.error("Failed to fetch patch failed jobs: %s", e)
+            error_response = {
+                "error": str(e),
+                "tool": "get_patch_failed_jobs_evergreen",
+            }
+            return json.dumps(error_response, indent=2)
 
     @mcp.tool(
         description=(
@@ -141,17 +146,25 @@ def register_tools(mcp: FastMCP) -> None:
         ] = True,
     ) -> str:
         """Get detailed logs for a specific task."""
-        evg_ctx = ctx.request_context.lifespan_context
+        try:
+            evg_ctx = ctx.request_context.lifespan_context
 
-        arguments = {
-            "task_id": task_id,
-            "execution": execution,
-            "max_lines": max_lines,
-            "filter_errors": filter_errors,
-        }
+            arguments = {
+                "task_id": task_id,
+                "execution": execution,
+                "max_lines": max_lines,
+                "filter_errors": filter_errors,
+            }
 
-        result = await fetch_task_logs(evg_ctx.client, arguments)
-        return json.dumps(result, indent=2)
+            result = await fetch_task_logs(evg_ctx.client, arguments)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            logger.error("Failed to fetch task logs: %s", e)
+            error_response = {
+                "error": str(e),
+                "tool": "get_task_logs_evergreen",
+            }
+            return json.dumps(error_response, indent=2)
 
     @mcp.tool(
         description=(
@@ -185,16 +198,24 @@ def register_tools(mcp: FastMCP) -> None:
         ] = 100,
     ) -> str:
         """Get detailed test results for a specific task."""
-        evg_ctx = ctx.request_context.lifespan_context
+        try:
+            evg_ctx = ctx.request_context.lifespan_context
 
-        arguments = {
-            "task_id": task_id,
-            "execution": execution,
-            "failed_only": failed_only,
-            "limit": limit,
-        }
+            arguments = {
+                "task_id": task_id,
+                "execution": execution,
+                "failed_only": failed_only,
+                "limit": limit,
+            }
 
-        result = await fetch_task_test_results(evg_ctx.client, arguments)
-        return json.dumps(result, indent=2)
+            result = await fetch_task_test_results(evg_ctx.client, arguments)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            logger.error("Failed to fetch task test results: %s", e)
+            error_response = {
+                "error": str(e),
+                "tool": "get_task_test_results_evergreen",
+            }
+            return json.dumps(error_response, indent=2)
 
     logger.info("Registered %d tools with FastMCP server", 4)
