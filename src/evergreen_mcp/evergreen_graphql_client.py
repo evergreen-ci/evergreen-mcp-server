@@ -167,34 +167,31 @@ class EvergreenGraphQLClient:
         return settings
 
     async def get_user_recent_patches(
-        self, user_id: str, limit: int = 10
+        self, user_id: str, limit: int = 10, page: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get recent patches for the authenticated user
+        """Get recent patches for the authenticated user with pagination
 
         Args:
             user_id: User identifier (typically email)
-            limit: Number of patches to return (default: 10, max: 50)
+            limit: Number of patches per page (default: 10, max: 50)
+            page: Page number (0-indexed, default: 0)
 
         Returns:
-            List of patch dictionaries
+            List of patch dictionaries for the requested page
         """
         variables = {
             "userId": user_id,
-            "limit": min(limit, 50),
-        }  # Cap at 50 for performance
+            "limit": min(limit, 50),  # Cap at 50 for performance
+            "page": page,
+        }
 
-        try:
-            result = await self._execute_query(GET_USER_RECENT_PATCHES, variables)
-            patches = result.get("user", {}).get("patches", {}).get("patches", [])
+        result = await self._execute_query(GET_USER_RECENT_PATCHES, variables)
+        patches = result.get("user", {}).get("patches", {}).get("patches", [])
 
-            logger.info(
-                "Retrieved %s recent patches for user %s", len(patches), user_id
-            )
-            return patches
-
-        except Exception as e:
-            logger.error("Error fetching recent patches for user %s: %s", user_id, e)
-            raise
+        logger.info(
+            "Retrieved %s patches for user %s (page %s)", len(patches), user_id, page
+        )
+        return patches
 
     async def get_patch_failed_tasks(self, patch_id: str) -> Dict[str, Any]:
         """Get failed tasks for a specific patch

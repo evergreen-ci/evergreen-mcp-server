@@ -102,13 +102,13 @@ query GetProjectBuilds($projectId: String!, $limit: Int = 10) {
 }
 """
 
-# Get recent patches for the authenticated user
+# Get recent patches for the authenticated user (with pagination)
 GET_USER_RECENT_PATCHES = """
-query GetUserRecentPatches($userId: String!, $limit: Int = 10) {
+query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
   user(userId: $userId) {
     patches(patchesInput: {
       limit: $limit
-      page: 0
+      page: $page
       patchName: ""
       statuses: []
       includeHidden: false

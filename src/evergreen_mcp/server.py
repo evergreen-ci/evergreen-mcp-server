@@ -5,21 +5,16 @@ It handles server lifecycle, configuration, and tool registration.
 """
 
 import argparse
+import json
 import logging
 import os
 import os.path
-import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncIterator
 
 import yaml
 from fastmcp import Context, FastMCP
-
-# Add src directory to path for imports when running directly
-_src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _src_dir not in sys.path:
-    sys.path.insert(0, _src_dir)
 
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 
@@ -188,10 +183,8 @@ register_tools(mcp)
 @mcp.resource("evergreen://projects")
 async def list_projects_resource(ctx: Context) -> str:
     """List all Evergreen projects as a resource."""
-    import json
-
-    evg_ctx = ctx.request_context.lifespan_context
     try:
+        evg_ctx = ctx.request_context.lifespan_context
         projects = await evg_ctx.client.get_projects()
         return json.dumps(
             [
@@ -207,9 +200,9 @@ async def list_projects_resource(ctx: Context) -> str:
             ],
             indent=2,
         )
-    except Exception as e:
-        logger.error("Failed to fetch projects resource: %s", e)
-        return json.dumps({"error": str(e)})
+    except Exception:
+        logger.error("Failed to fetch projects resource", exc_info=True)
+        raise
 
 
 def main() -> None:

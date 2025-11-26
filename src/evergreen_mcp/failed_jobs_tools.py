@@ -17,27 +17,31 @@ FAILED_TEST_STATUSES = ["fail", "failed"]
 async def fetch_user_recent_patches(
     client,
     user_id: str,
-    limit: int = 10,
+    page_size: int = 10,
+    page: int = 0,
     project_id: str = None,
 ) -> Dict[str, Any]:
-    """Fetch recent patches for the authenticated user
+    """Fetch recent patches for the authenticated user with pagination
 
     Args:
         client: Evergreen GraphQL client
         user_id: User identifier (typically email)
-        limit: Number of patches to return (default: 10, max: 50)
+        page_size: Number of patches per page (default: 10, max: 50)
+        page: Page number, 0-indexed (default: 0)
         project_id: Optional project identifier to filter patches
 
     Returns:
-        Dictionary containing user's recent patches
+        Dictionary containing user's recent patches with pagination info
     """
     try:
-        logger.info("Fetching %s recent patches for user %s", limit, user_id)
+        logger.info(
+            "Fetching patches for user %s (page %s, page_size %s)", user_id, page, page_size
+        )
         if project_id:
-            logger.info("Project context: %s", project_id)
+            logger.info("Project filter: %s", project_id)
 
-        # Get user's recent patches
-        patches = await client.get_user_recent_patches(user_id, limit)
+        # Get user's recent patches for this page
+        patches = await client.get_user_recent_patches(user_id, page_size, page)
 
         # Process and format patches
         processed_patches = []
@@ -65,16 +69,24 @@ async def fetch_user_recent_patches(
 
         logger.info("Successfully processed %s patches", len(processed_patches))
 
+        # Determine if there are more pages
+        # If we got a full page of results, there's likely more
+        has_more = len(patches) == page_size
+
         return {
             "user_id": user_id,
             "project_id": project_id,
             "patches": processed_patches,
-            "total_patches": len(processed_patches),
+            "count": len(processed_patches),
+            "page": page,
+            "page_size": page_size,
+            "has_more": has_more,
+            "next_page": page + 1 if has_more else None,
         }
 
-    except Exception as e:
-        logger.error("Error fetching user patches", exc_info=True)
-        return {"error": str(e), "user_id": user_id, "patches": [], "total_patches": 0}
+    except Exception:
+        logger.error("Error fetching user patches for %s", user_id, exc_info=True)
+        raise
 
 
 async def fetch_patch_failed_jobs(
@@ -103,6 +115,7 @@ async def fetch_patch_failed_jobs(
         patch = await client.get_patch_failed_tasks(patch_id)
         if project_id and patch.get("projectIdentifier") != project_id:
             raise ValueError("Patch does not belong to the specified project")
+
         # Extract patch information
         patch_info = {
             "patch_id": patch.get("id"),
@@ -214,16 +227,9 @@ async def fetch_patch_failed_jobs(
             "project_id": project_id,
         }
 
-    except Exception as e:
+    except Exception:
         logger.error("Error fetching failed jobs for patch %s", patch_id, exc_info=True)
-        return {
-            "error": str(e),
-            "patch_id": patch_id,
-            "patch_info": None,
-            "version_info": None,
-            "failed_tasks": [],
-            "summary": {"total_failed_tasks": 0, "error": str(e)},
-        }
+        raise
 
 
 async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,7 +260,13 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
         raw_logs = task_data.get("taskLogs", {}).get("taskLogs", [])
         processed_logs = process_logs(raw_logs, max_lines, filter_errors)
 
-        result = {
+        logger.info(
+            "Successfully fetched %s log entries for task %s",
+            len(processed_logs),
+            task_id,
+        )
+
+        return {
             "task_id": task_id,
             "execution": execution,
             "task_name": task_data.get("displayName"),
@@ -263,13 +275,6 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
             "logs": processed_logs,
             "truncated": len(processed_logs) >= max_lines,
         }
-
-        logger.info(
-            "Successfully fetched %s log entries for task %s",
-            len(processed_logs),
-            task_id,
-        )
-        return result
 
     except Exception:
         logger.error("Failed to fetch task logs", exc_info=True)
@@ -321,7 +326,7 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         failed_tests = 0
 
         for test in test_results:
-            test_info = {
+            test_result_info = {
                 "test_id": test.get("id"),
                 "test_file": test.get("testFile"),
                 "status": test.get("status"),
@@ -335,7 +340,7 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
             # Add test logs if available
             logs = test.get("logs", {})
             if logs:
-                test_info["logs"] = {
+                test_result_info["logs"] = {
                     "url": logs.get("url"),
                     "url_parsley": logs.get("urlParsley"),
                     "url_raw": logs.get("urlRaw"),
@@ -348,7 +353,7 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
             if test.get("status", "").lower() in FAILED_TEST_STATUSES:
                 failed_tests += 1
 
-            processed_tests.append(test_info)
+            processed_tests.append(test_result_info)
 
         # Create summary
         summary = {
