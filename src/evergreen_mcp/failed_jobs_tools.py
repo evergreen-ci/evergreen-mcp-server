@@ -35,7 +35,10 @@ async def fetch_user_recent_patches(
     """
     try:
         logger.info(
-            "Fetching patches for user %s (page %s, page_size %s)", user_id, page, page_size
+            "Fetching patches for user %s (page %s, page_size %s)",
+            user_id,
+            page,
+            page_size,
         )
         if project_id:
             logger.info("Project filter: %s", project_id)
