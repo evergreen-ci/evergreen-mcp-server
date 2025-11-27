@@ -1,0 +1,150 @@
+# Sample Evergreen GraphQL Schema for development and testing
+# This is a minimal version based on the queries in the project
+
+type Query {
+  projects: [ProjectGroup!]!
+  project(projectIdentifier: String!): Project
+  projectSettings(projectIdentifier: String!): ProjectSettings
+  user(userId: String!): User
+  patch(patchId: String!): Patch
+  version(versionId: String!): Version
+  task(taskId: String!, execution: Int!): Task
+}
+
+type ProjectGroup {
+  groupDisplayName: String!
+  projects: [Project!]!
+}
+
+type Project {
+  id: String!
+  displayName: String!
+  identifier: String!
+  enabled: Boolean!
+  owner: String!
+  repo: String!
+  branch: String!
+  admins: [String!]
+  banner: Banner
+  patches(patchesInput: PatchesInput): PatchConnection
+}
+
+type Banner {
+  text: String!
+  theme: String!
+}
+
+type ProjectSettings {
+  projectRef: Project!
+  githubWebhooksEnabled: Boolean!
+  vars: ProjectVars!
+  aliases: [ProjectAlias!]!
+}
+
+type ProjectVars {
+  adminOnlyVars: [ProjectVar!]!
+  privateVars: [ProjectVar!]!
+  vars: [ProjectVar!]!
+}
+
+type ProjectVar {
+  key: String!
+  value: String!
+}
+
+type ProjectAlias {
+  alias: String!
+  gitTag: String
+  variant: String
+  task: String
+}
+
+type User {
+  userId: String!
+  patches(patchesInput: PatchesInput): PatchConnection
+}
+
+type PatchConnection {
+  patches: [Patch!]!
+}
+
+input PatchesInput {
+  limit: Int
+  page: Int
+  patchName: String
+  statuses: [String!]
+  includeHidden: Boolean
+}
+
+type Patch {
+  id: String!
+  githash: String!
+  description: String!
+  author: String!
+  authorDisplayName: String!
+  status: String!
+  createTime: String!
+  patchNumber: Int!
+  projectIdentifier: String!
+  versionFull: Version
+}
+
+type Version {
+  id: String!
+  revision: String!
+  author: String!
+  createTime: String!
+  status: String!
+  tasks(options: TaskOptions): TaskConnection
+}
+
+input TaskOptions {
+  statuses: [String!]
+  limit: Int
+}
+
+type TaskConnection {
+  count: Int!
+  data: [Task!]!
+}
+
+type Task {
+  id: String!
+  displayName: String!
+  buildVariant: String!
+  status: String!
+  execution: Int!
+  finishTime: String
+  timeTaken: Int
+  details: TaskDetails
+  logs: TaskLogs
+  taskLogs: TaskLogsData
+}
+
+type TaskDetails {
+  description: String
+  status: String!
+  timedOut: Boolean!
+  timeoutType: String
+  failingCommand: String
+}
+
+type TaskLogs {
+  taskLogLink: String
+  agentLogLink: String
+  systemLogLink: String
+  allLogLink: String
+}
+
+type TaskLogsData {
+  taskId: String!
+  execution: Int!
+  taskLogs: [LogEntry!]!
+}
+
+type LogEntry {
+  severity: String!
+  message: String!
+  timestamp: String!
+  type: String!
+}
