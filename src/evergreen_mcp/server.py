@@ -183,26 +183,22 @@ register_tools(mcp)
 @mcp.resource("evergreen://projects")
 async def list_projects_resource(ctx: Context) -> str:
     """List all Evergreen projects as a resource."""
-    try:
-        evg_ctx = ctx.request_context.lifespan_context
-        projects = await evg_ctx.client.get_projects()
-        return json.dumps(
-            [
-                {
-                    "id": p.get("id"),
-                    "identifier": p.get("identifier"),
-                    "displayName": p.get("displayName"),
-                    "enabled": p.get("enabled"),
-                    "owner": p.get("owner"),
-                    "repo": p.get("repo"),
-                }
-                for p in projects
-            ],
-            indent=2,
-        )
-    except Exception:
-        logger.error("Failed to fetch projects resource", exc_info=True)
-        raise
+    evg_ctx = ctx.request_context.lifespan_context
+    projects = await evg_ctx.client.get_projects()
+    return json.dumps(
+        [
+            {
+                "id": p.get("id"),
+                "identifier": p.get("identifier"),
+                "displayName": p.get("displayName"),
+                "enabled": p.get("enabled"),
+                "owner": p.get("owner"),
+                "repo": p.get("repo"),
+            }
+            for p in projects
+        ],
+        indent=2,
+    )
 
 
 def main() -> None:
