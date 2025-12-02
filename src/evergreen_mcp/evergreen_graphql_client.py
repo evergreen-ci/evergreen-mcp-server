@@ -213,9 +213,7 @@ class EvergreenGraphQLClient:
         version = patch.get("versionFull", {})
         failed_count = version.get("tasks", {}).get("count", 0)
 
-        logger.info(
-            "Retrieved patch %s with %s failed tasks", patch_id, failed_count
-        )
+        logger.info("Retrieved patch %s with %s failed tasks", patch_id, failed_count)
         return patch
 
     async def get_version_with_failed_tasks(self, version_id: str) -> Dict[str, Any]:
