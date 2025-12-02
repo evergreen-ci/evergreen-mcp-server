@@ -6,59 +6,7 @@ These tests validate individual components without requiring Evergreen credentia
 """
 
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
-
-from evergreen_mcp.mcp_tools import TOOL_HANDLERS, get_tool_definitions
-
-
-class TestMCPTools(unittest.TestCase):
-    """Test MCP tool definitions and handlers"""
-
-    def test_tool_definitions_exist(self):
-        """Test that tool definitions are properly defined"""
-        tools = get_tool_definitions()
-        self.assertGreater(len(tools), 0, "Should have at least one tool defined")
-
-        # Check that all expected tools are present
-        tool_names = [tool.name for tool in tools]
-        expected_tools = [
-            "list_user_recent_patches_evergreen",
-            "get_patch_failed_jobs_evergreen",
-            "get_task_logs_evergreen",
-            "get_task_test_results_evergreen",
-        ]
-
-        for expected_tool in expected_tools:
-            self.assertIn(
-                expected_tool, tool_names, f"Tool {expected_tool} should be defined"
-            )
-
-    def test_tool_handlers_exist(self):
-        """Test that all tool handlers are properly registered"""
-        tools = get_tool_definitions()
-
-        for tool in tools:
-            self.assertIn(
-                tool.name,
-                TOOL_HANDLERS,
-                f"Handler for tool {tool.name} should be registered",
-            )
-            self.assertIsNotNone(
-                TOOL_HANDLERS[tool.name],
-                f"Handler for tool {tool.name} should not be None",
-            )
-
-    def test_tool_definitions_have_required_fields(self):
-        """Test that tool definitions have all required fields"""
-        tools = get_tool_definitions()
-
-        for tool in tools:
-            self.assertIsNotNone(tool.name, "Tool should have a name")
-            self.assertIsNotNone(tool.description, "Tool should have a description")
-            self.assertGreater(len(tool.name), 0, "Tool name should not be empty")
-            self.assertGreater(
-                len(tool.description), 0, "Tool description should not be empty"
-            )
+from unittest.mock import patch
 
 
 class TestImports(unittest.TestCase):
@@ -70,8 +18,21 @@ class TestImports(unittest.TestCase):
             from evergreen_mcp import server
 
             self.assertTrue(hasattr(server, "main"), "Server should have main function")
+            self.assertTrue(hasattr(server, "mcp"), "Server should have mcp instance")
         except ImportError as e:
             self.fail(f"Failed to import server module: {e}")
+
+    def test_import_tools(self):
+        """Test that tools module can be imported"""
+        try:
+            from evergreen_mcp import mcp_tools
+
+            self.assertTrue(
+                hasattr(mcp_tools, "register_tools"),
+                "Tools module should have register_tools function",
+            )
+        except ImportError as e:
+            self.fail(f"Failed to import tools module: {e}")
 
     def test_import_graphql_client(self):
         """Test that GraphQL client can be imported"""
@@ -106,6 +67,26 @@ class TestImports(unittest.TestCase):
         except ImportError as e:
             self.fail(f"Failed to import evergreen_queries: {e}")
 
+    def test_import_failed_jobs_tools(self):
+        """Test that failed_jobs_tools module can be imported"""
+        try:
+            from evergreen_mcp import failed_jobs_tools
+
+            # Check that expected functions exist
+            expected_functions = [
+                "fetch_user_recent_patches",
+                "fetch_patch_failed_jobs",
+                "fetch_task_logs",
+                "fetch_task_test_results",
+            ]
+            for func in expected_functions:
+                self.assertTrue(
+                    hasattr(failed_jobs_tools, func),
+                    f"Function {func} should be defined",
+                )
+        except ImportError as e:
+            self.fail(f"Failed to import failed_jobs_tools: {e}")
+
 
 class TestVersion(unittest.TestCase):
     """Test version constant"""
@@ -122,11 +103,11 @@ class TestVersion(unittest.TestCase):
         """Test that version follows expected format"""
         from evergreen_mcp import __version__
 
-        # Version should be in format like "0.1.0"
+        # Version should be in format like "0.4.0"
         self.assertRegex(
             __version__,
             r"^\d+\.\d+\.\d+$",
-            "Version should follow semantic versioning format (e.g., 0.1.0)",
+            "Version should follow semantic versioning format (e.g., 0.4.0)",
         )
 
 
@@ -185,6 +166,22 @@ class TestUserAgent(unittest.TestCase):
             r"^evergreen-mcp-server/\d+\.\d+\.\d+$",
             "User-Agent should be in format 'evergreen-mcp-server/x.y.z'",
         )
+
+
+class TestServerComponents(unittest.TestCase):
+    """Test server components are properly configured"""
+
+    def test_fastmcp_server_created(self):
+        """Test that FastMCP server instance is created"""
+        from evergreen_mcp.server import mcp
+
+        self.assertIsNotNone(mcp, "MCP server instance should exist")
+
+    def test_server_has_lifespan(self):
+        """Test that server has lifespan configured"""
+        from evergreen_mcp.server import lifespan
+
+        self.assertIsNotNone(lifespan, "Lifespan function should be defined")
 
 
 if __name__ == "__main__":

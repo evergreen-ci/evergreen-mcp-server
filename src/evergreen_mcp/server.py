@@ -1,31 +1,37 @@
-"""MCP server for Evergreen"""
+"""FastMCP server for Evergreen
+
+This module provides the main MCP server using FastMCP framework.
+It handles server lifecycle, configuration, and tool registration.
+"""
 
 import argparse
 import json
 import logging
 import os
 import os.path
-import sys
-from asyncio import run
-from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import AsyncIterator
 
-import mcp.server.stdio
-import mcp.types as types
 import yaml
-from mcp.server.lowlevel import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
+from fastmcp import Context, FastMCP
 
-from .evergreen_graphql_client import EvergreenGraphQLClient
-from .mcp_tools import TOOL_HANDLERS, get_tool_definitions
+from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+
+__version__ = "0.4.0"
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global configuration
-USER_ID = None
-DEFAULT_PROJECT_ID = None
+
+@dataclass
+class EvergreenContext:
+    """Context object holding the Evergreen client and configuration."""
+
+    client: EvergreenGraphQLClient
+    user_id: str
+    default_project_id: str | None = None
 
 
 def detect_project_from_workspace(
@@ -85,11 +91,12 @@ def detect_project_from_workspace(
     return None
 
 
-@asynccontextmanager
-async def _server_lifespan(_) -> AsyncIterator[dict]:
-    """Server lifespan manager - handles GraphQL client lifecycle"""
-    global USER_ID, DEFAULT_PROJECT_ID
+def load_evergreen_config() -> tuple[dict, str | None]:
+    """Load Evergreen configuration from environment or config file.
 
+    Returns:
+        Tuple of (config dict, default project ID)
+    """
     # Check for environment variables first (Docker setup)
     evergreen_user = os.getenv("EVERGREEN_USER")
     evergreen_api_key = os.getenv("EVERGREEN_API_KEY")
@@ -109,163 +116,106 @@ async def _server_lifespan(_) -> AsyncIterator[dict]:
         with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
             evergreen_config = yaml.safe_load(f)
 
-    # Priority 2: Try auto-detection from workspace (if not set by CLI)
-    if not DEFAULT_PROJECT_ID:
-        detected_project = detect_project_from_workspace(
-            evergreen_config, workspace_dir
-        )
-        if detected_project:
-            DEFAULT_PROJECT_ID = detected_project
-            logger.info(
-                "Auto-detected project ID from workspace: %s", DEFAULT_PROJECT_ID
-            )
+    # Determine default project ID
+    default_project_id = None
 
-    # Priority 3: Fall back to EVERGREEN_PROJECT environment variable
-    if not DEFAULT_PROJECT_ID and evergreen_project:
-        DEFAULT_PROJECT_ID = evergreen_project
-        logger.info("Using project ID from environment: %s", DEFAULT_PROJECT_ID)
+    # Try auto-detection from workspace
+    detected_project = detect_project_from_workspace(evergreen_config, workspace_dir)
+    if detected_project:
+        default_project_id = detected_project
+        logger.info("Auto-detected project ID from workspace: %s", default_project_id)
+
+    # Fall back to EVERGREEN_PROJECT environment variable
+    if not default_project_id and evergreen_project:
+        default_project_id = evergreen_project
+        logger.info("Using project ID from environment: %s", default_project_id)
+
+    return evergreen_config, default_project_id
+
+
+@asynccontextmanager
+async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
+    """Server lifespan manager - handles GraphQL client lifecycle.
+
+    This context manager initializes the Evergreen GraphQL client on startup
+    and ensures proper cleanup on shutdown.
+    """
+    evergreen_config, default_project_id = load_evergreen_config()
 
     client = EvergreenGraphQLClient(
         user=evergreen_config["user"], api_key=evergreen_config["api_key"]
     )
 
-    # Store user ID for patch queries
-    USER_ID = evergreen_config["user"]
-
     async with client:
         logger.info("Evergreen GraphQL client initialized")
-        if DEFAULT_PROJECT_ID:
-            logger.info("Default project ID configured: %s", DEFAULT_PROJECT_ID)
+        if default_project_id:
+            logger.info("Default project ID configured: %s", default_project_id)
         else:
             logger.info(
-                "No default project ID configured - tools will require explicit project_id parameter"
+                "No default project ID configured - "
+                "tools will require explicit project_id parameter"
             )
-        yield {"evergreen_client": client}
 
-
-server: Server = Server("evergreen-mcp-server", lifespan=_server_lifespan)
-
-
-@server.list_resources()
-async def _handle_project_resources() -> Sequence[types.Resource]:
-    """Handle project resources using GraphQL client"""
-    client = server.request_context.lifespan_context["evergreen_client"]
-
-    try:
-        projects = await client.get_projects()
-        logger.info("Retrieved %s projects for resource listing", len(projects))
-
-        return list(
-            map(
-                lambda project: types.Resource(
-                    uri=f"evergreen://project/{project['id']}",
-                    name=project["displayName"],
-                    mimeType="application/json",
-                ),
-                projects,
-            )
+        yield EvergreenContext(
+            client=client,
+            user_id=evergreen_config["user"],
+            default_project_id=default_project_id,
         )
-    except Exception:
-        logger.error("Failed to retrieve projects", exc_info=True)
-        # Return empty list on error to prevent server crash
-        return []
+
+    logger.info("Evergreen GraphQL client closed")
 
 
-@server.list_tools()
-async def _handle_list_tools() -> Sequence[types.Tool]:
-    """List available MCP tools"""
-    tools = get_tool_definitions()
-    logger.info("Listing %s available tools:", len(tools))
-    for tool in tools:
-        logger.info("   - %s: %s", tool.name, tool.description)
-    return tools
+# Create the FastMCP server instance
+mcp = FastMCP(
+    "Evergreen MCP Server",
+    version=__version__,
+    lifespan=lifespan,
+)
 
 
-@server.call_tool()
-async def _handle_call_tool(name: str, arguments: dict) -> Sequence[types.TextContent]:
-    """Handle MCP tool calls by delegating to appropriate handlers"""
-    logger.info("Tool call received: %s", name)
-    logger.info("   Arguments: %s", json.dumps(arguments, indent=2))
+# Import and register tools after mcp is created
+from evergreen_mcp.mcp_tools import register_tools  # noqa: E402
 
-    client = server.request_context.lifespan_context["evergreen_client"]
-
-    # Get the handler for this tool
-    handler = TOOL_HANDLERS.get(name)
-    if not handler:
-        logger.error("Unknown tool requested: %s", name)
-        logger.info("   Available tools: %s", list(TOOL_HANDLERS.keys()))
-        error_response = {
-            "error": f"Unknown tool: {name}",
-            "available_tools": list(TOOL_HANDLERS.keys()),
-        }
-        return [
-            types.TextContent(type="text", text=json.dumps(error_response, indent=2))
-        ]
-
-    # Call the appropriate handler
-    try:
-        logger.debug("Executing tool: %s", name)
-
-        # Use DEFAULT_PROJECT_ID as fallback if not provided in arguments
-        if "project_id" not in arguments and DEFAULT_PROJECT_ID:
-            arguments = {**arguments, "project_id": DEFAULT_PROJECT_ID}
-            logger.info("Using default project ID: %s", DEFAULT_PROJECT_ID)
-
-        if name == "list_user_recent_patches_evergreen":
-            result = await handler(arguments, client, USER_ID)
-        else:
-            result = await handler(arguments, client)
-        logger.debug("Tool %s completed successfully", name)
-        return result
-    except Exception as e:
-        logger.error("Tool handler failed for %s", name, exc_info=True)
-        error_response = {
-            "error": f"Tool execution failed: {str(e)}",
-            "tool": name,
-            # Removed arguments to avoid logging potentially sensitive data
-        }
-        return [
-            types.TextContent(type="text", text=json.dumps(error_response, indent=2))
-        ]
+register_tools(mcp)
 
 
-async def _main() -> int:
-    logger.info("Setting up MCP stdio server...")
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        logger.info("MCP server running and ready for connections")
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="evergreen-mcp-server",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
-        )
-    logger.info("MCP server shutting down")
-    return 0
+# Register resources
+@mcp.resource("evergreen://projects")
+async def list_projects_resource(ctx: Context) -> str:
+    """List all Evergreen projects as a resource."""
+    evg_ctx = ctx.request_context.lifespan_context
+    projects = await evg_ctx.client.get_projects()
+    return json.dumps(
+        [
+            {
+                "id": p.get("id"),
+                "identifier": p.get("identifier"),
+                "displayName": p.get("displayName"),
+                "enabled": p.get("enabled"),
+                "owner": p.get("owner"),
+                "repo": p.get("repo"),
+            }
+            for p in projects
+        ],
+        indent=2,
+    )
 
 
 def main() -> None:
-    """Main entry point for the MCP server"""
-    global DEFAULT_PROJECT_ID
-
-    logger.info("Starting Evergreen MCP Server...")
+    """Main entry point for the FastMCP server."""
+    logger.info("Starting Evergreen FastMCP Server v%s...", __version__)
 
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Evergreen MCP Server")
+    parser = argparse.ArgumentParser(description="Evergreen FastMCP Server")
     parser.add_argument(
         "--project-id",
         type=str,
-        help="Default Evergreen project identifier (optional, can be auto-detected from workspace)",
+        help="Default Evergreen project identifier (optional)",
     )
     parser.add_argument(
         "--workspace-dir",
         type=str,
-        help="Workspace directory for auto-detecting project ID (optional, defaults to current directory)",
+        help="Workspace directory for auto-detecting project ID (optional)",
     )
 
     args = parser.parse_args()
@@ -275,14 +225,14 @@ def main() -> None:
         os.environ["WORKSPACE_PATH"] = args.workspace_dir
         logger.info("Using workspace directory: %s", args.workspace_dir)
 
-    # Set global project ID if provided (takes precedence over auto-detection)
+    # Set project ID as environment variable if provided (takes precedence)
     if args.project_id:
-        DEFAULT_PROJECT_ID = args.project_id
-        logger.info("Using explicit project ID: %s", DEFAULT_PROJECT_ID)
+        os.environ["EVERGREEN_PROJECT"] = args.project_id
+        logger.info("Using explicit project ID: %s", args.project_id)
 
-    logger.info("Initializing MCP server...")
-    try:
-        sys.exit(run(_main()))
-    except Exception:
-        logger.error("Server failed to start", exc_info=True)
-        sys.exit(1)
+    logger.info("Starting FastMCP server...")
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()

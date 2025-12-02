@@ -32,7 +32,7 @@ known_first_party = ["evergreen_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
-version = "0.1.0"
+version = "0.4.0"
 description = "A server for interacting with the Evergreen API."
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
@@ -46,6 +46,7 @@ dependencies = [
     "typing-extensions",
     "pyyaml",
     "mcp",
+    "fastmcp>=2.0.0",
     "gql[aiohttp]"
 ]
 
@@ -60,3 +61,7 @@ dev = [
 
 [project.scripts]
 evergreen-mcp-server = "evergreen_mcp.server:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -1,3 +1,6 @@
-"""Evergreen MCP Server package"""
+"""Evergreen FastMCP Server package
 
-__version__ = "0.3.0"
+This is the upgraded version of the Evergreen MCP Server using FastMCP.
+"""
+
+__version__ = "0.4.0"

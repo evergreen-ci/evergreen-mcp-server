@@ -1249,20 +1249,21 @@ GitHub Actions workflows automatically:
 ```
 evergreen-mcp-server/
 ├── src/
-│   ├── __init__.py                  # Package initialization
-│   ├── server.py                    # Main MCP server implementation
-│   ├── mcp_tools.py                 # MCP tool definitions and handlers
-│   ├── evergreen_graphql_client.py  # GraphQL client for Evergreen API
-│   ├── failed_jobs_tools.py         # Core logic for patch and failed jobs analysis
-│   └── evergreen_queries.py         # GraphQL query definitions
+│   └── evergreen_mcp/
+│       ├── __init__.py                  # Package initialization
+│       ├── server.py                    # Main MCP server implementation
+│       ├── tools.py                     # MCP tool definitions and handlers
+│       ├── evergreen_graphql_client.py  # GraphQL client for Evergreen API
+│       ├── failed_jobs_tools.py         # Core logic for patch and failed jobs analysis
+│       └── evergreen_queries.py         # GraphQL query definitions
 ├── tests/
-│   ├── test_basic.py                # Unit tests for components
-│   └── test_mcp_client.py           # MCP integration tests (full end-to-end)
+│   ├── test_basic.py                    # Unit tests for components
+│   └── test_mcp_client.py               # MCP integration tests (full end-to-end)
 ├── scripts/
-│   └── fetch_graphql_schema.sh      # Script to update GraphQL schema
-├── Dockerfile                       # Docker container configuration
-├── pyproject.toml                   # Project configuration and dependencies
-└── README.md                        # This file
+│   └── fetch_graphql_schema.sh          # Script to update GraphQL schema
+├── Dockerfile                           # Docker container configuration
+├── pyproject.toml                       # Project configuration and dependencies
+└── README.md                            # This file
 ```
 
 ### Key Components
@@ -1318,4 +1319,4 @@ This project follows the same license as the main Evergreen project.
 
 ## Version
 
-Current version: 0.1.0
+Current version: 0.4.0

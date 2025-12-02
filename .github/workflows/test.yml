@@ -34,7 +34,7 @@ jobs:
         # Test that all modules can be imported
         python -c "import evergreen_mcp.server; print('✓ Server module imports successfully')"
         python -c "from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient; print('✓ GraphQL client imports successfully')"
-        python -c "from evergreen_mcp.mcp_tools import get_tool_definitions; print('✓ MCP tools import successfully')"
+        python -c "from evergreen_mcp.mcp_tools import register_tools; print('✓ MCP tools import successfully')"
 
         # Test entry point exists
         evergreen-mcp-server --help
