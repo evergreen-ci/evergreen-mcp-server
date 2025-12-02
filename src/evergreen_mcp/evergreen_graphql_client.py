@@ -203,26 +203,20 @@ class EvergreenGraphQLClient:
             Patch with failed tasks dictionary
         """
         variables = {"patchId": patch_id}
+        result = await self._execute_query(GET_PATCH_FAILED_TASKS, variables)
+        patch = result.get("patch")
 
-        try:
-            result = await self._execute_query(GET_PATCH_FAILED_TASKS, variables)
-            patch = result.get("patch")
+        if not patch:
+            raise Exception(f"Patch not found: {patch_id}")
 
-            if not patch:
-                raise Exception(f"Patch not found: {patch_id}")
+        # Count failed tasks
+        version = patch.get("versionFull", {})
+        failed_count = version.get("tasks", {}).get("count", 0)
 
-            # Count failed tasks
-            version = patch.get("versionFull", {})
-            failed_count = version.get("tasks", {}).get("count", 0)
-
-            logger.info(
-                "Retrieved patch %s with %s failed tasks", patch_id, failed_count
-            )
-            return patch
-
-        except Exception as e:
-            logger.error("Error fetching failed tasks for patch %s: %s", patch_id, e)
-            raise
+        logger.info(
+            "Retrieved patch %s with %s failed tasks", patch_id, failed_count
+        )
+        return patch
 
     async def get_version_with_failed_tasks(self, version_id: str) -> Dict[str, Any]:
         """Get version with failed tasks only
