@@ -18,8 +18,8 @@ from typing import Optional
 
 import aiohttp
 import jwt
-from jwt import PyJWKClient
 import yaml
+from jwt import PyJWKClient
 
 logger = logging.getLogger(__name__)
 
