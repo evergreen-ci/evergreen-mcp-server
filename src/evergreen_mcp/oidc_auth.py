@@ -48,10 +48,10 @@ HTTP_TIMEOUT_DEVICE_POLL = 10  # For device flow polling (faster to retry)
 class OIDCAuthManager:
     """
     Manages DEX authentication with multiple token sources.
-    
+
     This class handles OIDC/OAuth authentication with JWT signature verification
     and supports multiple token sources (environment, Kanopy, Evergreen config).
-    
+
     Thread Safety:
     - Uses asyncio locks to prevent race conditions during token refresh
     - Ensures only one refresh/authentication happens at a time
@@ -82,42 +82,50 @@ class OIDCAuthManager:
                 ) as resp:
                     resp.raise_for_status()
                     metadata = await resp.json()
-                    self.device_auth_endpoint = metadata.get("device_authorization_endpoint")
+                    self.device_auth_endpoint = metadata.get(
+                        "device_authorization_endpoint"
+                    )
                     self.token_endpoint = metadata.get("token_endpoint")
                     self._jwks_uri = metadata.get("jwks_uri")
-                    
+
                     # Initialize JWKS client for signature verification
                     if self._jwks_uri:
                         self._jwks_client = PyJWKClient(
                             self._jwks_uri,
                             cache_keys=True,
                             max_cached_keys=10,
-                            lifespan=JWKS_CACHE_TTL
+                            lifespan=JWKS_CACHE_TTL,
                         )
-                        logger.info("Initialized JWKS client with URI: %s", self._jwks_uri)
+                        logger.info(
+                            "Initialized JWKS client with URI: %s", self._jwks_uri
+                        )
         except asyncio.TimeoutError:
             logger.error(
                 "Failed to fetch OIDC metadata: timed out after %d seconds. "
                 "Check network connectivity to %s",
                 HTTP_TIMEOUT_METADATA,
-                self.issuer
+                self.issuer,
             )
             raise
         except aiohttp.ClientError as e:
             logger.error("Network error fetching OIDC metadata: %s", e)
             raise
         except Exception as e:
-            logger.error("Unexpected error initializing OIDC endpoints: %s", e, exc_info=True)
+            logger.error(
+                "Unexpected error initializing OIDC endpoints: %s", e, exc_info=True
+            )
             raise
 
-    def _verify_and_decode_token(self, token: str, verify: bool = True) -> Optional[dict]:
+    def _verify_and_decode_token(
+        self, token: str, verify: bool = True
+    ) -> Optional[dict]:
         """
         Verify and decode a JWT token.
-        
+
         Args:
             token: The JWT token to decode
             verify: Whether to verify the signature (should always be True in production)
-            
+
         Returns:
             Decoded claims if valid, None otherwise
         """
@@ -131,7 +139,7 @@ class OIDCAuthManager:
                     algorithms=["RS256"],
                     audience=self.client_id,
                     issuer=self.issuer,
-                    options={"verify_signature": True}
+                    options={"verify_signature": True},
                 )
                 return claims
             elif verify:
@@ -143,7 +151,9 @@ class OIDCAuthManager:
                 return None
             else:
                 # Fallback for backwards compatibility (not recommended)
-                logger.warning("Decoding token without signature verification (insecure)")
+                logger.warning(
+                    "Decoding token without signature verification (insecure)"
+                )
                 return jwt.decode(token, options={"verify_signature": False})
         except jwt.ExpiredSignatureError:
             logger.debug("Token has expired")
@@ -161,7 +171,7 @@ class OIDCAuthManager:
             claims = self._verify_and_decode_token(token, verify=True)
             if not claims:
                 return False, 0
-            
+
             exp = claims.get("exp", 0)
             remaining = exp - time.time()
             return remaining > 60, int(remaining)  # 1 min buffer
@@ -178,7 +188,7 @@ class OIDCAuthManager:
             claims = self._verify_and_decode_token(token, verify=True)
             if not claims:
                 return {}
-            
+
             return {
                 "username": claims.get("preferred_username")
                 or claims.get("email")
@@ -198,15 +208,15 @@ class OIDCAuthManager:
     def _validate_token_scopes(self, token: str) -> bool:
         """
         Validate that the token contains all required scopes.
-        
+
         Note: Many OIDC providers (including DEX) don't include scope claims in
         access tokens - scopes are typically in ID tokens. This validation is
         best-effort and non-blocking since JWT signature verification is the
         primary security control.
-        
+
         Args:
             token: The JWT access token to validate
-            
+
         Returns:
             True if all required scopes are present or if scope validation cannot
             be performed (access tokens often don't contain scopes)
@@ -218,40 +228,42 @@ class OIDCAuthManager:
                 # Return True because signature verification already failed
                 # and would have been caught earlier
                 return True
-            
+
             # Get scope from token - can be either space-separated string or list
             token_scope = claims.get("scope", "")
-            
+
             # If scope claim is missing or empty, this is normal for access tokens
             if not token_scope:
                 logger.debug(
                     "Access token does not contain scope claim (normal for many OIDC providers)"
                 )
                 return True
-            
+
             if isinstance(token_scope, str):
                 granted_scopes = set(token_scope.split())
             elif isinstance(token_scope, list):
                 granted_scopes = set(token_scope)
             else:
-                logger.warning("Unexpected scope format in token: %s", type(token_scope))
+                logger.warning(
+                    "Unexpected scope format in token: %s", type(token_scope)
+                )
                 # Don't fail - just log warning
                 return True
-            
+
             # Check if all required scopes are present
             missing_scopes = REQUIRED_SCOPES - granted_scopes
             if missing_scopes:
                 logger.info(
                     "Token has limited scopes. Missing: %s (granted: %s)",
                     missing_scopes,
-                    granted_scopes
+                    granted_scopes,
                 )
                 # Don't fail - scopes in access tokens are advisory
                 return True
-            
+
             logger.debug("Token has all required scopes: %s", granted_scopes)
             return True
-            
+
         except Exception as e:
             logger.error("Error validating token scopes: %s", e, exc_info=True)
             # Don't fail on validation errors - signature verification is primary control
@@ -278,8 +290,10 @@ class OIDCAuthManager:
                     if not self._validate_token_scopes(access_token):
                         logger.warning("Kanopy token missing required scopes")
                         return None
-                    
-                    logger.info("Kanopy token valid (%d min remaining)", remaining // 60)
+
+                    logger.info(
+                        "Kanopy token valid (%d min remaining)", remaining // 60
+                    )
                     self._access_token = access_token
                     self._user_info = self._extract_user_info(access_token)
                     return access_token
@@ -335,7 +349,7 @@ class OIDCAuthManager:
                         # Store refresh token to attempt refresh with correct scopes
                         self._refresh_token = refresh_token or self._refresh_token
                         return None
-                    
+
                     logger.info(
                         "Evergreen token valid (%d min remaining)", remaining // 60
                     )
@@ -356,14 +370,16 @@ class OIDCAuthManager:
         except (KeyError, TypeError, AttributeError) as e:
             logger.error("Invalid config or token data structure: %s", e)
         except Exception as e:
-            logger.error("Unexpected error reading evergreen config: %s", e, exc_info=True)
+            logger.error(
+                "Unexpected error reading evergreen config: %s", e, exc_info=True
+            )
 
         return None
 
     async def refresh_token(self) -> Optional[str]:
         """
         Attempt to refresh the token.
-        
+
         Uses a lock to prevent concurrent refresh attempts and includes
         a check to avoid unnecessary refreshes if another request already
         completed the refresh.
@@ -380,7 +396,7 @@ class OIDCAuthManager:
                 if is_valid:
                     logger.debug(
                         "Token already refreshed by another request (%d min remaining)",
-                        remaining // 60
+                        remaining // 60,
                     )
                     return self._access_token
 
@@ -400,17 +416,19 @@ class OIDCAuthManager:
                         if resp.status == 200:
                             token_data = await resp.json()
                             new_access_token = token_data.get("access_token")
-                            
+
                             # Validate token has required scopes
                             if not self._validate_token_scopes(new_access_token):
                                 logger.error("Refreshed token missing required scopes")
                                 return None
-                            
+
                             self._access_token = new_access_token
                             self._refresh_token = token_data.get(
                                 "refresh_token", self._refresh_token
                             )
-                            self._user_info = self._extract_user_info(self._access_token)
+                            self._user_info = self._extract_user_info(
+                                self._access_token
+                            )
 
                             # Save to kanopy token file
                             self._save_token(token_data)
@@ -423,7 +441,7 @@ class OIDCAuthManager:
                 logger.error(
                     "Token refresh timed out after %d seconds. "
                     "Check network connectivity to OIDC provider.",
-                    HTTP_TIMEOUT_TOKEN
+                    HTTP_TIMEOUT_TOKEN,
                 )
             except aiohttp.ClientError as e:
                 logger.error("Network error during token refresh: %s", e)
@@ -432,28 +450,30 @@ class OIDCAuthManager:
             except OSError as e:
                 logger.error("Error saving refreshed token: %s", e)
             except Exception as e:
-                logger.error("Unexpected error during token refresh: %s", e, exc_info=True)
+                logger.error(
+                    "Unexpected error during token refresh: %s", e, exc_info=True
+                )
 
             return None
 
     def _save_token(self, token_data: dict):
         """
         Save token to kanopy token file atomically.
-        
+
         Uses atomic write pattern (write to temp file + rename) to prevent
         corruption if the process crashes during write.
         """
         KANOPY_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Write to temporary file first
-        temp_file = KANOPY_TOKEN_FILE.with_suffix('.tmp')
+        temp_file = KANOPY_TOKEN_FILE.with_suffix(".tmp")
         try:
             with open(temp_file, "w") as f:
                 json.dump(token_data, f, indent=2)
                 # Ensure data is flushed to disk
                 f.flush()
                 os.fsync(f.fileno())
-            
+
             # Atomic rename (replaces existing file atomically)
             temp_file.replace(KANOPY_TOKEN_FILE)
             logger.info("Token saved to %s", KANOPY_TOKEN_FILE)
@@ -505,7 +525,9 @@ class OIDCAuthManager:
 
                 # Display auth instructions
                 logger.info("=" * 70)
-                logger.info("🔐 AUTHENTICATION REQUIRED - Please complete login in your browser")
+                logger.info(
+                    "🔐 AUTHENTICATION REQUIRED - Please complete login in your browser"
+                )
                 logger.info("=" * 70)
                 logger.info("URL: %s", verification_uri)
                 if user_code:
@@ -531,11 +553,13 @@ class OIDCAuthManager:
                         "device_code": device_code,
                     }
 
-                    async with session.post(self.token_endpoint, data=poll_data) as resp:
+                    async with session.post(
+                        self.token_endpoint, data=poll_data
+                    ) as resp:
                         if resp.status == 200:
                             token_data = await resp.json()
                             new_access_token = token_data.get("access_token")
-                            
+
                             # Validate token has required scopes
                             if not self._validate_token_scopes(new_access_token):
                                 logger.error(
@@ -543,10 +567,12 @@ class OIDCAuthManager:
                                     "Please ensure the OIDC provider grants all requested scopes."
                                 )
                                 return None
-                            
+
                             self._access_token = new_access_token
                             self._refresh_token = token_data.get("refresh_token")
-                            self._user_info = self._extract_user_info(self._access_token)
+                            self._user_info = self._extract_user_info(
+                                self._access_token
+                            )
                             self._save_token(token_data)
                             logger.info("Authentication successful!")
                             return self._access_token
@@ -570,7 +596,7 @@ class OIDCAuthManager:
             logger.error(
                 "Device flow authentication timed out after %d seconds. "
                 "This may happen if the OIDC provider is slow or network is unstable.",
-                HTTP_TIMEOUT_DEVICE_POLL
+                HTTP_TIMEOUT_DEVICE_POLL,
             )
             return None
         except aiohttp.ClientError as e:
@@ -583,10 +609,10 @@ class OIDCAuthManager:
     async def ensure_authenticated(self) -> bool:
         """
         Main authentication flow with concurrency protection.
-        
+
         Uses a lock to ensure only one authentication attempt happens at a time,
         preventing race conditions when multiple requests detect expired tokens.
-        
+
         Steps:
         1. Initialize OIDC endpoints (including JWKS)
         2. Check kanopy token
@@ -604,7 +630,7 @@ class OIDCAuthManager:
                 if is_valid:
                     logger.debug(
                         "Already authenticated by another request (%d min remaining)",
-                        remaining // 60
+                        remaining // 60,
                     )
                     return True
 
@@ -640,16 +666,16 @@ class OIDCAuthManager:
     def is_authenticated(self) -> bool:
         """
         Check if currently authenticated with a valid token.
-        
+
         This is a non-blocking check that doesn't trigger authentication.
         Use this to check auth status without acquiring locks.
-        
+
         Returns:
             True if access token exists and is valid, False otherwise
         """
         if not self._access_token:
             return False
-        
+
         is_valid, _ = self._check_token_expiry(self._access_token)
         return is_valid
 
@@ -671,4 +697,3 @@ class OIDCAuthManager:
             # Extract username from email (before @)
             return email.split("@")[0]
         return self._user_info.get("username")
-

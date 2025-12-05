@@ -119,27 +119,27 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
         # Try to use existing OIDC tokens first (non-interactive)
         logger.info("Checking for existing OIDC tokens...")
         auth_manager = OIDCAuthManager()
-        
+
         # Initialize endpoints to enable token verification
         try:
             await auth_manager.initialize_endpoints()
         except Exception as e:
             logger.warning("Could not initialize OIDC endpoints: %s", e)
             auth_manager = None
-        
+
         oidc_token_found = False
         if auth_manager:
             # Check for existing tokens without triggering device flow
             token = auth_manager.check_kanopy_token()
             if not token:
                 token = auth_manager.check_evergreen_token()
-            
+
             if token:
                 logger.info("Found valid OIDC token")
                 oidc_token_found = True
                 user_id = auth_manager.user_id
                 logger.info("Authenticated as: %s", user_id)
-                
+
                 evergreen_config = {
                     "user": user_id,
                     "bearer_token": auth_manager.access_token,
@@ -154,25 +154,27 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                     oidc_token_found = True
                     user_id = auth_manager.user_id
                     logger.info("Authenticated as: %s", user_id)
-                    
+
                     evergreen_config = {
                         "user": user_id,
                         "bearer_token": auth_manager.access_token,
                         "auth_method": "oidc",
                     }
-        
+
         # If no OIDC token found, check for API key in config file
         if not oidc_token_found:
             logger.info("No valid OIDC token found, checking for API key...")
             evergreen_yml_path = os.path.expanduser("~/.evergreen.yml")
-            
+
             if os.path.exists(evergreen_yml_path):
                 try:
                     with open(evergreen_yml_path, mode="rb") as f:
                         evergreen_config = yaml.safe_load(f)
-                    
+
                     if "user" in evergreen_config and "api_key" in evergreen_config:
-                        logger.info("Using API key authentication from ~/.evergreen.yml")
+                        logger.info(
+                            "Using API key authentication from ~/.evergreen.yml"
+                        )
                         evergreen_config["auth_method"] = "api_key"
                         auth_manager = None
                     else:
@@ -187,7 +189,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                     evergreen_config = None
             else:
                 evergreen_config = None
-        
+
         # If still no authentication, do interactive OIDC device flow
         if not oidc_token_found and evergreen_config is None:
             logger.info(
@@ -196,15 +198,15 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
             if not auth_manager:
                 auth_manager = OIDCAuthManager()
                 await auth_manager.initialize_endpoints()
-            
+
             try:
                 authenticated = await auth_manager.device_flow_auth()
-                
+
                 if authenticated:
                     logger.info("Successfully authenticated via OIDC device flow")
                     user_id = auth_manager.user_id
                     logger.info("Authenticated as: %s", user_id)
-                    
+
                     evergreen_config = {
                         "user": user_id,
                         "bearer_token": auth_manager.access_token,
@@ -249,13 +251,13 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
 
     # Create client based on authentication method
     auth_method = evergreen_config.get("auth_method", "api_key")
-    
+
     if auth_method == "oidc":
         logger.info("Initializing GraphQL client with OIDC Bearer token")
         # Use corp endpoint for OIDC authentication
         client = EvergreenGraphQLClient(
             bearer_token=evergreen_config["bearer_token"],
-            endpoint="https://evergreen.corp.mongodb.com/graphql/query"
+            endpoint="https://evergreen.corp.mongodb.com/graphql/query",
         )
     else:
         logger.info("Initializing GraphQL client with API key")
