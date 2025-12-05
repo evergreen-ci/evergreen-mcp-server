@@ -17,6 +17,7 @@ import yaml
 from fastmcp import Context, FastMCP
 
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+from evergreen_mcp.oidc_auth import OIDCAuthManager
 
 __version__ = "0.4.0"
 
@@ -91,11 +92,11 @@ def detect_project_from_workspace(
     return None
 
 
-def load_evergreen_config() -> tuple[dict, str | None]:
+async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | None]:
     """Load Evergreen configuration from environment or config file.
 
     Returns:
-        Tuple of (config dict, default project ID)
+        Tuple of (config dict, default project ID, auth_manager if using OIDC)
     """
     # Check for environment variables first (Docker setup)
     evergreen_user = os.getenv("EVERGREEN_USER")
@@ -103,18 +104,124 @@ def load_evergreen_config() -> tuple[dict, str | None]:
     evergreen_project = os.getenv("EVERGREEN_PROJECT")
     workspace_dir = os.getenv("WORKSPACE_PATH")
 
+    auth_manager = None
+    evergreen_config = {}
+
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
         logger.info("Using environment variables for Evergreen configuration")
         evergreen_config = {
             "user": evergreen_user,
             "api_key": evergreen_api_key,
+            "auth_method": "api_key",
         }
     else:
-        # Fall back to config file (local setup)
-        logger.info("Using ~/.evergreen.yml for Evergreen configuration")
-        with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
-            evergreen_config = yaml.safe_load(f)
+        # Try to use existing OIDC tokens first (non-interactive)
+        logger.info("Checking for existing OIDC tokens...")
+        auth_manager = OIDCAuthManager()
+
+        # Initialize endpoints to enable token verification
+        try:
+            await auth_manager.initialize_endpoints()
+        except Exception as e:
+            logger.warning("Could not initialize OIDC endpoints: %s", e)
+            auth_manager = None
+
+        oidc_token_found = False
+        if auth_manager:
+            # Check for existing tokens without triggering device flow
+            token = auth_manager.check_kanopy_token()
+            if not token:
+                token = auth_manager.check_evergreen_token()
+
+            if token:
+                logger.info("Found valid OIDC token")
+                oidc_token_found = True
+                user_id = auth_manager.user_id
+                logger.info("Authenticated as: %s", user_id)
+
+                evergreen_config = {
+                    "user": user_id,
+                    "bearer_token": auth_manager.access_token,
+                    "auth_method": "oidc",
+                }
+            elif auth_manager._refresh_token:
+                # Try to refresh existing token
+                logger.info("Attempting to refresh expired OIDC token...")
+                token = await auth_manager.refresh_token()
+                if token:
+                    logger.info("Successfully refreshed OIDC token")
+                    oidc_token_found = True
+                    user_id = auth_manager.user_id
+                    logger.info("Authenticated as: %s", user_id)
+
+                    evergreen_config = {
+                        "user": user_id,
+                        "bearer_token": auth_manager.access_token,
+                        "auth_method": "oidc",
+                    }
+
+        # If no OIDC token found, check for API key in config file
+        if not oidc_token_found:
+            logger.info("No valid OIDC token found, checking for API key...")
+            evergreen_yml_path = os.path.expanduser("~/.evergreen.yml")
+
+            if os.path.exists(evergreen_yml_path):
+                try:
+                    with open(evergreen_yml_path, mode="rb") as f:
+                        evergreen_config = yaml.safe_load(f)
+
+                    if "user" in evergreen_config and "api_key" in evergreen_config:
+                        logger.info(
+                            "Using API key authentication from ~/.evergreen.yml"
+                        )
+                        evergreen_config["auth_method"] = "api_key"
+                        auth_manager = None
+                    else:
+                        # Config exists but missing required fields - try OIDC device flow
+                        logger.warning(
+                            "~/.evergreen.yml missing 'user' or 'api_key' fields, "
+                            "falling back to OIDC device flow"
+                        )
+                        evergreen_config = None
+                except yaml.YAMLError as yaml_err:
+                    logger.error("Failed to parse ~/.evergreen.yml: %s", yaml_err)
+                    evergreen_config = None
+            else:
+                evergreen_config = None
+
+        # If still no authentication, do interactive OIDC device flow
+        if not oidc_token_found and evergreen_config is None:
+            logger.info(
+                "No existing authentication found, starting interactive OIDC device flow..."
+            )
+            if not auth_manager:
+                auth_manager = OIDCAuthManager()
+                await auth_manager.initialize_endpoints()
+
+            try:
+                authenticated = await auth_manager.device_flow_auth()
+
+                if authenticated:
+                    logger.info("Successfully authenticated via OIDC device flow")
+                    user_id = auth_manager.user_id
+                    logger.info("Authenticated as: %s", user_id)
+
+                    evergreen_config = {
+                        "user": user_id,
+                        "bearer_token": auth_manager.access_token,
+                        "auth_method": "oidc",
+                    }
+                else:
+                    raise RuntimeError(
+                        "No authentication available: OIDC device flow failed and "
+                        "no valid ~/.evergreen.yml found"
+                    )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Authentication failed: OIDC device flow error ({e}) and "
+                    f"no valid ~/.evergreen.yml found"
+                )
 
     # Determine default project ID
     default_project_id = None
@@ -130,7 +237,7 @@ def load_evergreen_config() -> tuple[dict, str | None]:
         default_project_id = evergreen_project
         logger.info("Using project ID from environment: %s", default_project_id)
 
-    return evergreen_config, default_project_id
+    return evergreen_config, default_project_id, auth_manager
 
 
 @asynccontextmanager
@@ -140,14 +247,28 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     This context manager initializes the Evergreen GraphQL client on startup
     and ensures proper cleanup on shutdown.
     """
-    evergreen_config, default_project_id = load_evergreen_config()
+    evergreen_config, default_project_id, auth_manager = await load_evergreen_config()
 
-    client = EvergreenGraphQLClient(
-        user=evergreen_config["user"], api_key=evergreen_config["api_key"]
-    )
+    # Create client based on authentication method
+    auth_method = evergreen_config.get("auth_method", "api_key")
+
+    if auth_method == "oidc":
+        logger.info("Initializing GraphQL client with OIDC Bearer token")
+        # Use corp endpoint for OIDC authentication
+        client = EvergreenGraphQLClient(
+            bearer_token=evergreen_config["bearer_token"],
+            endpoint="https://evergreen.corp.mongodb.com/graphql/query",
+        )
+    else:
+        logger.info("Initializing GraphQL client with API key")
+        # These fields were validated during config loading
+        client = EvergreenGraphQLClient(
+            user=evergreen_config["user"], api_key=evergreen_config["api_key"]
+        )
 
     async with client:
         logger.info("Evergreen GraphQL client initialized")
+        logger.info("Authentication method: %s", auth_method)
         if default_project_id:
             logger.info("Default project ID configured: %s", default_project_id)
         else:

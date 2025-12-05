@@ -47,7 +47,9 @@ dependencies = [
     "pyyaml",
     "mcp",
     "fastmcp>=2.0.0",
-    "gql[aiohttp]"
+    "gql[aiohttp]",
+    "pyjwt>=2.0.0",
+    "cryptography>=41.0.0"
 ]
 
 [project.optional-dependencies]
