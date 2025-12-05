@@ -33,30 +33,56 @@ class EvergreenGraphQLClient:
     """GraphQL client for Evergreen API
 
     This client provides async methods for querying the Evergreen GraphQL API.
-    It handles authentication via API keys and manages the connection lifecycle.
+    It handles authentication via API keys or Bearer tokens and manages the connection lifecycle.
     """
 
-    def __init__(self, user: str, api_key: str, endpoint: str = None):
+    def __init__(
+        self,
+        user: str = None,
+        api_key: str = None,
+        bearer_token: str = None,
+        endpoint: str = None,
+    ):
         """Initialize the GraphQL client
 
         Args:
-            user: Evergreen username
-            api_key: Evergreen API key
+            user: Evergreen username (for API key auth)
+            api_key: Evergreen API key (for API key auth)
+            bearer_token: OAuth/OIDC bearer token (for token auth)
             endpoint: GraphQL endpoint URL (defaults to Evergreen's main instance)
         """
         self.user = user
         self.api_key = api_key
+        self.bearer_token = bearer_token
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
 
+        # Validate that we have some form of authentication
+        if not bearer_token and not (user and api_key):
+            raise ValueError(
+                "Either bearer_token or both user and api_key must be provided"
+            )
+
     async def connect(self):
         """Initialize GraphQL client connection"""
-        headers = {
-            "Api-User": self.user,
-            "Api-Key": self.api_key,
-            "Content-Type": "application/json",
-            "User-Agent": f"evergreen-mcp-server/{__version__}",
-        }
+        # Determine authentication method
+        if self.bearer_token:
+            # Use Bearer token authentication
+            headers = {
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/json",
+                "User-Agent": f"evergreen-mcp-server/{__version__}",
+            }
+            logger.debug("Using Bearer token authentication")
+        else:
+            # Use API key authentication
+            headers = {
+                "Api-User": self.user,
+                "Api-Key": self.api_key,
+                "Content-Type": "application/json",
+                "User-Agent": f"evergreen-mcp-server/{__version__}",
+            }
+            logger.debug("Using API key authentication")
 
         logger.debug("Connecting to GraphQL endpoint: %s", self.endpoint)
 

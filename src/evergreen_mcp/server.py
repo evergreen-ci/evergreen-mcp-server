@@ -17,6 +17,7 @@ import yaml
 from fastmcp import Context, FastMCP
 
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+from evergreen_mcp.oidc_auth import OIDCAuthManager
 
 __version__ = "0.4.0"
 
@@ -91,11 +92,11 @@ def detect_project_from_workspace(
     return None
 
 
-def load_evergreen_config() -> tuple[dict, str | None]:
+async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | None]:
     """Load Evergreen configuration from environment or config file.
 
     Returns:
-        Tuple of (config dict, default project ID)
+        Tuple of (config dict, default project ID, auth_manager if using OIDC)
     """
     # Check for environment variables first (Docker setup)
     evergreen_user = os.getenv("EVERGREEN_USER")
@@ -103,18 +104,51 @@ def load_evergreen_config() -> tuple[dict, str | None]:
     evergreen_project = os.getenv("EVERGREEN_PROJECT")
     workspace_dir = os.getenv("WORKSPACE_PATH")
 
+    auth_manager = None
+    evergreen_config = {}
+
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
         logger.info("Using environment variables for Evergreen configuration")
         evergreen_config = {
             "user": evergreen_user,
             "api_key": evergreen_api_key,
+            "auth_method": "api_key",
         }
     else:
-        # Fall back to config file (local setup)
-        logger.info("Using ~/.evergreen.yml for Evergreen configuration")
-        with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
-            evergreen_config = yaml.safe_load(f)
+        # Try OIDC authentication first
+        logger.info("Attempting OIDC authentication...")
+        auth_manager = OIDCAuthManager()
+        
+        try:
+            authenticated = await auth_manager.ensure_authenticated()
+            
+            if authenticated:
+                logger.info("Successfully authenticated via OIDC")
+                user_id = auth_manager.user_id
+                logger.info("Authenticated as: %s", user_id)
+                
+                evergreen_config = {
+                    "user": user_id,
+                    "bearer_token": auth_manager.access_token,
+                    "auth_method": "oidc",
+                }
+            else:
+                raise RuntimeError("OIDC authentication failed")
+        except Exception as e:
+            logger.warning("OIDC authentication failed: %s", e)
+            logger.info("Falling back to API key authentication from ~/.evergreen.yml")
+            
+            # Fall back to config file (local setup)
+            try:
+                with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
+                    evergreen_config = yaml.safe_load(f)
+                    evergreen_config["auth_method"] = "api_key"
+                    auth_manager = None
+            except FileNotFoundError:
+                raise RuntimeError(
+                    "No authentication available: OIDC failed and ~/.evergreen.yml not found"
+                )
 
     # Determine default project ID
     default_project_id = None
@@ -130,7 +164,7 @@ def load_evergreen_config() -> tuple[dict, str | None]:
         default_project_id = evergreen_project
         logger.info("Using project ID from environment: %s", default_project_id)
 
-    return evergreen_config, default_project_id
+    return evergreen_config, default_project_id, auth_manager
 
 
 @asynccontextmanager
@@ -140,14 +174,27 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     This context manager initializes the Evergreen GraphQL client on startup
     and ensures proper cleanup on shutdown.
     """
-    evergreen_config, default_project_id = load_evergreen_config()
+    evergreen_config, default_project_id, auth_manager = await load_evergreen_config()
 
-    client = EvergreenGraphQLClient(
-        user=evergreen_config["user"], api_key=evergreen_config["api_key"]
-    )
+    # Create client based on authentication method
+    auth_method = evergreen_config.get("auth_method", "api_key")
+    
+    if auth_method == "oidc":
+        logger.info("Initializing GraphQL client with OIDC Bearer token")
+        # Use corp endpoint for OIDC authentication
+        client = EvergreenGraphQLClient(
+            bearer_token=evergreen_config["bearer_token"],
+            endpoint="https://evergreen.corp.mongodb.com/graphql/query"
+        )
+    else:
+        logger.info("Initializing GraphQL client with API key")
+        client = EvergreenGraphQLClient(
+            user=evergreen_config["user"], api_key=evergreen_config["api_key"]
+        )
 
     async with client:
         logger.info("Evergreen GraphQL client initialized")
+        logger.info("Authentication method: %s", auth_method)
         if default_project_id:
             logger.info("Default project ID configured: %s", default_project_id)
         else:

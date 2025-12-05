@@ -28,20 +28,48 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 
 ## Quick Start (Docker)
 
-The fastest way to get started is using the published Docker image:
+### Using OIDC Authentication (Recommended)
+
+The fastest way to get started is using Docker with OIDC authentication:
 
 ```bash
-# Pull and run the MCP server
-docker run --rm -it \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
+# 1. Authenticate locally first to get tokens
+python -m evergreen_mcp.server
+
+# 2. Run with Docker, mounting your token files
+docker run --rm -i \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
-**💡 Pro Tip:** The server can automatically detect your project ID from your workspace directory! Add a `projects_for_directory` section to your `~/.evergreen.yml` config file (see [Automatic Project Detection](#automatic-project-detection)) and skip the manual `--project-id` argument.
+### Using API Keys (Legacy)
 
-**Note:** If you use the Evergreen CLI and have previously answered "yes" to prompts about configuring a default project for a directory, you likely already have this configuration in place!
+Alternatively, you can use API key authentication:
+
+```bash
+docker run --rm -i \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+### Building Locally
+
+To build and run the Docker image locally:
+
+```bash
+# Build the image
+docker build -t evergreen-mcp-server:local .
+
+# Run with OIDC tokens
+docker run --rm -i \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  evergreen-mcp-server:local
+```
+
+**💡 Pro Tip:** The server can automatically detect your project ID from your workspace directory! Add a `projects_for_directory` section to your `~/.evergreen.yml` config file (see [Automatic Project Detection](#automatic-project-detection)).
 
 For detailed setup instructions and client configuration, see [Running the Server](#running-the-server) and [MCP Client Configuration](#mcp-client-configuration) sections below.
 
@@ -418,19 +446,40 @@ The Evergreen MCP server is designed to be used with MCP clients (like Claude De
 
 ### Method 1: Using Docker (Recommended)
 
-The easiest way to get started is using the published Docker image.
+#### Option A: OIDC Authentication (Recommended)
+
+The most secure approach uses OIDC tokens mounted from files:
 
 ```bash
-# Pull the latest Docker image
-docker pull ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+# 1. Authenticate locally to get tokens (one-time setup)
+python -m evergreen_mcp.server
+
+# 2. Run with Docker, mounting token files
+docker run --rm -i \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
-#### Recommended: Use Environment Variables
+**Why this approach:**
+- ✅ More secure: Tokens not exposed in environment variables
+- ✅ Automatic refresh: Server refreshes expired tokens
+- ✅ Simple: Just mount two files
 
-The simplest and most Docker-friendly approach is to use environment variables for all configuration:
+**With project configuration:**
+```bash
+docker run --rm -i \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -e EVERGREEN_PROJECT=mongodb-mongo-master \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+#### Option B: API Key Authentication (Legacy)
+
+For environments without OIDC support:
 
 ```bash
-# With project specified (recommended for production/CI)
 docker run --rm -i \
   -e EVERGREEN_USER=your_username \
   -e EVERGREEN_API_KEY=your_api_key \
@@ -440,49 +489,8 @@ docker run --rm -i \
 
 This approach:
 - Works in Kubernetes ConfigMaps/Secrets
-- Compatible with Docker Compose
-- Follows 12-factor app principles
 - No file mounts required
-
-#### Without Project Configuration
-
-If you don't specify a project, the agent will determine it from context:
-
-```bash
-# Agent determines project from conversation
-docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-The agent understands project from:
-- Natural language: "Check my MMS patches"
-- Response data: All responses include project information
-- Conversation memory: Tell it once, it remembers
-
-#### Advanced Options
-
-**Using auto-detection with workspace path (local development):**
-```bash
-docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e WORKSPACE_PATH=/path/to/workspace \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-**Using command-line argument (explicit override):**
-```bash
-docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
-  --project-id mongodb
-```
-
-**Note:** The `--project-id` argument takes precedence over `EVERGREEN_PROJECT` environment variable if both are provided.
+- Legacy authentication method
 
 ### Method 2: Direct Execution (for Development)
 
@@ -520,7 +528,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 
 ### VS Code with MCP Extension
 
-**Using Docker with Auto-Detection (Recommended):**
+**Using Docker with OIDC (Recommended):**
 ```json
 {
     "servers": {
@@ -529,9 +537,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
             "command": "docker",
             "args": [
                 "run", "--rm", "-i",
-                "-e", "EVERGREEN_USER=your_username",
-                "-e", "EVERGREEN_API_KEY=your_api_key",
-                "-e", "WORKSPACE_PATH=${workspaceFolder}",
+                "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
                 "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
                 "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
             ]
@@ -540,7 +546,26 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**Using Docker with Explicit Project ID:**
+**With Project Configuration:**
+```json
+{
+    "servers": {
+        "evergreen-mcp-server": {
+            "type": "stdio",
+            "command": "docker",
+            "args": [
+                "run", "--rm", "-i",
+                "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+                "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+                "-e", "EVERGREEN_PROJECT=mongodb-mongo-master",
+                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+            ]
+        }
+    }
+}
+```
+
+**Using Docker with API Keys (Legacy):**
 ```json
 {
     "servers": {
@@ -551,8 +576,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
                 "run", "--rm", "-i",
                 "-e", "EVERGREEN_USER=your_username",
                 "-e", "EVERGREEN_API_KEY=your_api_key",
-                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-                "--project-id", "your-evergreen-project-id"
+                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
             ]
         }
     }
@@ -587,7 +611,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 
 ### Claude Desktop
 
-**Using Docker (Recommended):**
+**Using Docker with OIDC (Recommended):**
 ```json
 {
   "mcpServers": {
@@ -595,9 +619,8 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-e", "EVERGREEN_USER=your_username",
-        "-e", "EVERGREEN_API_KEY=your_api_key",
-        "-e", "EVERGREEN_PROJECT=your_project",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
     }
@@ -605,7 +628,25 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**With Project ID:**
+**With Project Configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "-e", "EVERGREEN_PROJECT=mongodb-mongo-master",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**Using Docker with API Keys (Legacy):**
 ```json
 {
   "mcpServers": {
@@ -615,9 +656,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
         "run", "--rm", "-i",
         "-e", "EVERGREEN_USER=your_username",
         "-e", "EVERGREEN_API_KEY=your_api_key",
-        "-e", "EVERGREEN_PROJECT=your_project",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-        "--project-id", "your-evergreen-project-id"
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
     }
   }
@@ -662,7 +701,7 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
 
 2. **Configure MCP Server**: Add the Evergreen MCP server to Augment's configuration:
 
-   **For VS Code with Augment (using Docker - Recommended):**
+   **For VS Code with Augment (using Docker with OIDC - Recommended):**
    ```json
    {
      "augment.mcpServers": {
@@ -670,11 +709,9 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
          "command": "docker",
          "args": [
            "run", "--rm", "-i",
-           "-e", "EVERGREEN_USER=your_username",
-           "-e", "EVERGREEN_API_KEY=your_api_key",
-           "-e", "EVERGREEN_PROJECT=your_project",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-           "--project-id", "your-evergreen-project-id"
+           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
          ],
          "env": {}
        }
@@ -695,7 +732,7 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
    }
    ```
 
-   **For JetBrains IDEs with Augment (using Docker - Recommended):**
+   **For JetBrains IDEs with Augment (using Docker with OIDC - Recommended):**
    ```json
    {
      "mcpServers": {
@@ -703,11 +740,9 @@ The Evergreen MCP server can be integrated with various IDE-based AI tools that 
          "command": "docker",
          "args": [
            "run", "--rm", "-i",
-           "-e", "EVERGREEN_USER=your_username",
-           "-e", "EVERGREEN_API_KEY=your_api_key",
-           "-e", "EVERGREEN_PROJECT=your_project",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-           "--project-id", "your-evergreen-project-id"
+           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
          ]
        }
      }
@@ -741,7 +776,7 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 1. **Install Claude Extension**: Install the official Claude extension from the VS Code marketplace
 
-2. **Configure MCP in VS Code Settings** (using Docker - Recommended):
+2. **Configure MCP in VS Code Settings** (using Docker with OIDC - Recommended):
    ```json
    {
      "claude.mcpServers": {
@@ -749,11 +784,9 @@ Claude's IDE integration provides direct access to Claude AI within your develop
          "command": "docker",
          "args": [
            "run", "--rm", "-i",
-           "-e", "EVERGREEN_USER=your_username",
-           "-e", "EVERGREEN_API_KEY=your_api_key",
-           "-e", "EVERGREEN_PROJECT=your_project",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-           "--project-id", "your-evergreen-project-id"
+           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
          ],
          "type": "stdio"
        }
@@ -776,7 +809,7 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 3. **Alternative Configuration**: Create a `.claude/mcp.json` file in your project root:
 
-   **Using Docker (Recommended):**
+   **Using Docker with OIDC (Recommended):**
    ```json
    {
      "mcpServers": {
@@ -784,11 +817,9 @@ Claude's IDE integration provides direct access to Claude AI within your develop
          "command": "docker",
          "args": [
            "run", "--rm", "-i",
-           "-e", "EVERGREEN_USER=your_username",
-           "-e", "EVERGREEN_API_KEY=your_api_key",
-           "-e", "EVERGREEN_PROJECT=your_project",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-           "--project-id", "your-evergreen-project-id"
+           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
          ]
        }
      }
@@ -813,7 +844,7 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 2. **Configure MCP Server**: In Claude plugin settings:
 
-   **Using Docker (Recommended):**
+   **Using Docker with OIDC (Recommended):**
    ```json
    {
      "servers": {
@@ -821,11 +852,9 @@ Claude's IDE integration provides direct access to Claude AI within your develop
          "command": "docker",
          "args": [
            "run", "--rm", "-i",
-           "-e", "EVERGREEN_USER=your_username",
-           "-e", "EVERGREEN_API_KEY=your_api_key",
-           "-e", "EVERGREEN_PROJECT=your_project",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-           "--project-id", "your-evergreen-project-id"
+           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
          ]
        }
      }
@@ -848,7 +877,7 @@ Claude's IDE integration provides direct access to Claude AI within your develop
 
 GitHub Copilot Chat can be extended with MCP servers through various configuration methods.
 
-**VS Code Configuration (using Docker - Recommended):**
+**VS Code Configuration (using Docker with OIDC - Recommended):**
 ```json
 {
   "github.copilot.chat.mcp": {
@@ -857,11 +886,9 @@ GitHub Copilot Chat can be extended with MCP servers through various configurati
         "command": "docker",
         "args": [
           "run", "--rm", "-i",
-          "-e", "EVERGREEN_USER=your_username",
-          "-e", "EVERGREEN_API_KEY=your_api_key",
-          "-e", "EVERGREEN_PROJECT=your_project",
-          "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-          "--project-id", "your-evergreen-project-id"
+          "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+          "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+          "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
         ]
       }
     }
@@ -890,17 +917,15 @@ For other IDE-based AI assistants that support MCP, the general configuration pa
 1. **Locate MCP Configuration**: Find your IDE AI tool's MCP server configuration section
 2. **Add Server Entry**: Add an entry for the Evergreen MCP server:
 
-   **Using Docker (Recommended):**
+   **Using Docker with OIDC (Recommended):**
    ```json
    {
      "command": "docker",
      "args": [
        "run", "--rm", "-i",
-       "-e", "EVERGREEN_USER=your_username",
-       "-e", "EVERGREEN_API_KEY=your_api_key",
-       "-e", "EVERGREEN_PROJECT=your_project",
-       "ghcr.io/evergreen-ci/evergreen-mcp-server:latest",
-       "--project-id", "your-evergreen-project-id"
+       "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+       "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+       "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
      ],
      "type": "stdio"
    }
@@ -926,16 +951,15 @@ For other IDE-based AI assistants that support MCP, the general configuration pa
 - On Windows: Use `.venv\Scripts\evergreen-mcp-server.exe`
 - On macOS/Linux: Use `.venv/bin/evergreen-mcp-server`
 
-**Docker Integration (Recommended):**
+**Docker Integration with OIDC (Recommended):**
 Many IDE AI tools also support Docker-based MCP servers:
 ```json
 {
   "command": "docker",
   "args": [
     "run", "--rm", "-i",
-    "-e", "EVERGREEN_USER=your_username",
-    "-e", "EVERGREEN_API_KEY=your_api_key",
-    "-e", "EVERGREEN_PROJECT=your_project",
+    "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
     "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
   ]
 }
