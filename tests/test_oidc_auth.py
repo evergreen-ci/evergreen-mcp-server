@@ -3,51 +3,52 @@
 Unit tests for OIDC authentication module
 
 These tests validate the OIDCAuthManager class including:
-- JWT token validation and verification
 - Token expiry checking
+- User info extraction from JWT
 - Token refresh logic
 - Device flow authentication
-- Error handling and edge cases
+- Token file handling
 """
 
 import asyncio
+import base64
 import json
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
-import jwt
 import pytest
-from aiohttp import ClientError, ClientTimeout
-from jwt import PyJWKClient
 
 from evergreen_mcp.oidc_auth import (
-    DEX_CLIENT_ID,
-    DEX_ISSUER,
+    DEFAULT_KANOPY_TOKEN_FILE,
     EVERGREEN_CONFIG_FILE,
-    HTTP_TIMEOUT_DEVICE_POLL,
-    HTTP_TIMEOUT_METADATA,
-    HTTP_TIMEOUT_TOKEN,
-    KANOPY_TOKEN_FILE,
-    REQUIRED_SCOPES,
+    HTTP_TIMEOUT,
     OIDCAuthManager,
+    _load_oauth_config_from_evergreen_yml,
 )
 
 
 @pytest.fixture
 def auth_manager():
     """Create a fresh OIDCAuthManager instance for each test."""
-    return OIDCAuthManager()
+    with patch.object(Path, "exists", return_value=False):
+        return OIDCAuthManager()
 
 
 @pytest.fixture
-def mock_jwks_client():
-    """Create a mock PyJWKClient."""
-    client = Mock(spec=PyJWKClient)
-    signing_key = Mock()
-    signing_key.key = "test_key"
-    client.get_signing_key_from_jwt.return_value = signing_key
-    return client
+def auth_manager_with_config():
+    """Create OIDCAuthManager with mocked config."""
+    mock_config = {
+        "oauth": {
+            "issuer": "https://dex.example.com",
+            "client_id": "test-client-id",
+            "token_file_path": "/tmp/test-token.json",
+        }
+    }
+    with patch("builtins.open", mock_open(read_data=json.dumps(mock_config))):
+        with patch.object(Path, "exists", return_value=True):
+            with patch("yaml.safe_load", return_value=mock_config):
+                return OIDCAuthManager()
 
 
 @pytest.fixture
@@ -61,8 +62,6 @@ def valid_jwt_claims():
         "groups": ["team1", "team2"],
         "exp": int(time.time()) + 3600,  # Expires in 1 hour
         "iat": int(time.time()),
-        "iss": DEX_ISSUER,
-        "aud": DEX_CLIENT_ID,
     }
 
 
@@ -74,208 +73,193 @@ def expired_jwt_claims(valid_jwt_claims):
     return claims
 
 
+def create_mock_jwt(claims: dict) -> str:
+    """Create a mock JWT token from claims."""
+    header = (
+        base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').decode().rstrip("=")
+    )
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    signature = base64.urlsafe_b64encode(b"mock_signature").decode().rstrip("=")
+    return f"{header}.{payload}.{signature}"
+
+
+class TestLoadOAuthConfig:
+    """Test loading OAuth config from evergreen.yml."""
+
+    def test_load_config_file_not_exists(self):
+        """Test loading config when file doesn't exist."""
+        with patch.object(Path, "exists", return_value=False):
+            config = _load_oauth_config_from_evergreen_yml()
+            assert config == {}
+
+    def test_load_config_success(self):
+        """Test successful config loading."""
+        mock_config = {
+            "oauth": {
+                "issuer": "https://dex.example.com",
+                "client_id": "test-client",
+            }
+        }
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="")):
+                with patch("yaml.safe_load", return_value=mock_config):
+                    config = _load_oauth_config_from_evergreen_yml()
+                    assert config["issuer"] == "https://dex.example.com"
+                    assert config["client_id"] == "test-client"
+
+    def test_load_config_no_oauth_section(self):
+        """Test loading config without oauth section."""
+        mock_config = {"user": "testuser", "api_key": "testkey"}
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="")):
+                with patch("yaml.safe_load", return_value=mock_config):
+                    config = _load_oauth_config_from_evergreen_yml()
+                    assert config == {}
+
+    def test_load_config_error(self):
+        """Test loading config with error."""
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", side_effect=Exception("Read error")):
+                config = _load_oauth_config_from_evergreen_yml()
+                assert config == {}
+
+
 class TestOIDCAuthManagerInit:
     """Test OIDCAuthManager initialization."""
 
     def test_init_defaults(self, auth_manager):
-        """Test that manager initializes with correct defaults."""
-        assert auth_manager.issuer == DEX_ISSUER
-        assert auth_manager.client_id == DEX_CLIENT_ID
-        assert auth_manager.device_auth_endpoint is None
-        assert auth_manager.token_endpoint is None
+        """Test that manager initializes with None defaults when no config."""
+        assert auth_manager.issuer is None
+        assert auth_manager.client_id is None
+        assert auth_manager.kanopy_token_file == DEFAULT_KANOPY_TOKEN_FILE
         assert auth_manager._access_token is None
         assert auth_manager._refresh_token is None
         assert auth_manager._user_info == {}
-        assert auth_manager._jwks_client is None
+        assert auth_manager._client is None
+        assert auth_manager._metadata is None
         assert isinstance(auth_manager._refresh_lock, asyncio.Lock)
         assert isinstance(auth_manager._auth_lock, asyncio.Lock)
 
+    def test_init_with_config(self, auth_manager_with_config):
+        """Test initialization with config from evergreen.yml."""
+        assert auth_manager_with_config.issuer == "https://dex.example.com"
+        assert auth_manager_with_config.client_id == "test-client-id"
+        assert auth_manager_with_config.kanopy_token_file == Path(
+            "/tmp/test-token.json"
+        )
 
-class TestInitializeEndpoints:
-    """Test OIDC endpoint initialization."""
+
+class TestGetClient:
+    """Test OAuth2 client initialization."""
 
     @pytest.mark.asyncio
-    async def test_initialize_endpoints_success(self, auth_manager):
-        """Test successful endpoint initialization."""
+    async def test_get_client_success(self, auth_manager_with_config):
+        """Test successful client initialization."""
         mock_metadata = {
             "device_authorization_endpoint": "https://dex.example.com/device",
             "token_endpoint": "https://dex.example.com/token",
             "jwks_uri": "https://dex.example.com/keys",
         }
 
-        with patch("aiohttp.ClientSession") as mock_session:
-            mock_response = AsyncMock()
-            mock_response.raise_for_status = Mock()
-            mock_response.json = AsyncMock(return_value=mock_metadata)
+        mock_response = Mock()
+        mock_response.json.return_value = mock_metadata
+        mock_response.raise_for_status = Mock()
 
-            # Create proper context manager mock
-            mock_get_context = AsyncMock()
-            mock_get_context.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_get_context.__aexit__ = AsyncMock(return_value=None)
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            mock_session_instance = AsyncMock()
-            mock_session_instance.get = Mock(return_value=mock_get_context)
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
+            client = await auth_manager_with_config._get_client()
 
-            with patch("evergreen_mcp.oidc_auth.PyJWKClient") as mock_jwks:
-                await auth_manager.initialize_endpoints()
-
-                assert (
-                    auth_manager.device_auth_endpoint
-                    == "https://dex.example.com/device"
-                )
-                assert auth_manager.token_endpoint == "https://dex.example.com/token"
-                assert auth_manager._jwks_uri == "https://dex.example.com/keys"
-                mock_jwks.assert_called_once()
+            assert client is not None
+            assert auth_manager_with_config._metadata == mock_metadata
 
     @pytest.mark.asyncio
-    async def test_initialize_endpoints_timeout(self, auth_manager):
-        """Test endpoint initialization with timeout."""
-        with patch("aiohttp.ClientSession") as mock_session:
-            # Create context manager mock that raises on __aenter__
-            mock_get_context = AsyncMock()
-            mock_get_context.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError())
-            mock_get_context.__aexit__ = AsyncMock(return_value=None)
+    async def test_get_client_cached(self, auth_manager_with_config):
+        """Test that client is cached after first initialization."""
+        mock_client = Mock()
+        auth_manager_with_config._client = mock_client
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://example.com/token"
+        }
 
-            mock_session_instance = AsyncMock()
-            mock_session_instance.get = Mock(return_value=mock_get_context)
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
+        result = await auth_manager_with_config._get_client()
 
-            with pytest.raises(asyncio.TimeoutError):
-                await auth_manager.initialize_endpoints()
+        assert result is mock_client
 
     @pytest.mark.asyncio
-    async def test_initialize_endpoints_network_error(self, auth_manager):
-        """Test endpoint initialization with network error."""
-        with patch("aiohttp.ClientSession") as mock_session:
-            # Create context manager mock that raises on __aenter__
-            mock_get_context = AsyncMock()
-            mock_get_context.__aenter__ = AsyncMock(
-                side_effect=ClientError("Network error")
-            )
-            mock_get_context.__aexit__ = AsyncMock(return_value=None)
+    async def test_get_client_network_error(self, auth_manager_with_config):
+        """Test client initialization with network error."""
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(side_effect=Exception("Network error"))
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            mock_session_instance = AsyncMock()
-            mock_session_instance.get = Mock(return_value=mock_get_context)
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
-
-            with pytest.raises(ClientError):
-                await auth_manager.initialize_endpoints()
-
-
-class TestTokenVerificationAndDecoding:
-    """Test JWT token verification and decoding."""
-
-    def test_verify_and_decode_token_success(self, auth_manager, valid_jwt_claims):
-        """Test successful token verification."""
-        test_token = "test.jwt.token"
-        auth_manager._jwks_client = Mock(spec=PyJWKClient)
-
-        signing_key = Mock()
-        signing_key.key = "test_key"
-        auth_manager._jwks_client.get_signing_key_from_jwt.return_value = signing_key
-
-        with patch("jwt.decode", return_value=valid_jwt_claims):
-            claims = auth_manager._verify_and_decode_token(test_token, verify=True)
-
-            assert claims == valid_jwt_claims
-            auth_manager._jwks_client.get_signing_key_from_jwt.assert_called_once_with(
-                test_token
-            )
-
-    def test_verify_and_decode_token_expired(self, auth_manager, expired_jwt_claims):
-        """Test token verification with expired token."""
-        test_token = "expired.jwt.token"
-        auth_manager._jwks_client = Mock(spec=PyJWKClient)
-
-        signing_key = Mock()
-        signing_key.key = "test_key"
-        auth_manager._jwks_client.get_signing_key_from_jwt.return_value = signing_key
-
-        with patch(
-            "jwt.decode", side_effect=jwt.ExpiredSignatureError("Token expired")
-        ):
-            claims = auth_manager._verify_and_decode_token(test_token, verify=True)
-            assert claims is None
-
-    def test_verify_and_decode_token_invalid(self, auth_manager):
-        """Test token verification with invalid token."""
-        test_token = "invalid.jwt.token"
-        auth_manager._jwks_client = Mock(spec=PyJWKClient)
-
-        signing_key = Mock()
-        signing_key.key = "test_key"
-        auth_manager._jwks_client.get_signing_key_from_jwt.return_value = signing_key
-
-        with patch("jwt.decode", side_effect=jwt.InvalidTokenError("Invalid token")):
-            claims = auth_manager._verify_and_decode_token(test_token, verify=True)
-            assert claims is None
-
-    def test_verify_and_decode_token_no_jwks_client(self, auth_manager):
-        """Test token verification without JWKS client initialized."""
-        test_token = "test.jwt.token"
-        auth_manager._jwks_client = None
-
-        claims = auth_manager._verify_and_decode_token(test_token, verify=True)
-        assert claims is None
-
-    def test_verify_and_decode_token_no_verification(
-        self, auth_manager, valid_jwt_claims
-    ):
-        """Test token decoding without verification (insecure mode)."""
-        test_token = "test.jwt.token"
-
-        with patch("jwt.decode", return_value=valid_jwt_claims):
-            claims = auth_manager._verify_and_decode_token(test_token, verify=False)
-            assert claims == valid_jwt_claims
+            with pytest.raises(Exception, match="Network error"):
+                await auth_manager_with_config._get_client()
 
 
 class TestTokenExpiry:
     """Test token expiry checking."""
 
-    def test_check_token_expiry_valid(self, auth_manager, valid_jwt_claims):
-        """Test checking expiry of a valid token."""
-        test_token = "valid.jwt.token"
-        auth_manager._jwks_client = Mock()
+    def test_check_token_expiry_valid_with_expires_at(self, auth_manager):
+        """Test checking expiry with expires_at field."""
+        token_data = {
+            "access_token": "test.token",
+            "expires_at": time.time() + 3600,  # 1 hour from now
+        }
+        is_valid, remaining = auth_manager._check_token_expiry(token_data)
+        assert is_valid is True
+        assert remaining > 3500  # Should be close to 3600
 
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=valid_jwt_claims
-        ):
-            is_valid, remaining = auth_manager._check_token_expiry(test_token)
+    def test_check_token_expiry_expired_with_expires_at(self, auth_manager):
+        """Test checking expiry with expired expires_at field."""
+        token_data = {
+            "access_token": "test.token",
+            "expires_at": time.time() - 3600,  # 1 hour ago
+        }
+        is_valid, remaining = auth_manager._check_token_expiry(token_data)
+        assert is_valid is False
+        assert remaining < 0
 
-            assert is_valid is True
-            assert remaining > 0
-            # Should have buffer of 60 seconds
-            assert remaining < (valid_jwt_claims["exp"] - time.time())
+    def test_check_token_expiry_valid_from_jwt(self, auth_manager, valid_jwt_claims):
+        """Test checking expiry from JWT token."""
+        token = create_mock_jwt(valid_jwt_claims)
+        token_data = {"access_token": token}
 
-    def test_check_token_expiry_expired(self, auth_manager, expired_jwt_claims):
-        """Test checking expiry of an expired token."""
-        test_token = "expired.jwt.token"
-        auth_manager._jwks_client = Mock()
+        is_valid, remaining = auth_manager._check_token_expiry(token_data)
+        assert is_valid is True
+        assert remaining > 0
 
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=expired_jwt_claims
-        ):
-            is_valid, remaining = auth_manager._check_token_expiry(test_token)
+    def test_check_token_expiry_expired_from_jwt(
+        self, auth_manager, expired_jwt_claims
+    ):
+        """Test checking expiry from expired JWT token."""
+        token = create_mock_jwt(expired_jwt_claims)
+        token_data = {"access_token": token}
 
-            assert is_valid is False
-            assert remaining < 0
+        is_valid, remaining = auth_manager._check_token_expiry(token_data)
+        assert is_valid is False
+        assert remaining < 0
 
-    def test_check_token_expiry_invalid_token(self, auth_manager):
-        """Test checking expiry of an invalid token."""
-        test_token = "invalid.jwt.token"
+    def test_check_token_expiry_no_token(self, auth_manager):
+        """Test checking expiry with no token."""
+        token_data = {}
+        is_valid, remaining = auth_manager._check_token_expiry(token_data)
+        assert is_valid is False
+        assert remaining == 0
 
-        with patch.object(auth_manager, "_verify_and_decode_token", return_value=None):
-            is_valid, remaining = auth_manager._check_token_expiry(test_token)
-
-            assert is_valid is False
-            assert remaining == 0
+    def test_check_token_expiry_invalid_jwt(self, auth_manager):
+        """Test checking expiry with invalid JWT format."""
+        token_data = {"access_token": "not.a.valid.jwt.token"}
+        # Should assume valid if can't decode
+        is_valid, remaining = auth_manager._check_token_expiry(token_data)
+        assert is_valid is True
 
 
 class TestUserInfoExtraction:
@@ -283,18 +267,14 @@ class TestUserInfoExtraction:
 
     def test_extract_user_info_success(self, auth_manager, valid_jwt_claims):
         """Test successful user info extraction."""
-        test_token = "valid.jwt.token"
+        token = create_mock_jwt(valid_jwt_claims)
+        user_info = auth_manager._extract_user_info(token)
 
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=valid_jwt_claims
-        ):
-            user_info = auth_manager._extract_user_info(test_token)
-
-            assert user_info["username"] == "test"
-            assert user_info["email"] == "test@mongodb.com"
-            assert user_info["name"] == "Test User"
-            assert user_info["groups"] == ["team1", "team2"]
-            assert user_info["exp"] == valid_jwt_claims["exp"]
+        assert user_info["username"] == "test"
+        assert user_info["email"] == "test@mongodb.com"
+        assert user_info["name"] == "Test User"
+        assert user_info["groups"] == ["team1", "team2"]
+        assert user_info["exp"] == valid_jwt_claims["exp"]
 
     def test_extract_user_info_minimal_claims(self, auth_manager):
         """Test user info extraction with minimal claims."""
@@ -302,310 +282,173 @@ class TestUserInfoExtraction:
             "sub": "user-123",
             "exp": int(time.time()) + 3600,
         }
-        test_token = "minimal.jwt.token"
+        token = create_mock_jwt(minimal_claims)
+        user_info = auth_manager._extract_user_info(token)
 
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=minimal_claims
-        ):
-            user_info = auth_manager._extract_user_info(test_token)
-
-            assert user_info["username"] == "user-123"  # Falls back to sub
-            assert user_info["email"] is None
-            assert user_info["name"] is None
-            assert user_info["groups"] == []
+        assert user_info["username"] == "user-123"  # Falls back to sub
+        assert user_info["email"] is None
+        assert user_info["name"] is None
+        assert user_info["groups"] == []
 
     def test_extract_user_info_invalid_token(self, auth_manager):
         """Test user info extraction from invalid token."""
-        test_token = "invalid.jwt.token"
-
-        with patch.object(auth_manager, "_verify_and_decode_token", return_value=None):
-            user_info = auth_manager._extract_user_info(test_token)
-            assert user_info == {}
-
-
-class TestScopeValidation:
-    """Test OAuth scope validation."""
-
-    def test_validate_token_scopes_with_all_scopes(self, auth_manager):
-        """Test scope validation when all required scopes are present."""
-        claims = {
-            "scope": " ".join(REQUIRED_SCOPES),
-            "exp": int(time.time()) + 3600,
-        }
-        test_token = "valid.jwt.token"
-
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=claims
-        ):
-            result = auth_manager._validate_token_scopes(test_token)
-            assert result is True
-
-    def test_validate_token_scopes_with_missing_scopes(self, auth_manager):
-        """Test scope validation when some scopes are missing."""
-        claims = {
-            "scope": "openid profile",  # Missing email, offline_access, groups
-            "exp": int(time.time()) + 3600,
-        }
-        test_token = "limited.jwt.token"
-
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=claims
-        ):
-            # Should return True (advisory only)
-            result = auth_manager._validate_token_scopes(test_token)
-            assert result is True
-
-    def test_validate_token_scopes_no_scope_claim(self, auth_manager):
-        """Test scope validation when token has no scope claim."""
-        claims = {
-            "sub": "user-123",
-            "exp": int(time.time()) + 3600,
-        }
-        test_token = "no-scope.jwt.token"
-
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=claims
-        ):
-            result = auth_manager._validate_token_scopes(test_token)
-            assert result is True  # Should pass (normal for access tokens)
-
-    def test_validate_token_scopes_as_list(self, auth_manager):
-        """Test scope validation when scopes are provided as a list."""
-        claims = {
-            "scope": list(REQUIRED_SCOPES),
-            "exp": int(time.time()) + 3600,
-        }
-        test_token = "list-scope.jwt.token"
-
-        with patch.object(
-            auth_manager, "_verify_and_decode_token", return_value=claims
-        ):
-            result = auth_manager._validate_token_scopes(test_token)
-            assert result is True
+        user_info = auth_manager._extract_user_info("invalid.token")
+        assert user_info == {}
 
 
 class TestKanopyTokenCheck:
     """Test Kanopy token file checking."""
 
-    def test_check_kanopy_token_success(
-        self, auth_manager, valid_jwt_claims, mock_jwks_client
-    ):
+    def test_check_kanopy_token_success(self, auth_manager, valid_jwt_claims):
         """Test successful Kanopy token check."""
-        auth_manager._jwks_client = mock_jwks_client
-
+        token = create_mock_jwt(valid_jwt_claims)
         token_data = {
-            "access_token": "valid.access.token",
+            "access_token": token,
             "refresh_token": "valid.refresh.token",
         }
 
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("builtins.open", mock_open(read_data=json.dumps(token_data))),
-            patch.object(
-                auth_manager, "_check_token_expiry", return_value=(True, 3600)
-            ),
-            patch.object(auth_manager, "_validate_token_scopes", return_value=True),
-            patch.object(
-                auth_manager,
-                "_extract_user_info",
-                return_value={"email": "test@test.com"},
-            ),
-        ):
-            token = auth_manager.check_kanopy_token()
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+                result = auth_manager.check_kanopy_token()
 
-            assert token == "valid.access.token"
-            assert auth_manager._access_token == "valid.access.token"
-            assert auth_manager._refresh_token == "valid.refresh.token"
+                assert result is not None
+                assert result["access_token"] == token
+                assert result["refresh_token"] == "valid.refresh.token"
 
     def test_check_kanopy_token_file_not_found(self, auth_manager):
         """Test Kanopy token check when file doesn't exist."""
-        with patch("pathlib.Path.exists", return_value=False):
-            token = auth_manager.check_kanopy_token()
-            assert token is None
+        with patch.object(Path, "exists", return_value=False):
+            result = auth_manager.check_kanopy_token()
+            assert result is None
 
-    def test_check_kanopy_token_expired(
-        self, auth_manager, expired_jwt_claims, mock_jwks_client
-    ):
+    def test_check_kanopy_token_expired(self, auth_manager, expired_jwt_claims):
         """Test Kanopy token check with expired token."""
-        auth_manager._jwks_client = mock_jwks_client
-
+        token = create_mock_jwt(expired_jwt_claims)
         token_data = {
-            "access_token": "expired.access.token",
+            "access_token": token,
             "refresh_token": "valid.refresh.token",
         }
 
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("builtins.open", mock_open(read_data=json.dumps(token_data))),
-            patch.object(
-                auth_manager, "_check_token_expiry", return_value=(False, -3600)
-            ),
-        ):
-            token = auth_manager.check_kanopy_token()
-            assert token is None
-            assert auth_manager._refresh_token == "valid.refresh.token"
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+                result = auth_manager.check_kanopy_token()
+                assert result is None
 
     def test_check_kanopy_token_invalid_json(self, auth_manager):
         """Test Kanopy token check with invalid JSON."""
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("builtins.open", mock_open(read_data="invalid json{")),
-        ):
-            token = auth_manager.check_kanopy_token()
-            assert token is None
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="invalid json{")):
+                result = auth_manager.check_kanopy_token()
+                assert result is None
 
-
-class TestEvergreenTokenCheck:
-    """Test Evergreen config token checking."""
-
-    def test_check_evergreen_token_success(
-        self, auth_manager, valid_jwt_claims, mock_jwks_client
-    ):
-        """Test successful Evergreen token check."""
-        auth_manager._jwks_client = mock_jwks_client
-
-        config_data = {
-            "oauth": {"token_file_path": "/tmp/evergreen-token.json"},
-            "user": "testuser",
-        }
+    def test_check_kanopy_token_fallback_to_default(self, auth_manager):
+        """Test fallback to default token location."""
+        # Configure a custom path
+        auth_manager.kanopy_token_file = Path("/custom/path/token.json")
 
         token_data = {
-            "access_token": "valid.access.token",
-            "refresh_token": "valid.refresh.token",
+            "access_token": create_mock_jwt(
+                {"sub": "test", "exp": int(time.time()) + 3600}
+            ),
         }
 
-        # Mock Path.exists to return True for both config and token file
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("builtins.open", mock_open(read_data=json.dumps(token_data))),
-            patch.object(
-                auth_manager, "_check_token_expiry", return_value=(True, 3600)
-            ),
-            patch.object(auth_manager, "_validate_token_scopes", return_value=True),
-            patch.object(
-                auth_manager,
-                "_extract_user_info",
-                return_value={"email": "test@test.com"},
-            ),
-            patch("yaml.safe_load", return_value=config_data),
-        ):
-            token = auth_manager.check_evergreen_token()
+        def exists_side_effect(self):
+            # Custom path doesn't exist, default does
+            if str(self) == "/custom/path/token.json":
+                return False
+            return True
 
-            assert token == "valid.access.token"
-            assert auth_manager._access_token == "valid.access.token"
-            assert auth_manager._refresh_token == "valid.refresh.token"
-
-    def test_check_evergreen_token_config_not_found(self, auth_manager):
-        """Test Evergreen token check when config file doesn't exist."""
-        with patch("pathlib.Path.exists", return_value=False):
-            token = auth_manager.check_evergreen_token()
-            assert token is None
-
-    def test_check_evergreen_token_no_oauth_section(self, auth_manager):
-        """Test Evergreen token check when config has no oauth section."""
-        config_data = {"user": "testuser", "api_key": "testkey"}
-
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("builtins.open", mock_open(read_data=json.dumps(config_data))),
-            patch("yaml.safe_load", return_value=config_data),
-        ):
-            token = auth_manager.check_evergreen_token()
-            assert token is None
+        with patch.object(Path, "exists", exists_side_effect):
+            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+                result = auth_manager.check_kanopy_token()
+                assert result is not None
 
 
 class TestTokenRefresh:
     """Test token refresh functionality."""
 
     @pytest.mark.asyncio
-    async def test_refresh_token_success(self, auth_manager, valid_jwt_claims):
+    async def test_refresh_token_success(self, auth_manager_with_config):
         """Test successful token refresh."""
-        auth_manager._refresh_token = "valid.refresh.token"
-        auth_manager.token_endpoint = "https://dex.example.com/token"
-        auth_manager._jwks_client = Mock()
+        auth_manager_with_config._refresh_token = "valid.refresh.token"
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token"
+        }
+        auth_manager_with_config._client = Mock()  # Mark as initialized
 
         new_token_data = {
             "access_token": "new.access.token",
             "refresh_token": "new.refresh.token",
         }
 
-        with patch("aiohttp.ClientSession") as mock_session:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=new_token_data)
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = new_token_data
 
-            # Create proper context manager mock
-            mock_post_context = AsyncMock()
-            mock_post_context.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_post_context.__aexit__ = AsyncMock(return_value=None)
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            mock_session_instance = AsyncMock()
-            mock_session_instance.post = Mock(return_value=mock_post_context)
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
+            with patch.object(auth_manager_with_config, "_save_token"):
+                result = await auth_manager_with_config.refresh_token()
 
-            with (
-                patch.object(auth_manager, "_validate_token_scopes", return_value=True),
-                patch.object(
-                    auth_manager,
-                    "_extract_user_info",
-                    return_value={"email": "test@test.com"},
-                ),
-                patch.object(auth_manager, "_save_token"),
-            ):
-                token = await auth_manager.refresh_token()
-
-                assert token == "new.access.token"
-                assert auth_manager._access_token == "new.access.token"
-                assert auth_manager._refresh_token == "new.refresh.token"
+                assert result is not None
+                assert result["access_token"] == "new.access.token"
+                assert auth_manager_with_config._access_token == "new.access.token"
+                assert auth_manager_with_config._refresh_token == "new.refresh.token"
 
     @pytest.mark.asyncio
     async def test_refresh_token_no_refresh_token(self, auth_manager):
         """Test token refresh without refresh token."""
         auth_manager._refresh_token = None
 
-        token = await auth_manager.refresh_token()
-        assert token is None
+        result = await auth_manager.refresh_token()
+        assert result is None
 
     @pytest.mark.asyncio
-    async def test_refresh_token_already_refreshed(self, auth_manager):
-        """Test that concurrent refresh is prevented."""
-        auth_manager._refresh_token = "valid.refresh.token"
-        auth_manager._access_token = "current.access.token"
-        auth_manager.token_endpoint = "https://dex.example.com/token"
+    async def test_refresh_token_already_valid(
+        self, auth_manager_with_config, valid_jwt_claims
+    ):
+        """Test that refresh is skipped if token is already valid."""
+        token = create_mock_jwt(valid_jwt_claims)
+        auth_manager_with_config._refresh_token = "valid.refresh.token"
+        auth_manager_with_config._access_token = token
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token"
+        }
 
-        with patch.object(
-            auth_manager, "_check_token_expiry", return_value=(True, 3600)
-        ):
-            token = await auth_manager.refresh_token()
+        result = await auth_manager_with_config.refresh_token()
 
-            # Should return existing token without making network call
-            assert token == "current.access.token"
+        # Should return existing token data without making network call
+        assert result is not None
+        assert result["access_token"] == token
 
     @pytest.mark.asyncio
-    async def test_refresh_token_server_error(self, auth_manager):
+    async def test_refresh_token_server_error(self, auth_manager_with_config):
         """Test token refresh with server error."""
-        auth_manager._refresh_token = "valid.refresh.token"
-        auth_manager.token_endpoint = "https://dex.example.com/token"
+        auth_manager_with_config._refresh_token = "valid.refresh.token"
+        auth_manager_with_config._access_token = None
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token"
+        }
+        auth_manager_with_config._client = Mock()  # Mark as initialized
 
-        with patch("aiohttp.ClientSession") as mock_session:
-            mock_response = AsyncMock()
-            mock_response.status = 400
-            mock_response.text = AsyncMock(return_value="Invalid refresh token")
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.text = "Invalid refresh token"
 
-            mock_context = AsyncMock()
-            mock_context.__aenter__.return_value = mock_response
-            mock_context.__aexit__.return_value = None
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            mock_session_instance = AsyncMock()
-            mock_session_instance.post.return_value = mock_context
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
-
-            token = await auth_manager.refresh_token()
-            assert token is None
+            result = await auth_manager_with_config.refresh_token()
+            assert result is None
 
 
 class TestSaveToken:
@@ -618,51 +461,50 @@ class TestSaveToken:
             "refresh_token": "test.refresh.token",
         }
 
-        with (
-            patch("pathlib.Path.mkdir"),
-            patch("builtins.open", mock_open()) as m,
-            patch("os.fsync"),
-            patch("pathlib.Path.replace"),
-            patch("pathlib.Path.with_suffix") as mock_suffix,
-        ):
-            temp_path = Mock(spec=Path)
-            temp_path.exists.return_value = False
-            mock_suffix.return_value = temp_path
+        with patch.object(Path, "mkdir"):
+            with patch("builtins.open", mock_open()) as m:
+                with patch("os.fsync"):
+                    with patch.object(Path, "replace"):
+                        with patch.object(Path, "with_suffix") as mock_suffix:
+                            temp_path = Mock(spec=Path)
+                            temp_path.exists.return_value = False
+                            mock_suffix.return_value = temp_path
 
-            auth_manager._save_token(token_data)
+                            auth_manager._save_token(token_data)
 
-            # Verify file was written
-            m.assert_called()
+                            # Verify file was written
+                            m.assert_called()
 
     def test_save_token_cleanup_on_error(self, auth_manager):
         """Test that temp file is cleaned up on error."""
         token_data = {"access_token": "test.token"}
 
-        with (
-            patch("pathlib.Path.mkdir"),
-            patch("builtins.open", side_effect=OSError("Write error")),
-            patch("pathlib.Path.with_suffix") as mock_suffix,
-        ):
-            temp_path = Mock(spec=Path)
-            temp_path.exists.return_value = True
-            temp_path.unlink = Mock()
-            mock_suffix.return_value = temp_path
+        with patch.object(Path, "mkdir"):
+            with patch("builtins.open", side_effect=OSError("Write error")):
+                with patch.object(Path, "with_suffix") as mock_suffix:
+                    temp_path = Mock(spec=Path)
+                    temp_path.exists.return_value = True
+                    temp_path.unlink = Mock()
+                    mock_suffix.return_value = temp_path
 
-            with pytest.raises(OSError):
-                auth_manager._save_token(token_data)
+                    with pytest.raises(OSError):
+                        auth_manager._save_token(token_data)
 
-            # Verify temp file cleanup was attempted
-            temp_path.unlink.assert_called_once()
+                    # Verify temp file cleanup was attempted
+                    temp_path.unlink.assert_called_once()
 
 
 class TestDeviceFlowAuth:
     """Test device authorization flow."""
 
     @pytest.mark.asyncio
-    async def test_device_flow_auth_success(self, auth_manager):
+    async def test_device_flow_auth_success(self, auth_manager_with_config):
         """Test successful device flow authentication."""
-        auth_manager.device_auth_endpoint = "https://dex.example.com/device"
-        auth_manager.token_endpoint = "https://dex.example.com/token"
+        auth_manager_with_config._metadata = {
+            "device_authorization_endpoint": "https://dex.example.com/device",
+            "token_endpoint": "https://dex.example.com/token",
+        }
+        auth_manager_with_config._client = Mock()
 
         device_response = {
             "device_code": "device123",
@@ -676,58 +518,46 @@ class TestDeviceFlowAuth:
             "refresh_token": "new.refresh.token",
         }
 
-        with (
-            patch("aiohttp.ClientSession") as mock_session,
-            patch("webbrowser.open"),
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            # Mock device code request
-            device_mock = AsyncMock()
-            device_mock.raise_for_status = Mock()
-            device_mock.json = AsyncMock(return_value=device_response)
+        device_mock = Mock()
+        device_mock.json.return_value = device_response
+        device_mock.raise_for_status = Mock()
 
-            # Mock token polling (succeed on first poll for speed)
-            token_mock = AsyncMock()
-            token_mock.status = 200
-            token_mock.json = AsyncMock(return_value=token_response)
+        token_mock = Mock()
+        token_mock.status_code = 200
+        token_mock.json.return_value = token_response
 
-            # Create proper context managers
-            device_context = AsyncMock()
-            device_context.__aenter__ = AsyncMock(return_value=device_mock)
-            device_context.__aexit__ = AsyncMock(return_value=None)
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(side_effect=[device_mock, token_mock])
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            token_context = AsyncMock()
-            token_context.__aenter__ = AsyncMock(return_value=token_mock)
-            token_context.__aexit__ = AsyncMock(return_value=None)
+            with patch("webbrowser.open"):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    with patch.object(auth_manager_with_config, "_save_token"):
+                        result = await auth_manager_with_config.device_flow_auth()
 
-            mock_session_instance = AsyncMock()
-            mock_session_instance.post = Mock(
-                side_effect=[device_context, token_context]
-            )
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
-
-            with (
-                patch.object(auth_manager, "_validate_token_scopes", return_value=True),
-                patch.object(
-                    auth_manager,
-                    "_extract_user_info",
-                    return_value={"email": "test@test.com"},
-                ),
-                patch.object(auth_manager, "_save_token"),
-            ):
-                token = await auth_manager.device_flow_auth()
-
-                assert token == "new.access.token"
-                assert auth_manager._access_token == "new.access.token"
-                assert auth_manager._refresh_token == "new.refresh.token"
+                        assert result is not None
+                        assert result["access_token"] == "new.access.token"
+                        assert (
+                            auth_manager_with_config._access_token == "new.access.token"
+                        )
+                        assert (
+                            auth_manager_with_config._refresh_token
+                            == "new.refresh.token"
+                        )
 
     @pytest.mark.asyncio
-    async def test_device_flow_auth_pending(self, auth_manager):
+    async def test_device_flow_auth_pending_then_success(
+        self, auth_manager_with_config
+    ):
         """Test device flow with authorization pending."""
-        auth_manager.device_auth_endpoint = "https://dex.example.com/device"
-        auth_manager.token_endpoint = "https://dex.example.com/token"
+        auth_manager_with_config._metadata = {
+            "device_authorization_endpoint": "https://dex.example.com/device",
+            "token_endpoint": "https://dex.example.com/token",
+        }
+        auth_manager_with_config._client = Mock()
 
         device_response = {
             "device_code": "device123",
@@ -736,68 +566,47 @@ class TestDeviceFlowAuth:
             "interval": 1,
         }
 
-        with (
-            patch("aiohttp.ClientSession") as mock_session,
-            patch("webbrowser.open"),
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            device_mock = AsyncMock()
-            device_mock.raise_for_status = Mock()
-            device_mock.json = AsyncMock(return_value=device_response)
+        device_mock = Mock()
+        device_mock.json.return_value = device_response
+        device_mock.raise_for_status = Mock()
 
-            # First poll: pending, second poll: success
-            pending_mock = AsyncMock()
-            pending_mock.status = 400
-            pending_mock.json = AsyncMock(
-                return_value={"error": "authorization_pending"}
+        # First poll: pending
+        pending_mock = Mock()
+        pending_mock.status_code = 400
+        pending_mock.json.return_value = {"error": "authorization_pending"}
+
+        # Second poll: success
+        success_mock = Mock()
+        success_mock.status_code = 200
+        success_mock.json.return_value = {
+            "access_token": "new.token",
+            "refresh_token": "refresh.token",
+        }
+
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(
+                side_effect=[device_mock, pending_mock, success_mock]
             )
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            success_mock = AsyncMock()
-            success_mock.status = 200
-            success_mock.json = AsyncMock(
-                return_value={
-                    "access_token": "new.token",
-                    "refresh_token": "refresh.token",
-                }
-            )
-
-            device_context = AsyncMock()
-            device_context.__aenter__ = AsyncMock(return_value=device_mock)
-            device_context.__aexit__ = AsyncMock(return_value=None)
-
-            pending_context = AsyncMock()
-            pending_context.__aenter__ = AsyncMock(return_value=pending_mock)
-            pending_context.__aexit__ = AsyncMock(return_value=None)
-
-            success_context = AsyncMock()
-            success_context.__aenter__ = AsyncMock(return_value=success_mock)
-            success_context.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_instance = AsyncMock()
-            mock_session_instance.post = Mock(
-                side_effect=[
-                    device_context,
-                    pending_context,
-                    success_context,
-                ]
-            )
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
-
-            with (
-                patch.object(auth_manager, "_validate_token_scopes", return_value=True),
-                patch.object(auth_manager, "_extract_user_info", return_value={}),
-                patch.object(auth_manager, "_save_token"),
-            ):
-                token = await auth_manager.device_flow_auth()
-                assert token == "new.token"
+            with patch("webbrowser.open"):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    with patch.object(auth_manager_with_config, "_save_token"):
+                        result = await auth_manager_with_config.device_flow_auth()
+                        assert result is not None
+                        assert result["access_token"] == "new.token"
 
     @pytest.mark.asyncio
-    async def test_device_flow_auth_expired(self, auth_manager):
+    async def test_device_flow_auth_expired(self, auth_manager_with_config):
         """Test device flow with expired device code."""
-        auth_manager.device_auth_endpoint = "https://dex.example.com/device"
-        auth_manager.token_endpoint = "https://dex.example.com/token"
+        auth_manager_with_config._metadata = {
+            "device_authorization_endpoint": "https://dex.example.com/device",
+            "token_endpoint": "https://dex.example.com/token",
+        }
+        auth_manager_with_config._client = Mock()
 
         device_response = {
             "device_code": "device123",
@@ -806,166 +615,154 @@ class TestDeviceFlowAuth:
             "interval": 1,
         }
 
-        with (
-            patch("aiohttp.ClientSession") as mock_session,
-            patch("webbrowser.open"),
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            device_mock = AsyncMock()
-            device_mock.raise_for_status = Mock()
-            device_mock.json = AsyncMock(return_value=device_response)
+        device_mock = Mock()
+        device_mock.json.return_value = device_response
+        device_mock.raise_for_status = Mock()
 
-            expired_mock = AsyncMock()
-            expired_mock.status = 400
-            expired_mock.json = AsyncMock(return_value={"error": "expired_token"})
+        expired_mock = Mock()
+        expired_mock.status_code = 400
+        expired_mock.json.return_value = {"error": "expired_token"}
 
-            mock_context_device = AsyncMock()
-            mock_context_device.__aenter__.return_value = device_mock
-            mock_context_device.__aexit__.return_value = None
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(side_effect=[device_mock, expired_mock])
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
 
-            mock_context_expired = AsyncMock()
-            mock_context_expired.__aenter__.return_value = expired_mock
-            mock_context_expired.__aexit__.return_value = None
-
-            mock_session_instance = AsyncMock()
-            mock_session_instance.post.side_effect = [
-                mock_context_device,
-                mock_context_expired,
-            ]
-            mock_session_instance.__aenter__.return_value = mock_session_instance
-            mock_session_instance.__aexit__.return_value = None
-            mock_session.return_value = mock_session_instance
-
-            token = await auth_manager.device_flow_auth()
-            assert token is None
+            with patch("webbrowser.open"):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    result = await auth_manager_with_config.device_flow_auth()
+                    assert result is None
 
 
 class TestEnsureAuthenticated:
     """Test the main authentication flow."""
 
     @pytest.mark.asyncio
+    async def test_ensure_authenticated_with_existing_valid_token(
+        self, auth_manager_with_config, valid_jwt_claims
+    ):
+        """Test that already authenticated state is recognized."""
+        token = create_mock_jwt(valid_jwt_claims)
+        auth_manager_with_config._access_token = token
+        auth_manager_with_config._refresh_token = "refresh.token"
+
+        result = await auth_manager_with_config.ensure_authenticated()
+
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_ensure_authenticated_with_kanopy_token(
-        self, auth_manager, mock_jwks_client
+        self, auth_manager_with_config, valid_jwt_claims
     ):
         """Test authentication using Kanopy token."""
-        auth_manager._jwks_client = None
+        token = create_mock_jwt(valid_jwt_claims)
+        token_data = {"access_token": token, "refresh_token": "refresh"}
 
-        with (
-            patch.object(
-                auth_manager, "initialize_endpoints", new_callable=AsyncMock
-            ) as mock_init,
-            patch.object(
-                auth_manager, "check_kanopy_token", return_value="valid.token"
-            ),
+        with patch.object(
+            auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
-            result = await auth_manager.ensure_authenticated()
+            with patch.object(
+                auth_manager_with_config, "check_kanopy_token", return_value=token_data
+            ):
+                result = await auth_manager_with_config.ensure_authenticated()
 
-            assert result is True
-            mock_init.assert_called_once()
+                assert result is True
+                assert auth_manager_with_config._access_token == token
 
     @pytest.mark.asyncio
-    async def test_ensure_authenticated_with_refresh(self, auth_manager):
+    async def test_ensure_authenticated_with_refresh(
+        self, auth_manager_with_config, valid_jwt_claims
+    ):
         """Test authentication using token refresh."""
-        auth_manager._jwks_client = Mock()
-        auth_manager._refresh_token = "valid.refresh.token"
+        token = create_mock_jwt(valid_jwt_claims)
+        token_data = {"access_token": token, "refresh_token": "new.refresh"}
 
-        with (
-            patch.object(auth_manager, "check_kanopy_token", return_value=None),
-            patch.object(auth_manager, "check_evergreen_token", return_value=None),
-            patch.object(
-                auth_manager, "refresh_token", new_callable=AsyncMock
-            ) as mock_refresh,
+        auth_manager_with_config._refresh_token = "old.refresh.token"
+
+        with patch.object(
+            auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
-            mock_refresh.return_value = "new.token"
+            with patch.object(
+                auth_manager_with_config, "check_kanopy_token", return_value=None
+            ):
+                with patch.object(
+                    auth_manager_with_config, "refresh_token", new_callable=AsyncMock
+                ) as mock_refresh:
+                    mock_refresh.return_value = token_data
 
-            result = await auth_manager.ensure_authenticated()
+                    result = await auth_manager_with_config.ensure_authenticated()
 
-            assert result is True
-            mock_refresh.assert_called_once()
+                    assert result is True
+                    mock_refresh.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_ensure_authenticated_with_device_flow(self, auth_manager):
+    async def test_ensure_authenticated_with_device_flow(
+        self, auth_manager_with_config, valid_jwt_claims
+    ):
         """Test authentication using device flow."""
-        auth_manager._jwks_client = None
+        token = create_mock_jwt(valid_jwt_claims)
+        token_data = {"access_token": token, "refresh_token": "refresh"}
 
-        with (
-            patch.object(auth_manager, "initialize_endpoints", new_callable=AsyncMock),
-            patch.object(auth_manager, "check_kanopy_token", return_value=None),
-            patch.object(auth_manager, "check_evergreen_token", return_value=None),
-            patch.object(
-                auth_manager, "device_flow_auth", new_callable=AsyncMock
-            ) as mock_device,
+        with patch.object(
+            auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
-            mock_device.return_value = "new.token"
+            with patch.object(
+                auth_manager_with_config, "check_kanopy_token", return_value=None
+            ):
+                with patch.object(
+                    auth_manager_with_config, "device_flow_auth", new_callable=AsyncMock
+                ) as mock_device:
+                    mock_device.return_value = token_data
 
-            result = await auth_manager.ensure_authenticated()
+                    result = await auth_manager_with_config.ensure_authenticated()
 
-            assert result is True
-            mock_device.assert_called_once()
+                    assert result is True
+                    mock_device.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_ensure_authenticated_already_authenticated(self, auth_manager):
-        """Test that concurrent requests don't re-authenticate."""
-        auth_manager._jwks_client = Mock()
-        auth_manager._access_token = "existing.token"
-
-        with (
-            patch.object(
-                auth_manager, "_check_token_expiry", return_value=(True, 3600)
-            ),
-            patch.object(auth_manager, "check_kanopy_token") as mock_kanopy,
-        ):
-            result = await auth_manager.ensure_authenticated()
-
-            assert result is True
-            # Should not check Kanopy if already authenticated
-            mock_kanopy.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_ensure_authenticated_all_methods_fail(self, auth_manager):
+    async def test_ensure_authenticated_all_methods_fail(
+        self, auth_manager_with_config
+    ):
         """Test authentication when all methods fail."""
-        auth_manager._jwks_client = None
-
-        with (
-            patch.object(auth_manager, "initialize_endpoints", new_callable=AsyncMock),
-            patch.object(auth_manager, "check_kanopy_token", return_value=None),
-            patch.object(auth_manager, "check_evergreen_token", return_value=None),
-            patch.object(
-                auth_manager, "device_flow_auth", new_callable=AsyncMock
-            ) as mock_device,
+        with patch.object(
+            auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
-            mock_device.return_value = None
+            with patch.object(
+                auth_manager_with_config, "check_kanopy_token", return_value=None
+            ):
+                with patch.object(
+                    auth_manager_with_config, "device_flow_auth", new_callable=AsyncMock
+                ) as mock_device:
+                    mock_device.return_value = None
 
-            result = await auth_manager.ensure_authenticated()
+                    result = await auth_manager_with_config.ensure_authenticated()
 
-            assert result is False
+                    assert result is False
 
 
 class TestIsAuthenticated:
     """Test non-blocking authentication status check."""
 
-    def test_is_authenticated_true(self, auth_manager):
+    def test_is_authenticated_true(self, auth_manager, valid_jwt_claims):
         """Test is_authenticated returns True for valid token."""
-        auth_manager._access_token = "valid.token"
+        token = create_mock_jwt(valid_jwt_claims)
+        auth_manager._access_token = token
 
-        with patch.object(
-            auth_manager, "_check_token_expiry", return_value=(True, 3600)
-        ):
-            assert auth_manager.is_authenticated() is True
+        assert auth_manager.is_authenticated() is True
 
     def test_is_authenticated_false_no_token(self, auth_manager):
         """Test is_authenticated returns False when no token."""
         auth_manager._access_token = None
         assert auth_manager.is_authenticated() is False
 
-    def test_is_authenticated_false_expired(self, auth_manager):
+    def test_is_authenticated_false_expired(self, auth_manager, expired_jwt_claims):
         """Test is_authenticated returns False for expired token."""
-        auth_manager._access_token = "expired.token"
+        token = create_mock_jwt(expired_jwt_claims)
+        auth_manager._access_token = token
 
-        with patch.object(
-            auth_manager, "_check_token_expiry", return_value=(False, -3600)
-        ):
-            assert auth_manager.is_authenticated() is False
+        assert auth_manager.is_authenticated() is False
 
 
 class TestProperties:
@@ -997,8 +794,8 @@ class TestProperties:
 
         assert auth_manager.user_id == "testuser"
 
-    def test_user_id_property_no_email(self, auth_manager):
-        """Test user_id property with no email."""
+    def test_user_id_property_no_info(self, auth_manager):
+        """Test user_id property with no user info."""
         auth_manager._user_info = {}
 
         assert auth_manager.user_id is None

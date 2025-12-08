@@ -15,6 +15,9 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
+import httpx
+from authlib.jose import jwt
+from authlib.jose.errors import DecodeError
 
 import yaml
 from authlib.integrations.httpx_client import AsyncOAuth2Client
@@ -34,7 +37,7 @@ def _load_oauth_config_from_evergreen_yml() -> dict:
     """Load OAuth configuration from ~/.evergreen.yml if available."""
     if not EVERGREEN_CONFIG_FILE.exists():
         return {}
-    
+
     try:
         with open(EVERGREEN_CONFIG_FILE) as f:
             config = yaml.safe_load(f)
@@ -59,20 +62,24 @@ class OIDCAuthManager:
     def __init__(self):
         # Load OAuth config from ~/.evergreen.yml if available
         oauth_config = _load_oauth_config_from_evergreen_yml()
-        
+
         # Use config from evergreen.yml or fall back to defaults
         self.issuer = oauth_config.get("issuer")
         self.client_id = oauth_config.get("client_id")
-        
+
         # Token file: prefer oauth.token_file_path, fallback to default kanopy location
         token_file_path = oauth_config.get("token_file_path")
-        self.kanopy_token_file = Path(token_file_path) if token_file_path else DEFAULT_KANOPY_TOKEN_FILE
-        
+        self.kanopy_token_file = (
+            Path(token_file_path) if token_file_path else DEFAULT_KANOPY_TOKEN_FILE
+        )
+
         logger.debug(
             "Initialized OIDC auth manager: issuer=%s, client_id=%s, token_file=%s",
-            self.issuer, self.client_id, self.kanopy_token_file
+            self.issuer,
+            self.client_id,
+            self.kanopy_token_file,
         )
-        
+
         self._client: Optional[AsyncOAuth2Client] = None
         self._metadata: Optional[dict] = None
         self._access_token: Optional[str] = None
@@ -85,10 +92,10 @@ class OIDCAuthManager:
         """Get or create the OAuth2 client with OIDC metadata."""
         if self._client is None:
             logger.info("Initializing OAuth2 client for %s", self.issuer)
-            
+
             # Fetch OIDC metadata manually
             try:
-                import httpx
+
                 async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
                     response = await http_client.get(
                         f"{self.issuer}/.well-known/openid-configuration"
@@ -99,23 +106,23 @@ class OIDCAuthManager:
             except Exception as e:
                 logger.error("Failed to fetch OIDC metadata: %s", e)
                 raise
-            
+
             # Create client with metadata
             self._client = AsyncOAuth2Client(
                 client_id=self.client_id,
                 token_endpoint=self._metadata["token_endpoint"],
                 timeout=HTTP_TIMEOUT,
             )
-        
+
         return self._client
 
     def _check_token_expiry(self, token_data: dict) -> tuple[bool, int]:
         """
         Check if token is expired.
-        
+
         Args:
             token_data: Token data dict with 'access_token' and optionally 'expires_at'
-        
+
         Returns:
             Tuple of (is_valid, seconds_remaining)
         """
@@ -123,20 +130,20 @@ class OIDCAuthManager:
         if expires_at:
             remaining = expires_at - time.time()
             return remaining > 60, int(remaining)  # 1 min buffer
-        
+
         # If no expiry info, try to decode the JWT token
         access_token = token_data.get("access_token")
         if not access_token:
             return False, 0
-        
+
         try:
             # Decode JWT payload without verification
-            parts = access_token.split('.')
+            parts = access_token.split(".")
             if len(parts) == 3:
                 payload = parts[1]
                 padding = 4 - len(payload) % 4
                 if padding != 4:
-                    payload += '=' * padding
+                    payload += "=" * padding
                 claims_json = base64.urlsafe_b64decode(payload)
                 claims = json.loads(claims_json)
                 exp = claims.get("exp", 0)
@@ -144,7 +151,7 @@ class OIDCAuthManager:
                 return remaining > 60, int(remaining)
         except Exception:
             pass
-        
+
         # If we can't decode, assume it's valid and let the API reject it
         logger.warning("Could not determine token expiry, assuming valid")
         return True, 3600
@@ -152,9 +159,7 @@ class OIDCAuthManager:
     def _extract_user_info(self, access_token: str) -> dict:
         """Extract user info from JWT token."""
         try:
-            from authlib.jose import jwt
-            from authlib.jose.errors import DecodeError
-            
+
             # Decode without verification (we trust the token from DEX)
             try:
                 claims = jwt.decode(access_token, key=None)
@@ -162,24 +167,26 @@ class OIDCAuthManager:
             except (DecodeError, Exception):
                 # If that fails, try extracting claims without validation
                 # JWT format: header.payload.signature
-                parts = access_token.split('.')
+                parts = access_token.split(".")
                 if len(parts) != 3:
                     logger.error("Invalid JWT format")
                     return {}
-                
+
                 # Decode payload (add padding if needed)
                 payload = parts[1]
                 padding = 4 - len(payload) % 4
                 if padding != 4:
-                    payload += '=' * padding
-                
+                    payload += "=" * padding
+
                 claims_json = base64.urlsafe_b64decode(payload)
                 claims = json.loads(claims_json)
-            
+
             logger.debug("Extracted claims from token: %s", claims)
-            
+
             return {
-                "username": claims.get("preferred_username") or claims.get("email") or claims.get("sub"),
+                "username": claims.get("preferred_username")
+                or claims.get("email")
+                or claims.get("sub"),
                 "email": claims.get("email"),
                 "name": claims.get("name"),
                 "groups": claims.get("groups", []),
@@ -193,17 +200,21 @@ class OIDCAuthManager:
         """Check kanopy/evergreen token file for valid token."""
         # Try configured path first
         token_file_to_check = self.kanopy_token_file
-        
+
         # If configured path doesn't exist, try default location
         # (useful in Docker where evergreen.yml might have host paths)
         if not token_file_to_check.exists():
-            logger.debug("Token file not found at configured path: %s", token_file_to_check)
+            logger.debug(
+                "Token file not found at configured path: %s", token_file_to_check
+            )
             default_path = DEFAULT_KANOPY_TOKEN_FILE
             if default_path != token_file_to_check and default_path.exists():
                 logger.info("Using default token file location: %s", default_path)
                 token_file_to_check = default_path
             else:
-                logger.debug("Token file not found at default path either: %s", default_path)
+                logger.debug(
+                    "Token file not found at default path either: %s", default_path
+                )
                 return None
 
         logger.info("Found token file: %s", token_file_to_check)
@@ -214,7 +225,9 @@ class OIDCAuthManager:
             if "access_token" in token_data:
                 is_valid, remaining = self._check_token_expiry(token_data)
                 if is_valid:
-                    logger.info("Kanopy token valid (%d min remaining)", remaining // 60)
+                    logger.info(
+                        "Kanopy token valid (%d min remaining)", remaining // 60
+                    )
                     return token_data
                 else:
                     logger.warning("Kanopy token expired")
@@ -223,11 +236,10 @@ class OIDCAuthManager:
 
         return None
 
-
     async def refresh_token(self) -> Optional[dict]:
         """
         Attempt to refresh the token using authlib.
-        
+
         Returns:
             Token data dict if successful, None otherwise
         """
@@ -253,9 +265,9 @@ class OIDCAuthManager:
             logger.info("Attempting token refresh...")
             try:
                 await self._get_client()
-                
+
                 # Refresh the token manually using httpx
-                import httpx
+
                 async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
                     response = await http_client.post(
                         self._metadata["token_endpoint"],
@@ -265,23 +277,29 @@ class OIDCAuthManager:
                             "client_id": self.client_id,
                         },
                     )
-                    
+
                     if response.status_code == 200:
                         token_data = response.json()
-                        
+
                         # Update internal state
                         self._access_token = token_data["access_token"]
-                        self._refresh_token = token_data.get("refresh_token", self._refresh_token)
+                        self._refresh_token = token_data.get(
+                            "refresh_token", self._refresh_token
+                        )
                         self._user_info = self._extract_user_info(self._access_token)
-                        
+
                         # Save the new token
                         self._save_token(token_data)
                         logger.info("Token refreshed successfully!")
                         return token_data
                     else:
-                        logger.error("Token refresh failed with status %d: %s", response.status_code, response.text)
+                        logger.error(
+                            "Token refresh failed with status %d: %s",
+                            response.status_code,
+                            response.text,
+                        )
                         return None
-                
+
             except Exception as e:
                 logger.error("Token refresh failed: %s", e)
                 return None
@@ -290,7 +308,7 @@ class OIDCAuthManager:
         """Save token to configured token file atomically."""
         # Determine which path to use for saving
         save_path = self.kanopy_token_file
-        
+
         # If configured path isn't writable (e.g., in Docker with host paths),
         # fall back to default container location
         try:
@@ -298,7 +316,8 @@ class OIDCAuthManager:
         except (OSError, PermissionError) as e:
             logger.warning(
                 "Cannot write to configured path %s: %s. Using default location.",
-                save_path, e
+                save_path,
+                e,
             )
             save_path = DEFAULT_KANOPY_TOKEN_FILE
             save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -327,13 +346,13 @@ class OIDCAuthManager:
         """Perform device authorization flow manually using httpx."""
         try:
             await self._get_client()
-            
+
             logger.info("Starting Device Authorization Flow...")
-            
+
             # Step 1: Request device code
-            import httpx
+
             device_auth_endpoint = self._metadata["device_authorization_endpoint"]
-            
+
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
                 response = await http_client.post(
                     device_auth_endpoint,
@@ -344,16 +363,20 @@ class OIDCAuthManager:
                 )
                 response.raise_for_status()
                 device_data = response.json()
-                
+
                 # Parse device authorization response
-                verification_uri = device_data.get("verification_uri_complete") or device_data.get("verification_uri")
+                verification_uri = device_data.get(
+                    "verification_uri_complete"
+                ) or device_data.get("verification_uri")
                 user_code = device_data.get("user_code")
                 device_code = device_data["device_code"]
                 interval = device_data.get("interval", 5)
 
                 # Display auth instructions
                 logger.info("=" * 70)
-                logger.info("🔐 AUTHENTICATION REQUIRED - Please complete login in your browser")
+                logger.info(
+                    "🔐 AUTHENTICATION REQUIRED - Please complete login in your browser"
+                )
                 logger.info("=" * 70)
                 logger.info("URL: %s", verification_uri)
                 if user_code:
@@ -371,10 +394,10 @@ class OIDCAuthManager:
 
                 # Step 2: Poll for token
                 token_endpoint = self._metadata["token_endpoint"]
-                
+
                 while True:
                     await asyncio.sleep(interval)
-                    
+
                     try:
                         # Poll token endpoint with device code
                         response = await http_client.post(
@@ -385,16 +408,18 @@ class OIDCAuthManager:
                                 "client_id": self.client_id,
                             },
                         )
-                        
+
                         # Check response
                         if response.status_code == 200:
                             token_data = response.json()
-                            
+
                             # Update internal state
                             self._access_token = token_data["access_token"]
                             self._refresh_token = token_data.get("refresh_token")
-                            self._user_info = self._extract_user_info(self._access_token)
-                            
+                            self._user_info = self._extract_user_info(
+                                self._access_token
+                            )
+
                             # Save token to file
                             self._save_token(token_data)
                             logger.info("Authentication successful!")
@@ -403,13 +428,16 @@ class OIDCAuthManager:
                             # Parse error response
                             error_data = response.json()
                             error = error_data.get("error", "unknown_error")
-                            
+
                             if error == "authorization_pending":
                                 logger.debug("Authorization pending, polling...")
                                 continue
                             elif error == "slow_down":
                                 interval += 2
-                                logger.debug("Slowing down polling interval to %d seconds", interval)
+                                logger.debug(
+                                    "Slowing down polling interval to %d seconds",
+                                    interval,
+                                )
                                 continue
                             elif error == "expired_token":
                                 logger.error("Authentication request expired")
@@ -417,11 +445,11 @@ class OIDCAuthManager:
                             else:
                                 logger.error("Authentication failed: %s", error_data)
                                 return None
-                                
+
                     except Exception as e:
                         logger.error("Token polling error: %s", e)
                         return None
-                        
+
         except Exception as e:
             logger.error("Device flow authentication error: %s", e)
             return None
@@ -429,7 +457,7 @@ class OIDCAuthManager:
     async def ensure_authenticated(self) -> bool:
         """
         Main authentication flow with concurrency protection.
-        
+
         Steps:
         1. Initialize OAuth2 client
         2. Check kanopy token
@@ -472,7 +500,9 @@ class OIDCAuthManager:
                 token_data = await self.refresh_token()
                 if token_data:
                     self._access_token = token_data["access_token"]
-                    self._refresh_token = token_data.get("refresh_token", self._refresh_token)
+                    self._refresh_token = token_data.get(
+                        "refresh_token", self._refresh_token
+                    )
                     self._user_info = self._extract_user_info(self._access_token)
                     return True
 
@@ -484,7 +514,7 @@ class OIDCAuthManager:
                 self._refresh_token = token_data.get("refresh_token")
                 self._user_info = self._extract_user_info(self._access_token)
                 return True
-            
+
             return False
 
     def is_authenticated(self) -> bool:
