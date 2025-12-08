@@ -15,12 +15,12 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
-import httpx
-from authlib.jose import jwt
-from authlib.jose.errors import DecodeError
 
+import httpx
 import yaml
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+from authlib.jose import jwt
+from authlib.jose.errors import DecodeError
 
 logger = logging.getLogger(__name__)
 
