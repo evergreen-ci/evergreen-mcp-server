@@ -1,13 +1,13 @@
 """OIDC/OAuth Device Flow Authentication for Evergreen
 
-This module manages DEX authentication with multiple token sources:
-- Environment variables (for Docker/containerized deployments)
+This module manages DEX authentication using authlib with multiple token sources:
 - ~/.kanopy/token-oidclogin.json (Kanopy token file)
 - ~/.evergreen.yml oauth configuration (Evergreen token file)
 - Device authorization flow for new authentication
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -16,479 +16,306 @@ import webbrowser
 from pathlib import Path
 from typing import Optional
 
-import aiohttp
-import jwt
 import yaml
-from jwt import PyJWKClient
+from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 logger = logging.getLogger(__name__)
 
-# DEX Configuration
-DEX_ISSUER = "https://dex.prod.corp.mongodb.com"
-DEX_CLIENT_ID = "login"
 
-# Token file locations
-KANOPY_TOKEN_FILE = Path.home() / ".kanopy" / "token-oidclogin.json"
+# Default token file locations
+DEFAULT_KANOPY_TOKEN_FILE = Path.home() / ".kanopy" / "token-oidclogin.json"
 EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
 
-# JWKS cache TTL (24 hours)
-JWKS_CACHE_TTL = 86400
-
-# Required OAuth scopes for full functionality
-# Note: These are requested during auth but validation is advisory only, as many
-# OIDC providers (including DEX) don't include scopes in access tokens
-REQUIRED_SCOPES = {"openid", "profile", "email", "offline_access", "groups"}
-
 # HTTP timeout configurations (in seconds)
-HTTP_TIMEOUT_METADATA = 30  # For fetching OIDC metadata
-HTTP_TIMEOUT_TOKEN = 30  # For token operations (refresh, device flow)
-HTTP_TIMEOUT_DEVICE_POLL = 10  # For device flow polling (faster to retry)
+HTTP_TIMEOUT = 30
+
+
+def _load_oauth_config_from_evergreen_yml() -> dict:
+    """Load OAuth configuration from ~/.evergreen.yml if available."""
+    if not EVERGREEN_CONFIG_FILE.exists():
+        return {}
+    
+    try:
+        with open(EVERGREEN_CONFIG_FILE) as f:
+            config = yaml.safe_load(f)
+        return config.get("oauth", {})
+    except Exception as e:
+        logger.debug("Could not load oauth config from ~/.evergreen.yml: %s", e)
+        return {}
 
 
 class OIDCAuthManager:
     """
-    Manages DEX authentication with multiple token sources.
+    Manages DEX authentication using authlib.
 
-    This class handles OIDC/OAuth authentication with JWT signature verification
-    and supports multiple token sources (environment, Kanopy, Evergreen config).
+    This class handles OIDC/OAuth authentication with device flow
+    and supports multiple token sources (Kanopy, Evergreen config).
 
     Thread Safety:
     - Uses asyncio locks to prevent race conditions during token refresh
     - Ensures only one refresh/authentication happens at a time
-    - Safe for concurrent use across multiple async requests
     """
 
     def __init__(self):
-        self.issuer = DEX_ISSUER
-        self.client_id = DEX_CLIENT_ID
-        self.device_auth_endpoint: Optional[str] = None
-        self.token_endpoint: Optional[str] = None
+        # Load OAuth config from ~/.evergreen.yml if available
+        oauth_config = _load_oauth_config_from_evergreen_yml()
+        
+        # Use config from evergreen.yml or fall back to defaults
+        self.issuer = oauth_config.get("issuer")
+        self.client_id = oauth_config.get("client_id")
+        
+        # Token file: prefer oauth.token_file_path, fallback to default kanopy location
+        token_file_path = oauth_config.get("token_file_path")
+        self.kanopy_token_file = Path(token_file_path) if token_file_path else DEFAULT_KANOPY_TOKEN_FILE
+        
+        logger.debug(
+            "Initialized OIDC auth manager: issuer=%s, client_id=%s, token_file=%s",
+            self.issuer, self.client_id, self.kanopy_token_file
+        )
+        
+        self._client: Optional[AsyncOAuth2Client] = None
+        self._metadata: Optional[dict] = None
         self._access_token: Optional[str] = None
         self._refresh_token: Optional[str] = None
         self._user_info: dict = {}
-        self._jwks_client: Optional[PyJWKClient] = None
-        self._jwks_uri: Optional[str] = None
         self._refresh_lock: asyncio.Lock = asyncio.Lock()
         self._auth_lock: asyncio.Lock = asyncio.Lock()
 
-    async def initialize_endpoints(self):
-        """Fetch OIDC metadata to discover endpoints."""
-        logger.info("Fetching OIDC metadata from %s", self.issuer)
-        try:
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_METADATA)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    f"{self.issuer}/.well-known/openid-configuration"
-                ) as resp:
-                    resp.raise_for_status()
-                    metadata = await resp.json()
-                    self.device_auth_endpoint = metadata.get(
-                        "device_authorization_endpoint"
+    async def _get_client(self) -> AsyncOAuth2Client:
+        """Get or create the OAuth2 client with OIDC metadata."""
+        if self._client is None:
+            logger.info("Initializing OAuth2 client for %s", self.issuer)
+            
+            # Fetch OIDC metadata manually
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                    response = await http_client.get(
+                        f"{self.issuer}/.well-known/openid-configuration"
                     )
-                    self.token_endpoint = metadata.get("token_endpoint")
-                    self._jwks_uri = metadata.get("jwks_uri")
-
-                    # Initialize JWKS client for signature verification
-                    if self._jwks_uri:
-                        self._jwks_client = PyJWKClient(
-                            self._jwks_uri,
-                            cache_keys=True,
-                            max_cached_keys=10,
-                            lifespan=JWKS_CACHE_TTL,
-                        )
-                        logger.info(
-                            "Initialized JWKS client with URI: %s", self._jwks_uri
-                        )
-        except asyncio.TimeoutError:
-            logger.error(
-                "Failed to fetch OIDC metadata: timed out after %d seconds. "
-                "Check network connectivity to %s",
-                HTTP_TIMEOUT_METADATA,
-                self.issuer,
+                    response.raise_for_status()
+                    self._metadata = response.json()
+                logger.info("Fetched OIDC metadata successfully")
+            except Exception as e:
+                logger.error("Failed to fetch OIDC metadata: %s", e)
+                raise
+            
+            # Create client with metadata
+            self._client = AsyncOAuth2Client(
+                client_id=self.client_id,
+                token_endpoint=self._metadata["token_endpoint"],
+                timeout=HTTP_TIMEOUT,
             )
-            raise
-        except aiohttp.ClientError as e:
-            logger.error("Network error fetching OIDC metadata: %s", e)
-            raise
-        except Exception as e:
-            logger.error(
-                "Unexpected error initializing OIDC endpoints: %s", e, exc_info=True
-            )
-            raise
+        
+        return self._client
 
-    def _verify_and_decode_token(
-        self, token: str, verify: bool = True
-    ) -> Optional[dict]:
+    def _check_token_expiry(self, token_data: dict) -> tuple[bool, int]:
         """
-        Verify and decode a JWT token.
-
+        Check if token is expired.
+        
         Args:
-            token: The JWT token to decode
-            verify: Whether to verify the signature (should always be True in production)
-
+            token_data: Token data dict with 'access_token' and optionally 'expires_at'
+        
         Returns:
-            Decoded claims if valid, None otherwise
+            Tuple of (is_valid, seconds_remaining)
         """
-        try:
-            if verify and self._jwks_client:
-                # Verify signature using JWKS
-                signing_key = self._jwks_client.get_signing_key_from_jwt(token)
-                claims = jwt.decode(
-                    token,
-                    signing_key.key,
-                    algorithms=["RS256"],
-                    audience=self.client_id,
-                    issuer=self.issuer,
-                    options={"verify_signature": True},
-                )
-                return claims
-            elif verify:
-                # JWKS client not initialized yet - try to get header to determine if we need it
-                logger.warning(
-                    "JWKS client not initialized. Token signature cannot be verified. "
-                    "Call initialize_endpoints() first."
-                )
-                return None
-            else:
-                # Fallback for backwards compatibility (not recommended)
-                logger.warning(
-                    "Decoding token without signature verification (insecure)"
-                )
-                return jwt.decode(token, options={"verify_signature": False})
-        except jwt.ExpiredSignatureError:
-            logger.debug("Token has expired")
-            return None
-        except jwt.InvalidTokenError as e:
-            logger.error("Token validation failed: %s", e)
-            return None
-        except Exception as e:
-            logger.error("Unexpected error decoding token: %s", e, exc_info=True)
-            return None
-
-    def _check_token_expiry(self, token: str) -> tuple[bool, int]:
-        """Check if token is expired. Returns (is_valid, seconds_remaining)."""
-        try:
-            claims = self._verify_and_decode_token(token, verify=True)
-            if not claims:
-                return False, 0
-
-            exp = claims.get("exp", 0)
-            remaining = exp - time.time()
+        expires_at = token_data.get("expires_at", 0)
+        if expires_at:
+            remaining = expires_at - time.time()
             return remaining > 60, int(remaining)  # 1 min buffer
-        except (KeyError, TypeError, ValueError) as e:
-            logger.error("Invalid token format or claims: %s", e)
+        
+        # If no expiry info, try to decode the JWT token
+        access_token = token_data.get("access_token")
+        if not access_token:
             return False, 0
-        except Exception as e:
-            logger.error("Unexpected error checking token expiry: %s", e, exc_info=True)
-            return False, 0
+        
+        try:
+            # Decode JWT payload without verification
+            parts = access_token.split('.')
+            if len(parts) == 3:
+                payload = parts[1]
+                padding = 4 - len(payload) % 4
+                if padding != 4:
+                    payload += '=' * padding
+                claims_json = base64.urlsafe_b64decode(payload)
+                claims = json.loads(claims_json)
+                exp = claims.get("exp", 0)
+                remaining = exp - time.time()
+                return remaining > 60, int(remaining)
+        except Exception:
+            pass
+        
+        # If we can't decode, assume it's valid and let the API reject it
+        logger.warning("Could not determine token expiry, assuming valid")
+        return True, 3600
 
-    def _extract_user_info(self, token: str) -> dict:
+    def _extract_user_info(self, access_token: str) -> dict:
         """Extract user info from JWT token."""
         try:
-            claims = self._verify_and_decode_token(token, verify=True)
-            if not claims:
-                return {}
-
+            from authlib.jose import jwt
+            from authlib.jose.errors import DecodeError
+            
+            # Decode without verification (we trust the token from DEX)
+            try:
+                claims = jwt.decode(access_token, key=None)
+                claims.validate()
+            except (DecodeError, Exception):
+                # If that fails, try extracting claims without validation
+                # JWT format: header.payload.signature
+                parts = access_token.split('.')
+                if len(parts) != 3:
+                    logger.error("Invalid JWT format")
+                    return {}
+                
+                # Decode payload (add padding if needed)
+                payload = parts[1]
+                padding = 4 - len(payload) % 4
+                if padding != 4:
+                    payload += '=' * padding
+                
+                claims_json = base64.urlsafe_b64decode(payload)
+                claims = json.loads(claims_json)
+            
+            logger.debug("Extracted claims from token: %s", claims)
+            
             return {
-                "username": claims.get("preferred_username")
-                or claims.get("email")
-                or claims.get("sub"),
+                "username": claims.get("preferred_username") or claims.get("email") or claims.get("sub"),
                 "email": claims.get("email"),
                 "name": claims.get("name"),
                 "groups": claims.get("groups", []),
                 "exp": claims.get("exp"),
             }
-        except (KeyError, TypeError, AttributeError) as e:
-            logger.error("Invalid token claims structure: %s", e)
-            return {}
         except Exception as e:
-            logger.error("Unexpected error extracting user info: %s", e, exc_info=True)
+            logger.error("Error extracting user info: %s", e, exc_info=True)
             return {}
 
-    def _validate_token_scopes(self, token: str) -> bool:
-        """
-        Validate that the token contains all required scopes.
-
-        Note: Many OIDC providers (including DEX) don't include scope claims in
-        access tokens - scopes are typically in ID tokens. This validation is
-        best-effort and non-blocking since JWT signature verification is the
-        primary security control.
-
-        Args:
-            token: The JWT access token to validate
-
-        Returns:
-            True if all required scopes are present or if scope validation cannot
-            be performed (access tokens often don't contain scopes)
-        """
-        try:
-            claims = self._verify_and_decode_token(token, verify=True)
-            if not claims:
-                logger.warning("Cannot validate scopes: token validation failed")
-                # Return True because signature verification already failed
-                # and would have been caught earlier
-                return True
-
-            # Get scope from token - can be either space-separated string or list
-            token_scope = claims.get("scope", "")
-
-            # If scope claim is missing or empty, this is normal for access tokens
-            if not token_scope:
-                logger.debug(
-                    "Access token does not contain scope claim (normal for many OIDC providers)"
-                )
-                return True
-
-            if isinstance(token_scope, str):
-                granted_scopes = set(token_scope.split())
-            elif isinstance(token_scope, list):
-                granted_scopes = set(token_scope)
+    def check_kanopy_token(self) -> Optional[dict]:
+        """Check kanopy/evergreen token file for valid token."""
+        # Try configured path first
+        token_file_to_check = self.kanopy_token_file
+        
+        # If configured path doesn't exist, try default location
+        # (useful in Docker where evergreen.yml might have host paths)
+        if not token_file_to_check.exists():
+            logger.debug("Token file not found at configured path: %s", token_file_to_check)
+            default_path = DEFAULT_KANOPY_TOKEN_FILE
+            if default_path != token_file_to_check and default_path.exists():
+                logger.info("Using default token file location: %s", default_path)
+                token_file_to_check = default_path
             else:
-                logger.warning(
-                    "Unexpected scope format in token: %s", type(token_scope)
-                )
-                # Don't fail - just log warning
-                return True
+                logger.debug("Token file not found at default path either: %s", default_path)
+                return None
 
-            # Check if all required scopes are present
-            missing_scopes = REQUIRED_SCOPES - granted_scopes
-            if missing_scopes:
-                logger.info(
-                    "Token has limited scopes. Missing: %s (granted: %s)",
-                    missing_scopes,
-                    granted_scopes,
-                )
-                # Don't fail - scopes in access tokens are advisory
-                return True
-
-            logger.debug("Token has all required scopes: %s", granted_scopes)
-            return True
-
-        except Exception as e:
-            logger.error("Error validating token scopes: %s", e, exc_info=True)
-            # Don't fail on validation errors - signature verification is primary control
-            return True
-
-    def check_kanopy_token(self) -> Optional[str]:
-        """Check ~/.kanopy/token-oidclogin.json for valid token."""
-        if not KANOPY_TOKEN_FILE.exists():
-            logger.debug("Kanopy token file not found: %s", KANOPY_TOKEN_FILE)
-            return None
-
-        logger.info("Found kanopy token file: %s", KANOPY_TOKEN_FILE)
+        logger.info("Found token file: %s", token_file_to_check)
         try:
-            with open(KANOPY_TOKEN_FILE) as f:
-                data = json.load(f)
+            with open(token_file_to_check) as f:
+                token_data = json.load(f)
 
-            access_token = data.get("access_token")
-            self._refresh_token = data.get("refresh_token")
-
-            if access_token:
-                is_valid, remaining = self._check_token_expiry(access_token)
+            if "access_token" in token_data:
+                is_valid, remaining = self._check_token_expiry(token_data)
                 if is_valid:
-                    # Validate token has required scopes
-                    if not self._validate_token_scopes(access_token):
-                        logger.warning("Kanopy token missing required scopes")
-                        return None
-
-                    logger.info(
-                        "Kanopy token valid (%d min remaining)", remaining // 60
-                    )
-                    self._access_token = access_token
-                    self._user_info = self._extract_user_info(access_token)
-                    return access_token
+                    logger.info("Kanopy token valid (%d min remaining)", remaining // 60)
+                    return token_data
                 else:
                     logger.warning("Kanopy token expired")
-        except json.JSONDecodeError as e:
-            logger.error("Invalid JSON in kanopy token file: %s", e)
-        except OSError as e:
-            logger.error("Error reading kanopy token file: %s", e)
-        except (KeyError, TypeError, AttributeError) as e:
-            logger.error("Invalid token data structure in kanopy file: %s", e)
         except Exception as e:
-            logger.error("Unexpected error reading kanopy token: %s", e, exc_info=True)
+            logger.error("Error reading kanopy token: %s", e)
 
         return None
 
-    def check_evergreen_token(self) -> Optional[str]:
-        """Check ~/.evergreen.yml for oauth token configuration."""
-        if not EVERGREEN_CONFIG_FILE.exists():
-            logger.debug("Evergreen config not found: %s", EVERGREEN_CONFIG_FILE)
-            return None
 
-        logger.info("Found evergreen config: %s", EVERGREEN_CONFIG_FILE)
-        try:
-            with open(EVERGREEN_CONFIG_FILE) as f:
-                config = yaml.safe_load(f)
-
-            oauth = config.get("oauth", {})
-            token_file_path = oauth.get("token_file_path")
-
-            if not token_file_path:
-                logger.debug("No oauth.token_file_path in evergreen config")
-                return None
-
-            token_path = Path(token_file_path)
-            if not token_path.exists():
-                logger.warning("Evergreen token file not found: %s", token_path)
-                return None
-
-            logger.info("Found evergreen token file: %s", token_path)
-            with open(token_path) as f:
-                data = json.load(f)
-
-            access_token = data.get("access_token")
-            refresh_token = data.get("refresh_token")
-
-            if access_token:
-                is_valid, remaining = self._check_token_expiry(access_token)
-                if is_valid:
-                    # Validate token has required scopes
-                    if not self._validate_token_scopes(access_token):
-                        logger.warning("Evergreen token missing required scopes")
-                        # Store refresh token to attempt refresh with correct scopes
-                        self._refresh_token = refresh_token or self._refresh_token
-                        return None
-
-                    logger.info(
-                        "Evergreen token valid (%d min remaining)", remaining // 60
-                    )
-                    self._access_token = access_token
-                    self._refresh_token = refresh_token or self._refresh_token
-                    self._user_info = self._extract_user_info(access_token)
-                    return access_token
-                else:
-                    logger.warning("Evergreen token expired")
-                    # Store refresh token for potential refresh
-                    self._refresh_token = refresh_token or self._refresh_token
-        except yaml.YAMLError as e:
-            logger.error("Invalid YAML in evergreen config file: %s", e)
-        except json.JSONDecodeError as e:
-            logger.error("Invalid JSON in evergreen token file: %s", e)
-        except OSError as e:
-            logger.error("Error reading evergreen config or token file: %s", e)
-        except (KeyError, TypeError, AttributeError) as e:
-            logger.error("Invalid config or token data structure: %s", e)
-        except Exception as e:
-            logger.error(
-                "Unexpected error reading evergreen config: %s", e, exc_info=True
-            )
-
-        return None
-
-    async def refresh_token(self) -> Optional[str]:
+    async def refresh_token(self) -> Optional[dict]:
         """
-        Attempt to refresh the token.
-
-        Uses a lock to prevent concurrent refresh attempts and includes
-        a check to avoid unnecessary refreshes if another request already
-        completed the refresh.
+        Attempt to refresh the token using authlib.
+        
+        Returns:
+            Token data dict if successful, None otherwise
         """
         if not self._refresh_token:
             logger.warning("No refresh token available")
             return None
 
-        # Use lock to prevent concurrent refresh attempts
         async with self._refresh_lock:
             # Check if token was already refreshed by another request
             if self._access_token:
-                is_valid, remaining = self._check_token_expiry(self._access_token)
+                token_data = {
+                    "access_token": self._access_token,
+                    "refresh_token": self._refresh_token,
+                }
+                is_valid, remaining = self._check_token_expiry(token_data)
                 if is_valid:
                     logger.debug(
                         "Token already refreshed by another request (%d min remaining)",
                         remaining // 60,
                     )
-                    return self._access_token
-
-            if not self.token_endpoint:
-                await self.initialize_endpoints()
+                    return token_data
 
             logger.info("Attempting token refresh...")
             try:
-                timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_TOKEN)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    data = {
-                        "client_id": self.client_id,
-                        "grant_type": "refresh_token",
-                        "refresh_token": self._refresh_token,
-                    }
-                    async with session.post(self.token_endpoint, data=data) as resp:
-                        if resp.status == 200:
-                            token_data = await resp.json()
-                            new_access_token = token_data.get("access_token")
-
-                            # Validate token has required scopes
-                            if not self._validate_token_scopes(new_access_token):
-                                logger.error("Refreshed token missing required scopes")
-                                return None
-
-                            self._access_token = new_access_token
-                            self._refresh_token = token_data.get(
-                                "refresh_token", self._refresh_token
-                            )
-                            self._user_info = self._extract_user_info(
-                                self._access_token
-                            )
-
-                            # Save to kanopy token file
-                            self._save_token(token_data)
-                            logger.info("Token refreshed successfully!")
-                            return self._access_token
-                        else:
-                            error_text = await resp.text()
-                            logger.error("Refresh failed: %s", error_text)
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Token refresh timed out after %d seconds. "
-                    "Check network connectivity to OIDC provider.",
-                    HTTP_TIMEOUT_TOKEN,
-                )
-            except aiohttp.ClientError as e:
-                logger.error("Network error during token refresh: %s", e)
-            except json.JSONDecodeError as e:
-                logger.error("Invalid JSON response during token refresh: %s", e)
-            except OSError as e:
-                logger.error("Error saving refreshed token: %s", e)
+                await self._get_client()
+                
+                # Refresh the token manually using httpx
+                import httpx
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                    response = await http_client.post(
+                        self._metadata["token_endpoint"],
+                        data={
+                            "grant_type": "refresh_token",
+                            "refresh_token": self._refresh_token,
+                            "client_id": self.client_id,
+                        },
+                    )
+                    
+                    if response.status_code == 200:
+                        token_data = response.json()
+                        
+                        # Update internal state
+                        self._access_token = token_data["access_token"]
+                        self._refresh_token = token_data.get("refresh_token", self._refresh_token)
+                        self._user_info = self._extract_user_info(self._access_token)
+                        
+                        # Save the new token
+                        self._save_token(token_data)
+                        logger.info("Token refreshed successfully!")
+                        return token_data
+                    else:
+                        logger.error("Token refresh failed with status %d: %s", response.status_code, response.text)
+                        return None
+                
             except Exception as e:
-                logger.error(
-                    "Unexpected error during token refresh: %s", e, exc_info=True
-                )
-
-            return None
+                logger.error("Token refresh failed: %s", e)
+                return None
 
     def _save_token(self, token_data: dict):
-        """
-        Save token to kanopy token file atomically.
-
-        Uses atomic write pattern (write to temp file + rename) to prevent
-        corruption if the process crashes during write.
-        """
-        KANOPY_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        """Save token to configured token file atomically."""
+        # Determine which path to use for saving
+        save_path = self.kanopy_token_file
+        
+        # If configured path isn't writable (e.g., in Docker with host paths),
+        # fall back to default container location
+        try:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            logger.warning(
+                "Cannot write to configured path %s: %s. Using default location.",
+                save_path, e
+            )
+            save_path = DEFAULT_KANOPY_TOKEN_FILE
+            save_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write to temporary file first
-        temp_file = KANOPY_TOKEN_FILE.with_suffix(".tmp")
+        temp_file = save_path.with_suffix(".tmp")
         try:
             with open(temp_file, "w") as f:
                 json.dump(token_data, f, indent=2)
-                # Ensure data is flushed to disk
                 f.flush()
                 os.fsync(f.fileno())
 
-            # Atomic rename (replaces existing file atomically)
-            temp_file.replace(KANOPY_TOKEN_FILE)
-            logger.info("Token saved to %s", KANOPY_TOKEN_FILE)
-        except OSError as e:
-            logger.error("Failed to save token: %s", e)
-            # Clean up temp file if it exists
-            if temp_file.exists():
-                try:
-                    temp_file.unlink()
-                except OSError:
-                    pass
-            raise
+            # Atomic rename
+            temp_file.replace(save_path)
+            logger.info("Token saved to %s", save_path)
         except Exception as e:
-            logger.error("Unexpected error saving token: %s", e, exc_info=True)
-            # Clean up temp file if it exists
+            logger.error("Failed to save token: %s", e)
             if temp_file.exists():
                 try:
                     temp_file.unlink()
@@ -496,38 +323,37 @@ class OIDCAuthManager:
                     pass
             raise
 
-    async def device_flow_auth(self) -> Optional[str]:
-        """Perform device authorization flow."""
-        if not self.device_auth_endpoint:
-            await self.initialize_endpoints()
-
-        logger.info("Starting Device Authorization Flow...")
-
+    async def device_flow_auth(self) -> Optional[dict]:
+        """Perform device authorization flow manually using httpx."""
         try:
-            # Use shorter timeout for device flow since polling requests should be quick
-            timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_DEVICE_POLL)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                # Step 1: Request device code
-                data = {
-                    "client_id": self.client_id,
-                    "scope": " ".join(sorted(REQUIRED_SCOPES)),
-                }
-                async with session.post(self.device_auth_endpoint, data=data) as resp:
-                    resp.raise_for_status()
-                    device_data = await resp.json()
-
-                verification_uri = device_data.get(
-                    "verification_uri_complete"
-                ) or device_data.get("verification_uri")
+            await self._get_client()
+            
+            logger.info("Starting Device Authorization Flow...")
+            
+            # Step 1: Request device code
+            import httpx
+            device_auth_endpoint = self._metadata["device_authorization_endpoint"]
+            
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                response = await http_client.post(
+                    device_auth_endpoint,
+                    data={
+                        "client_id": self.client_id,
+                        "scope": "openid profile email groups offline_access",
+                    },
+                )
+                response.raise_for_status()
+                device_data = response.json()
+                
+                # Parse device authorization response
+                verification_uri = device_data.get("verification_uri_complete") or device_data.get("verification_uri")
                 user_code = device_data.get("user_code")
-                device_code = device_data.get("device_code")
+                device_code = device_data["device_code"]
                 interval = device_data.get("interval", 5)
 
                 # Display auth instructions
                 logger.info("=" * 70)
-                logger.info(
-                    "🔐 AUTHENTICATION REQUIRED - Please complete login in your browser"
-                )
+                logger.info("🔐 AUTHENTICATION REQUIRED - Please complete login in your browser")
                 logger.info("=" * 70)
                 logger.info("URL: %s", verification_uri)
                 if user_code:
@@ -544,139 +370,133 @@ class OIDCAuthManager:
                 logger.info("Waiting for authentication...")
 
                 # Step 2: Poll for token
+                token_endpoint = self._metadata["token_endpoint"]
+                
                 while True:
                     await asyncio.sleep(interval)
-
-                    poll_data = {
-                        "client_id": self.client_id,
-                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                        "device_code": device_code,
-                    }
-
-                    async with session.post(
-                        self.token_endpoint, data=poll_data
-                    ) as resp:
-                        if resp.status == 200:
-                            token_data = await resp.json()
-                            new_access_token = token_data.get("access_token")
-
-                            # Validate token has required scopes
-                            if not self._validate_token_scopes(new_access_token):
-                                logger.error(
-                                    "Received token missing required scopes. "
-                                    "Please ensure the OIDC provider grants all requested scopes."
-                                )
-                                return None
-
-                            self._access_token = new_access_token
+                    
+                    try:
+                        # Poll token endpoint with device code
+                        response = await http_client.post(
+                            token_endpoint,
+                            data={
+                                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                                "device_code": device_code,
+                                "client_id": self.client_id,
+                            },
+                        )
+                        
+                        # Check response
+                        if response.status_code == 200:
+                            token_data = response.json()
+                            
+                            # Update internal state
+                            self._access_token = token_data["access_token"]
                             self._refresh_token = token_data.get("refresh_token")
-                            self._user_info = self._extract_user_info(
-                                self._access_token
-                            )
+                            self._user_info = self._extract_user_info(self._access_token)
+                            
+                            # Save token to file
                             self._save_token(token_data)
                             logger.info("Authentication successful!")
-                            return self._access_token
-
-                        error_data = await resp.json()
-                        error = error_data.get("error")
-
-                        if error == "authorization_pending":
-                            logger.debug("Authorization pending, polling...")
-                            continue
-                        elif error == "slow_down":
-                            interval += 2
-                            continue
-                        elif error == "expired_token":
-                            logger.error("Authentication request expired")
-                            return None
+                            return token_data
                         else:
-                            logger.error("Authentication failed: %s", error)
-                            return None
-        except asyncio.TimeoutError:
-            logger.error(
-                "Device flow authentication timed out after %d seconds. "
-                "This may happen if the OIDC provider is slow or network is unstable.",
-                HTTP_TIMEOUT_DEVICE_POLL,
-            )
-            return None
-        except aiohttp.ClientError as e:
-            logger.error("Network error during device flow authentication: %s", e)
-            return None
+                            # Parse error response
+                            error_data = response.json()
+                            error = error_data.get("error", "unknown_error")
+                            
+                            if error == "authorization_pending":
+                                logger.debug("Authorization pending, polling...")
+                                continue
+                            elif error == "slow_down":
+                                interval += 2
+                                logger.debug("Slowing down polling interval to %d seconds", interval)
+                                continue
+                            elif error == "expired_token":
+                                logger.error("Authentication request expired")
+                                return None
+                            else:
+                                logger.error("Authentication failed: %s", error_data)
+                                return None
+                                
+                    except Exception as e:
+                        logger.error("Token polling error: %s", e)
+                        return None
+                        
         except Exception as e:
-            logger.error("Unexpected error during device flow: %s", e, exc_info=True)
+            logger.error("Device flow authentication error: %s", e)
             return None
 
     async def ensure_authenticated(self) -> bool:
         """
         Main authentication flow with concurrency protection.
-
-        Uses a lock to ensure only one authentication attempt happens at a time,
-        preventing race conditions when multiple requests detect expired tokens.
-
+        
         Steps:
-        1. Initialize OIDC endpoints (including JWKS)
+        1. Initialize OAuth2 client
         2. Check kanopy token
         3. Check evergreen token
         4. Try refresh if expired
         5. Do device flow if needed
         """
-        # Use lock to prevent concurrent authentication attempts
         async with self._auth_lock:
             logger.info("Checking authentication status...")
 
-            # Check if another request already authenticated while we waited for the lock
+            # Check if already authenticated
             if self._access_token:
-                is_valid, remaining = self._check_token_expiry(self._access_token)
+                token_data = {
+                    "access_token": self._access_token,
+                    "refresh_token": self._refresh_token,
+                }
+                is_valid, remaining = self._check_token_expiry(token_data)
                 if is_valid:
                     logger.debug(
-                        "Already authenticated by another request (%d min remaining)",
+                        "Already authenticated (%d min remaining)",
                         remaining // 60,
                     )
                     return True
 
-            # Initialize endpoints and JWKS client first
-            if not self._jwks_client:
-                logger.info("Initializing OIDC endpoints and JWKS client...")
-                await self.initialize_endpoints()
+            # Initialize client
+            await self._get_client()
 
-            # Check kanopy token
-            logger.info("Checking Kanopy token...")
-            token = self.check_kanopy_token()
-            if token:
-                return True
-
-            # Check evergreen token
-            logger.info("Checking Evergreen token...")
-            token = self.check_evergreen_token()
-            if token:
+            # Check configured token file (from oauth.token_file_path or default kanopy location)
+            logger.info("Checking for existing token...")
+            token_data = self.check_kanopy_token()
+            if token_data:
+                self._access_token = token_data["access_token"]
+                self._refresh_token = token_data.get("refresh_token")
+                self._user_info = self._extract_user_info(self._access_token)
                 return True
 
             # Try refresh if we have a refresh token
             if self._refresh_token:
                 logger.info("Attempting token refresh...")
-                token = await self.refresh_token()
-                if token:
+                token_data = await self.refresh_token()
+                if token_data:
+                    self._access_token = token_data["access_token"]
+                    self._refresh_token = token_data.get("refresh_token", self._refresh_token)
+                    self._user_info = self._extract_user_info(self._access_token)
                     return True
 
             # Need to authenticate
             logger.warning("No valid token found - authentication required")
-            token = await self.device_flow_auth()
-            return token is not None
+            token_data = await self.device_flow_auth()
+            if token_data:
+                self._access_token = token_data["access_token"]
+                self._refresh_token = token_data.get("refresh_token")
+                self._user_info = self._extract_user_info(self._access_token)
+                return True
+            
+            return False
 
     def is_authenticated(self) -> bool:
-        """
-        Check if currently authenticated with a valid token.
-
-        This is a non-blocking check that doesn't trigger authentication.
-        Use this to check auth status without acquiring locks.
-
-        Returns:
-            True if access token exists and is valid, False otherwise
-        """
+        """Check if currently authenticated with a valid token."""
         if not self._access_token:
             return False
 
-        is_valid, _ = self._check_token_expiry(self._access_token)
+        token_data = {
+            "access_token": self._access_token,
+            "refresh_token": self._refresh_token,
+        }
+        is_valid, _ = self._check_token_expiry(token_data)
         return is_valid
 
     @property
