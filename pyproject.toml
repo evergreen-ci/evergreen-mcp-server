@@ -48,6 +48,7 @@ dependencies = [
     "mcp",
     "fastmcp>=2.0.0",
     "gql[aiohttp]",
+    "httpx>=0.24.0",
     "pyjwt>=2.0.0",
     "cryptography>=41.0.0"
 ]

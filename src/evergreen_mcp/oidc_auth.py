@@ -25,6 +25,17 @@ from authlib.jose.errors import DecodeError
 logger = logging.getLogger(__name__)
 
 
+class OIDCAuthenticationError(Exception):
+    """Raised when OIDC authentication fails.
+
+    This exception is used to signal authentication failures that should
+    be handled by the calling code, such as failed device flow authentication
+    or token refresh failures.
+    """
+
+    pass
+
+
 # Default token file locations
 DEFAULT_KANOPY_TOKEN_FILE = Path.home() / ".kanopy" / "token-oidclogin.json"
 EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
@@ -248,7 +259,10 @@ class OIDCAuthManager:
             return None
 
         async with self._refresh_lock:
-            # Check if token was already refreshed by another request
+            # Race condition prevention: While waiting for the lock, another request
+            # may have already refreshed the token. Check if the current token is
+            # still valid before making a network request. This avoids unnecessary
+            # token refreshes when multiple requests hit an expired token simultaneously.
             if self._access_token:
                 token_data = {
                     "access_token": self._access_token,
@@ -516,6 +530,19 @@ class OIDCAuthManager:
                 return True
 
             return False
+
+    def set_token_from_data(self, token_data: dict) -> None:
+        """Set internal token state from token data dict.
+
+        This is the preferred way to update the auth manager's token state
+        from external code, rather than accessing private attributes directly.
+
+        Args:
+            token_data: Dict containing 'access_token' and optionally 'refresh_token'
+        """
+        self._access_token = token_data["access_token"]
+        self._refresh_token = token_data.get("refresh_token")
+        self._user_info = self._extract_user_info(self._access_token)
 
     def is_authenticated(self) -> bool:
         """Check if currently authenticated with a valid token."""

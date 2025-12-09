@@ -17,7 +17,7 @@ import yaml
 from fastmcp import Context, FastMCP
 
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
-from evergreen_mcp.oidc_auth import OIDCAuthManager
+from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 
 __version__ = "0.4.0"
 
@@ -127,11 +127,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
 
         if token_data:
             # Found a valid token, set internal state
-            auth_manager._access_token = token_data["access_token"]
-            auth_manager._refresh_token = token_data.get("refresh_token")
-            auth_manager._user_info = auth_manager._extract_user_info(
-                auth_manager._access_token
-            )
+            auth_manager.set_token_from_data(token_data)
 
             logger.info("Found valid OIDC token")
             user_id = auth_manager.user_id
@@ -164,11 +160,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                 token_data = await auth_manager.device_flow_auth()
 
                 if token_data:
-                    auth_manager._access_token = token_data["access_token"]
-                    auth_manager._refresh_token = token_data.get("refresh_token")
-                    auth_manager._user_info = auth_manager._extract_user_info(
-                        auth_manager._access_token
-                    )
+                    auth_manager.set_token_from_data(token_data)
 
                     user_id = auth_manager.user_id
                     logger.info("Successfully authenticated as: %s", user_id)
@@ -179,7 +171,9 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                         "auth_method": "oidc",
                     }
                 else:
-                    raise RuntimeError("OIDC device flow authentication failed")
+                    raise OIDCAuthenticationError(
+                        "OIDC device flow authentication failed"
+                    )
         else:
             # No token found, trigger device flow authentication
             logger.info(
@@ -191,11 +185,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
 
             if token_data:
                 # Set internal state from device flow
-                auth_manager._access_token = token_data["access_token"]
-                auth_manager._refresh_token = token_data.get("refresh_token")
-                auth_manager._user_info = auth_manager._extract_user_info(
-                    auth_manager._access_token
-                )
+                auth_manager.set_token_from_data(token_data)
 
                 user_id = auth_manager.user_id
                 logger.info("Successfully authenticated as: %s", user_id)
@@ -206,7 +196,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                     "auth_method": "oidc",
                 }
             else:
-                raise RuntimeError(
+                raise OIDCAuthenticationError(
                     "OIDC authentication required but device flow failed. "
                     "Please ensure you have network access and can authenticate with DEX."
                 )

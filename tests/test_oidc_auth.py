@@ -23,6 +23,7 @@ from evergreen_mcp.oidc_auth import (
     DEFAULT_KANOPY_TOKEN_FILE,
     EVERGREEN_CONFIG_FILE,
     HTTP_TIMEOUT,
+    OIDCAuthenticationError,
     OIDCAuthManager,
     _load_oauth_config_from_evergreen_yml,
 )
