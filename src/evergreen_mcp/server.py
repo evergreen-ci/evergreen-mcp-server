@@ -123,7 +123,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
         auth_manager = OIDCAuthManager()
 
         # Check for existing valid token
-        token_data = auth_manager.check_kanopy_token()
+        token_data = auth_manager.check_token_file()
 
         if token_data:
             # Found a valid token, set internal state
@@ -138,41 +138,25 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                 "bearer_token": auth_manager.access_token,
                 "auth_method": "oidc",
             }
-        else:
-            # No valid token found - try to refresh if we have an expired token
-            # with a refresh_token, otherwise start device flow
-            expired_data = auth_manager.read_token_file()
-            refresh_token = expired_data.get("refresh_token") if expired_data else None
+        elif auth_manager._refresh_token:
+            # Try to refresh expired token
+            logger.info("Token expired, attempting refresh...")
+            token_data = await auth_manager.refresh_token()
+            if token_data:
+                logger.info("Successfully refreshed OIDC token")
+                user_id = auth_manager.user_id
+                logger.info("Authenticated as: %s", user_id)
 
-            if refresh_token:
-                logger.info(
-                    "Found expired token with refresh token, attempting refresh..."
+                evergreen_config = {
+                    "user": user_id,
+                    "bearer_token": auth_manager.access_token,
+                    "auth_method": "oidc",
+                }
+            else:
+                # Refresh failed, need new authentication
+                logger.warning(
+                    "Token refresh failed, starting device flow authentication..."
                 )
-                auth_manager._refresh_token = refresh_token
-                token_data = await auth_manager.refresh_token()
-
-                if token_data:
-                    logger.info("Successfully refreshed OIDC token")
-                    user_id = auth_manager.user_id
-                    logger.info("Authenticated as: %s", user_id)
-
-                    evergreen_config = {
-                        "user": user_id,
-                        "bearer_token": auth_manager.access_token,
-                        "auth_method": "oidc",
-                    }
-                else:
-                    # Refresh failed, fall through to device flow
-                    logger.warning("Token refresh failed, will start device flow...")
-                    refresh_token = None  # Clear to trigger device flow below
-
-            if not refresh_token or not token_data:
-                # No token or refresh failed - trigger device flow authentication
-                logger.info(
-                    "No valid OIDC token found, starting device flow authentication..."
-                )
-                logger.info("Please authenticate in your browser...")
-
                 token_data = await auth_manager.device_flow_auth()
 
                 if token_data:
@@ -188,9 +172,34 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
                     }
                 else:
                     raise OIDCAuthenticationError(
-                        "OIDC authentication required but device flow failed. "
-                        "Please ensure you have network access and can authenticate with DEX."
+                        "OIDC device flow authentication failed"
                     )
+        else:
+            # No token found, trigger device flow authentication
+            logger.info(
+                "No valid OIDC token found, starting device flow authentication..."
+            )
+            logger.info("Please authenticate in your browser...")
+
+            token_data = await auth_manager.device_flow_auth()
+
+            if token_data:
+                # Set internal state from device flow
+                auth_manager.set_token_from_data(token_data)
+
+                user_id = auth_manager.user_id
+                logger.info("Successfully authenticated as: %s", user_id)
+
+                evergreen_config = {
+                    "user": user_id,
+                    "bearer_token": auth_manager.access_token,
+                    "auth_method": "oidc",
+                }
+            else:
+                raise OIDCAuthenticationError(
+                    "OIDC authentication required but device flow failed. "
+                    "Please ensure you have network access and can authenticate with DEX."
+                )
 
     # Determine default project ID
     default_project_id = None

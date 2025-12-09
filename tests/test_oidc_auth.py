@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 import pytest
 
 from evergreen_mcp.oidc_auth import (
-    DEFAULT_KANOPY_TOKEN_FILE,
     EVERGREEN_CONFIG_FILE,
     HTTP_TIMEOUT,
     OIDCAuthenticationError,
@@ -132,7 +131,7 @@ class TestOIDCAuthManagerInit:
         """Test that manager initializes with None defaults when no config."""
         assert auth_manager.issuer is None
         assert auth_manager.client_id is None
-        assert auth_manager.kanopy_token_file == DEFAULT_KANOPY_TOKEN_FILE
+        assert auth_manager.token_file is None
         assert auth_manager._access_token is None
         assert auth_manager._refresh_token is None
         assert auth_manager._user_info == {}
@@ -145,9 +144,7 @@ class TestOIDCAuthManagerInit:
         """Test initialization with config from evergreen.yml."""
         assert auth_manager_with_config.issuer == "https://dex.example.com"
         assert auth_manager_with_config.client_id == "test-client-id"
-        assert auth_manager_with_config.kanopy_token_file == Path(
-            "/tmp/test-token.json"
-        )
+        assert auth_manager_with_config.token_file == Path("/tmp/test-token.json")
 
 
 class TestGetClient:
@@ -297,11 +294,11 @@ class TestUserInfoExtraction:
         assert user_info == {}
 
 
-class TestKanopyTokenCheck:
-    """Test Kanopy token file checking."""
+class TestTokenFileCheck:
+    """Test token file checking."""
 
-    def test_check_kanopy_token_success(self, auth_manager, valid_jwt_claims):
-        """Test successful Kanopy token check."""
+    def test_check_token_file_success(self, auth_manager_with_config, valid_jwt_claims):
+        """Test successful token file check."""
         token = create_mock_jwt(valid_jwt_claims)
         token_data = {
             "access_token": token,
@@ -310,20 +307,26 @@ class TestKanopyTokenCheck:
 
         with patch.object(Path, "exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager.check_kanopy_token()
+                result = auth_manager_with_config.check_token_file()
 
                 assert result is not None
                 assert result["access_token"] == token
                 assert result["refresh_token"] == "valid.refresh.token"
 
-    def test_check_kanopy_token_file_not_found(self, auth_manager):
-        """Test Kanopy token check when file doesn't exist."""
+    def test_check_token_file_no_path_configured(self, auth_manager):
+        """Test token file check when no path is configured."""
+        # auth_manager has no token_file configured (None)
+        result = auth_manager.check_token_file()
+        assert result is None
+
+    def test_check_token_file_not_found(self, auth_manager_with_config):
+        """Test token file check when file doesn't exist."""
         with patch.object(Path, "exists", return_value=False):
-            result = auth_manager.check_kanopy_token()
+            result = auth_manager_with_config.check_token_file()
             assert result is None
 
-    def test_check_kanopy_token_expired(self, auth_manager, expired_jwt_claims):
-        """Test Kanopy token check with expired token."""
+    def test_check_token_file_expired(self, auth_manager_with_config, expired_jwt_claims):
+        """Test token file check with expired token."""
         token = create_mock_jwt(expired_jwt_claims)
         token_data = {
             "access_token": token,
@@ -332,37 +335,15 @@ class TestKanopyTokenCheck:
 
         with patch.object(Path, "exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager.check_kanopy_token()
+                result = auth_manager_with_config.check_token_file()
                 assert result is None
 
-    def test_check_kanopy_token_invalid_json(self, auth_manager):
-        """Test Kanopy token check with invalid JSON."""
+    def test_check_token_file_invalid_json(self, auth_manager_with_config):
+        """Test token file check with invalid JSON."""
         with patch.object(Path, "exists", return_value=True):
             with patch("builtins.open", mock_open(read_data="invalid json{")):
-                result = auth_manager.check_kanopy_token()
+                result = auth_manager_with_config.check_token_file()
                 assert result is None
-
-    def test_check_kanopy_token_fallback_to_default(self, auth_manager):
-        """Test fallback to default token location."""
-        # Configure a custom path
-        auth_manager.kanopy_token_file = Path("/custom/path/token.json")
-
-        token_data = {
-            "access_token": create_mock_jwt(
-                {"sub": "test", "exp": int(time.time()) + 3600}
-            ),
-        }
-
-        def exists_side_effect(self):
-            # Custom path doesn't exist, default does
-            if str(self) == "/custom/path/token.json":
-                return False
-            return True
-
-        with patch.object(Path, "exists", exists_side_effect):
-            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager.check_kanopy_token()
-                assert result is not None
 
 
 class TestTokenRefresh:
@@ -455,7 +436,7 @@ class TestTokenRefresh:
 class TestSaveToken:
     """Test token file saving."""
 
-    def test_save_token_success(self, auth_manager):
+    def test_save_token_success(self, auth_manager_with_config):
         """Test successful token save."""
         token_data = {
             "access_token": "test.access.token",
@@ -471,12 +452,22 @@ class TestSaveToken:
                             temp_path.exists.return_value = False
                             mock_suffix.return_value = temp_path
 
-                            auth_manager._save_token(token_data)
+                            auth_manager_with_config._save_token(token_data)
 
                             # Verify file was written
                             m.assert_called()
 
-    def test_save_token_cleanup_on_error(self, auth_manager):
+    def test_save_token_no_path_configured(self, auth_manager):
+        """Test that save does nothing when no token file path configured."""
+        token_data = {"access_token": "test.token"}
+
+        # auth_manager has no token_file configured
+        # Should return without error and without writing
+        with patch("builtins.open", mock_open()) as m:
+            auth_manager._save_token(token_data)
+            m.assert_not_called()
+
+    def test_save_token_cleanup_on_error(self, auth_manager_with_config):
         """Test that temp file is cleaned up on error."""
         token_data = {"access_token": "test.token"}
 
@@ -488,8 +479,8 @@ class TestSaveToken:
                     temp_path.unlink = Mock()
                     mock_suffix.return_value = temp_path
 
-                    with pytest.raises(OSError):
-                        auth_manager._save_token(token_data)
+                    # Should not raise, but should clean up temp file
+                    auth_manager_with_config._save_token(token_data)
 
                     # Verify temp file cleanup was attempted
                     temp_path.unlink.assert_called_once()
@@ -665,7 +656,7 @@ class TestEnsureAuthenticated:
             auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
             with patch.object(
-                auth_manager_with_config, "check_kanopy_token", return_value=token_data
+                auth_manager_with_config, "check_token_file", return_value=token_data
             ):
                 result = await auth_manager_with_config.ensure_authenticated()
 
@@ -686,7 +677,7 @@ class TestEnsureAuthenticated:
             auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
             with patch.object(
-                auth_manager_with_config, "check_kanopy_token", return_value=None
+                auth_manager_with_config, "check_token_file", return_value=None
             ):
                 with patch.object(
                     auth_manager_with_config, "refresh_token", new_callable=AsyncMock
@@ -710,7 +701,7 @@ class TestEnsureAuthenticated:
             auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
             with patch.object(
-                auth_manager_with_config, "check_kanopy_token", return_value=None
+                auth_manager_with_config, "check_token_file", return_value=None
             ):
                 with patch.object(
                     auth_manager_with_config, "device_flow_auth", new_callable=AsyncMock
@@ -731,7 +722,7 @@ class TestEnsureAuthenticated:
             auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
             with patch.object(
-                auth_manager_with_config, "check_kanopy_token", return_value=None
+                auth_manager_with_config, "check_token_file", return_value=None
             ):
                 with patch.object(
                     auth_manager_with_config, "device_flow_auth", new_callable=AsyncMock

@@ -1,9 +1,9 @@
 """OIDC/OAuth Device Flow Authentication for Evergreen
 
-This module manages DEX authentication using authlib with multiple token sources:
-- ~/.kanopy/token-oidclogin.json (Kanopy token file)
-- ~/.evergreen.yml oauth configuration (Evergreen token file)
+This module manages DEX authentication using authlib with:
+- Token file path configured in ~/.evergreen.yml (oauth.token_file_path)
 - Device authorization flow for new authentication
+
 """
 
 import asyncio
@@ -36,8 +36,7 @@ class OIDCAuthenticationError(Exception):
     pass
 
 
-# Default token file locations
-DEFAULT_KANOPY_TOKEN_FILE = Path.home() / ".kanopy" / "token-oidclogin.json"
+# Evergreen config file location
 EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
 
 # HTTP timeout configurations (in seconds)
@@ -71,24 +70,26 @@ class OIDCAuthManager:
     """
 
     def __init__(self):
-        # Load OAuth config from ~/.evergreen.yml if available
+        # Load OAuth config from ~/.evergreen.yml
         oauth_config = _load_oauth_config_from_evergreen_yml()
 
-        # Use config from evergreen.yml or fall back to defaults
+        # All config must come from evergreen.yml
         self.issuer = oauth_config.get("issuer")
         self.client_id = oauth_config.get("client_id")
 
-        # Token file: prefer oauth.token_file_path, fallback to default kanopy location
-        token_file_path = oauth_config.get("token_file_path")
-        self.kanopy_token_file = (
-            Path(token_file_path) if token_file_path else DEFAULT_KANOPY_TOKEN_FILE
+        # Token file path: environment variable overrides config
+        # This is useful for Docker where the config has host paths
+        # but the container has different mount points
+        token_file_path = os.getenv("EVERGREEN_TOKEN_FILE") or oauth_config.get(
+            "token_file_path"
         )
+        self.token_file = Path(token_file_path) if token_file_path else None
 
         logger.debug(
             "Initialized OIDC auth manager: issuer=%s, client_id=%s, token_file=%s",
             self.issuer,
             self.client_id,
-            self.kanopy_token_file,
+            self.token_file,
         )
 
         self._client: Optional[AsyncOAuth2Client] = None
@@ -207,70 +208,49 @@ class OIDCAuthManager:
             logger.error("Error extracting user info: %s", e, exc_info=True)
             return {}
 
-    def check_kanopy_token(self) -> Optional[dict]:
-        """Check kanopy/evergreen token file for valid token."""
-        # Try configured path first
-        token_file_to_check = self.kanopy_token_file
+    def check_token_file(self) -> Optional[dict]:
+        """Check configured token file for valid token.
+        
+        The token file path must be configured in ~/.evergreen.yml under
+        oauth.token_file_path.
+        
+        If the access token is expired but a refresh token exists, this method
+        will store the refresh token internally so it can be used for refresh.
+        
+        Returns:
+            Token data dict if valid token found, None otherwise
+        """
+        if not self.token_file:
+            logger.debug("No token file path configured in ~/.evergreen.yml")
+            return None
 
-        # If configured path doesn't exist, try default location
-        # (useful in Docker where evergreen.yml might have host paths)
-        if not token_file_to_check.exists():
-            logger.debug(
-                "Token file not found at configured path: %s", token_file_to_check
-            )
-            default_path = DEFAULT_KANOPY_TOKEN_FILE
-            if default_path != token_file_to_check and default_path.exists():
-                logger.info("Using default token file location: %s", default_path)
-                token_file_to_check = default_path
-            else:
-                logger.debug(
-                    "Token file not found at default path either: %s", default_path
-                )
-                return None
+        if not self.token_file.exists():
+            logger.debug("Token file not found: %s", self.token_file)
+            return None
 
-        logger.info("Found token file: %s", token_file_to_check)
+        logger.info("Found token file: %s", self.token_file)
         try:
-            with open(token_file_to_check) as f:
+            with open(self.token_file) as f:
                 token_data = json.load(f)
 
             if "access_token" in token_data:
                 is_valid, remaining = self._check_token_expiry(token_data)
                 if is_valid:
-                    logger.info(
-                        "Kanopy token valid (%d min remaining)", remaining // 60
-                    )
+                    logger.info("Token valid (%d min remaining)", remaining // 60)
                     return token_data
                 else:
-                    logger.warning("Kanopy token expired")
+                    # Token expired - but store the refresh token so we can try to refresh
+                    if token_data.get("refresh_token"):
+                        logger.info(
+                            "Access token expired, but refresh token available"
+                        )
+                        self._refresh_token = token_data["refresh_token"]
+                    else:
+                        logger.warning("Token expired and no refresh token available")
         except Exception as e:
-            logger.error("Error reading kanopy token: %s", e)
+            logger.error("Error reading token file: %s", e)
 
         return None
-
-    def read_token_file(self) -> Optional[dict]:
-        """Read token file without validating expiry.
-
-        Returns the raw token data from the file, even if the token is expired.
-        Useful for extracting refresh_token from expired tokens to attempt refresh.
-
-        Returns:
-            Token data dict or None if file doesn't exist or is invalid
-        """
-        token_file_to_check = self.kanopy_token_file
-
-        if not token_file_to_check.exists():
-            default_path = DEFAULT_KANOPY_TOKEN_FILE
-            if default_path != token_file_to_check and default_path.exists():
-                token_file_to_check = default_path
-            else:
-                return None
-
-        try:
-            with open(token_file_to_check) as f:
-                return json.load(f)
-        except Exception as e:
-            logger.debug("Error reading token file: %s", e)
-            return None
 
     async def refresh_token(self) -> Optional[dict]:
         """
@@ -284,10 +264,6 @@ class OIDCAuthManager:
             return None
 
         async with self._refresh_lock:
-            # Race condition prevention: While waiting for the lock, another request
-            # may have already refreshed the token. Check if the current token is
-            # still valid before making a network request. This avoids unnecessary
-            # token refreshes when multiple requests hit an expired token simultaneously.
             if self._access_token:
                 token_data = {
                     "access_token": self._access_token,
@@ -344,25 +320,27 @@ class OIDCAuthManager:
                 return None
 
     def _save_token(self, token_data: dict):
-        """Save token to configured token file atomically."""
-        # Determine which path to use for saving
-        save_path = self.kanopy_token_file
-
-        # If configured path isn't writable (e.g., in Docker with host paths),
-        # fall back to default container location
-        try:
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-        except (OSError, PermissionError) as e:
+        """Save token to configured token file atomically.
+        
+        The token file path must be configured in ~/.evergreen.yml under
+        oauth.token_file_path. If not configured, tokens will not be persisted.
+        """
+        if not self.token_file:
             logger.warning(
-                "Cannot write to configured path %s: %s. Using default location.",
-                save_path,
-                e,
+                "No token file path configured - token will not be persisted. "
+                "Set oauth.token_file_path in ~/.evergreen.yml to enable token caching."
             )
-            save_path = DEFAULT_KANOPY_TOKEN_FILE
-            save_path.parent.mkdir(parents=True, exist_ok=True)
+            return
+
+        # Create parent directory if needed
+        try:
+            self.token_file.parent.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            logger.error("Cannot create token directory %s: %s", self.token_file.parent, e)
+            return
 
         # Write to temporary file first
-        temp_file = save_path.with_suffix(".tmp")
+        temp_file = self.token_file.with_suffix(".tmp")
         try:
             with open(temp_file, "w") as f:
                 json.dump(token_data, f, indent=2)
@@ -370,8 +348,8 @@ class OIDCAuthManager:
                 os.fsync(f.fileno())
 
             # Atomic rename
-            temp_file.replace(save_path)
-            logger.info("Token saved to %s", save_path)
+            temp_file.replace(self.token_file)
+            logger.info("Token saved to %s", self.token_file)
         except Exception as e:
             logger.error("Failed to save token: %s", e)
             if temp_file.exists():
@@ -379,7 +357,6 @@ class OIDCAuthManager:
                     temp_file.unlink()
                 except OSError:
                     pass
-            raise
 
     async def device_flow_auth(self) -> Optional[dict]:
         """Perform device authorization flow manually using httpx."""
@@ -464,9 +441,30 @@ class OIDCAuthManager:
                             logger.info("Authentication successful!")
                             return token_data
                         else:
-                            # Parse error response
-                            error_data = response.json()
-                            error = error_data.get("error", "unknown_error")
+                            # Parse error response - handle both 400 and 401
+                            # Some OAuth servers return 401 for authorization_pending
+                            try:
+                                error_data = response.json()
+                                error = error_data.get("error", "unknown_error")
+                                error_description = error_data.get(
+                                    "error_description", ""
+                                )
+                            except Exception:
+                                # Response might not be JSON
+                                logger.warning(
+                                    "Token poll returned %d: %s",
+                                    response.status_code,
+                                    response.text[:200] if response.text else "empty",
+                                )
+                                error = "unknown_error"
+                                error_description = response.text
+
+                            logger.debug(
+                                "Token poll response: status=%d, error=%s, desc=%s",
+                                response.status_code,
+                                error,
+                                error_description,
+                            )
 
                             if error == "authorization_pending":
                                 logger.debug("Authorization pending, polling...")
@@ -481,8 +479,20 @@ class OIDCAuthManager:
                             elif error == "expired_token":
                                 logger.error("Authentication request expired")
                                 return None
+                            elif response.status_code == 401:
+                                # 401 during polling often means still waiting
+                                # for user to complete authentication
+                                logger.debug(
+                                    "Got 401, treating as authorization pending..."
+                                )
+                                continue
                             else:
-                                logger.error("Authentication failed: %s", error_data)
+                                logger.error(
+                                    "Authentication failed: status=%d, error=%s, desc=%s",
+                                    response.status_code,
+                                    error,
+                                    error_description,
+                                )
                                 return None
 
                     except Exception as e:
@@ -526,7 +536,7 @@ class OIDCAuthManager:
 
             # Check configured token file (from oauth.token_file_path or default kanopy location)
             logger.info("Checking for existing token...")
-            token_data = self.check_kanopy_token()
+            token_data = self.check_token_file()
             if token_data:
                 self._access_token = token_data["access_token"]
                 self._refresh_token = token_data.get("refresh_token")
