@@ -11,9 +11,18 @@ This test validates the full MCP protocol integration by:
 Run with: python tests/test_mcp_client.py
 """
 
+from pathlib import Path
+
 import mcp.client.stdio
 import pytest
 from mcp.client.session import ClientSession
+
+# Skip if evergreen config doesn't exist (required for server startup)
+EVERGREEN_CONFIG = Path.home() / ".evergreen.yml"
+pytestmark = pytest.mark.skipif(
+    not EVERGREEN_CONFIG.exists(),
+    reason="~/.evergreen.yml not found - required for integration tests",
+)
 
 
 async def _run_basic_tests(session):

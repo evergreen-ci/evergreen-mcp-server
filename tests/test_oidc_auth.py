@@ -31,8 +31,16 @@ from evergreen_mcp.oidc_auth import (
 @pytest.fixture
 def auth_manager():
     """Create a fresh OIDCAuthManager instance for each test."""
-    with patch.object(Path, "exists", return_value=False):
-        return OIDCAuthManager()
+    mock_config = {
+        "oauth": {
+            "issuer": "https://dex.example.com",
+            "client_id": "test-client-id",
+        }
+    }
+    with patch("builtins.open", mock_open(read_data=json.dumps(mock_config))):
+        with patch.object(Path, "exists", return_value=True):
+            with patch("yaml.safe_load", return_value=mock_config):
+                return OIDCAuthManager()
 
 
 @pytest.fixture
@@ -87,10 +95,11 @@ class TestLoadOAuthConfig:
     """Test loading OAuth config from evergreen.yml."""
 
     def test_load_config_file_not_exists(self):
-        """Test loading config when file doesn't exist."""
+        """Test loading config when file doesn't exist raises error."""
         with patch.object(Path, "exists", return_value=False):
-            config = _load_oauth_config_from_evergreen_yml()
-            assert config == {}
+            with pytest.raises(OIDCAuthenticationError) as exc_info:
+                _load_oauth_config_from_evergreen_yml()
+            assert "not found" in str(exc_info.value)
 
     def test_load_config_success(self):
         """Test successful config loading."""
@@ -108,33 +117,47 @@ class TestLoadOAuthConfig:
                     assert config["client_id"] == "test-client"
 
     def test_load_config_no_oauth_section(self):
-        """Test loading config without oauth section."""
+        """Test loading config without oauth section raises error."""
         mock_config = {"user": "testuser", "api_key": "testkey"}
         with patch.object(Path, "exists", return_value=True):
             with patch("builtins.open", mock_open(read_data="")):
                 with patch("yaml.safe_load", return_value=mock_config):
-                    config = _load_oauth_config_from_evergreen_yml()
-                    assert config == {}
+                    with pytest.raises(OIDCAuthenticationError) as exc_info:
+                        _load_oauth_config_from_evergreen_yml()
+                    assert "Missing 'oauth' section" in str(exc_info.value)
+
+    def test_load_config_missing_required_fields(self):
+        """Test loading config with missing required fields raises error."""
+        mock_config = {
+            "oauth": {"issuer": "https://dex.example.com"}
+        }  # missing client_id
+        with patch.object(Path, "exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="")):
+                with patch("yaml.safe_load", return_value=mock_config):
+                    with pytest.raises(OIDCAuthenticationError) as exc_info:
+                        _load_oauth_config_from_evergreen_yml()
+                    assert "client_id" in str(exc_info.value)
 
     def test_load_config_error(self):
-        """Test loading config with error."""
+        """Test loading config with parse error raises exception."""
         with patch.object(Path, "exists", return_value=True):
             with patch("builtins.open", side_effect=Exception("Read error")):
-                config = _load_oauth_config_from_evergreen_yml()
-                assert config == {}
+                with pytest.raises(OIDCAuthenticationError) as exc_info:
+                    _load_oauth_config_from_evergreen_yml()
+                assert "Read error" in str(exc_info.value)
 
 
 class TestOIDCAuthManagerInit:
     """Test OIDCAuthManager initialization."""
 
     def test_init_defaults(self, auth_manager):
-        """Test that manager initializes with None defaults when no config."""
-        assert auth_manager.issuer is None
-        assert auth_manager.client_id is None
-        assert auth_manager.token_file is None
+        """Test that manager initializes with config from evergreen.yml."""
+        assert auth_manager.issuer == "https://dex.example.com"
+        assert auth_manager.client_id == "test-client-id"
+        assert auth_manager.token_file is None  # No token_file_path in fixture
         assert auth_manager._access_token is None
         assert auth_manager._refresh_token is None
-        assert auth_manager._user_info == {}
+        assert auth_manager._user_id is None
         assert auth_manager._client is None
         assert auth_manager._metadata is None
         assert isinstance(auth_manager._refresh_lock, asyncio.Lock)
@@ -260,38 +283,29 @@ class TestTokenExpiry:
         assert is_valid is True
 
 
-class TestUserInfoExtraction:
-    """Test user info extraction from JWT tokens."""
+class TestUserIdExtraction:
+    """Test user ID extraction from JWT tokens."""
 
-    def test_extract_user_info_success(self, auth_manager, valid_jwt_claims):
-        """Test successful user info extraction."""
+    def test_extract_user_id_from_email(self, auth_manager, valid_jwt_claims):
+        """Test user ID extraction from email."""
         token = create_mock_jwt(valid_jwt_claims)
-        user_info = auth_manager._extract_user_info(token)
+        user_id = auth_manager._extract_user_id(token)
+        assert user_id == "test"  # test@mongodb.com -> test
 
-        assert user_info["username"] == "test"
-        assert user_info["email"] == "test@mongodb.com"
-        assert user_info["name"] == "Test User"
-        assert user_info["groups"] == ["team1", "team2"]
-        assert user_info["exp"] == valid_jwt_claims["exp"]
-
-    def test_extract_user_info_minimal_claims(self, auth_manager):
-        """Test user info extraction with minimal claims."""
+    def test_extract_user_id_from_sub(self, auth_manager):
+        """Test user ID extraction falls back to sub."""
         minimal_claims = {
             "sub": "user-123",
             "exp": int(time.time()) + 3600,
         }
         token = create_mock_jwt(minimal_claims)
-        user_info = auth_manager._extract_user_info(token)
+        user_id = auth_manager._extract_user_id(token)
+        assert user_id == "user-123"
 
-        assert user_info["username"] == "user-123"  # Falls back to sub
-        assert user_info["email"] is None
-        assert user_info["name"] is None
-        assert user_info["groups"] == []
-
-    def test_extract_user_info_invalid_token(self, auth_manager):
-        """Test user info extraction from invalid token."""
-        user_info = auth_manager._extract_user_info("invalid.token")
-        assert user_info == {}
+    def test_extract_user_id_invalid_token_raises(self, auth_manager):
+        """Test user ID extraction from invalid token raises."""
+        with pytest.raises(Exception):
+            auth_manager._extract_user_id("invalid.token")
 
 
 class TestTokenFileCheck:
@@ -377,12 +391,19 @@ class TestTokenRefresh:
             mock_client_class.return_value = mock_client
 
             with patch.object(auth_manager_with_config, "_save_token"):
-                result = await auth_manager_with_config.refresh_token()
+                with patch.object(
+                    auth_manager_with_config,
+                    "_extract_user_id",
+                    return_value="testuser",
+                ):
+                    result = await auth_manager_with_config.refresh_token()
 
-                assert result is not None
-                assert result["access_token"] == "new.access.token"
-                assert auth_manager_with_config._access_token == "new.access.token"
-                assert auth_manager_with_config._refresh_token == "new.refresh.token"
+                    assert result is not None
+                    assert result["access_token"] == "new.access.token"
+                    assert auth_manager_with_config._access_token == "new.access.token"
+                    assert (
+                        auth_manager_with_config._refresh_token == "new.refresh.token"
+                    )
 
     @pytest.mark.asyncio
     async def test_refresh_token_no_refresh_token(self, auth_manager):
@@ -530,17 +551,23 @@ class TestDeviceFlowAuth:
             with patch("webbrowser.open"):
                 with patch("asyncio.sleep", new_callable=AsyncMock):
                     with patch.object(auth_manager_with_config, "_save_token"):
-                        result = await auth_manager_with_config.device_flow_auth()
+                        with patch.object(
+                            auth_manager_with_config,
+                            "_extract_user_id",
+                            return_value="testuser",
+                        ):
+                            result = await auth_manager_with_config.device_flow_auth()
 
-                        assert result is not None
-                        assert result["access_token"] == "new.access.token"
-                        assert (
-                            auth_manager_with_config._access_token == "new.access.token"
-                        )
-                        assert (
-                            auth_manager_with_config._refresh_token
-                            == "new.refresh.token"
-                        )
+                            assert result is not None
+                            assert result["access_token"] == "new.access.token"
+                            assert (
+                                auth_manager_with_config._access_token
+                                == "new.access.token"
+                            )
+                            assert (
+                                auth_manager_with_config._refresh_token
+                                == "new.refresh.token"
+                            )
 
     @pytest.mark.asyncio
     async def test_device_flow_auth_pending_then_success(
@@ -589,9 +616,14 @@ class TestDeviceFlowAuth:
             with patch("webbrowser.open"):
                 with patch("asyncio.sleep", new_callable=AsyncMock):
                     with patch.object(auth_manager_with_config, "_save_token"):
-                        result = await auth_manager_with_config.device_flow_auth()
-                        assert result is not None
-                        assert result["access_token"] == "new.token"
+                        with patch.object(
+                            auth_manager_with_config,
+                            "_extract_user_id",
+                            return_value="testuser",
+                        ):
+                            result = await auth_manager_with_config.device_flow_auth()
+                            assert result is not None
+                            assert result["access_token"] == "new.token"
 
     @pytest.mark.asyncio
     async def test_device_flow_auth_expired(self, auth_manager_with_config):
@@ -762,13 +794,6 @@ class TestIsAuthenticated:
 class TestProperties:
     """Test property accessors."""
 
-    def test_user_info_property(self, auth_manager):
-        """Test user_info property."""
-        test_info = {"username": "test", "email": "test@example.com"}
-        auth_manager._user_info = test_info
-
-        assert auth_manager.user_info == test_info
-
     def test_access_token_property(self, auth_manager):
         """Test access_token property."""
         test_token = "test.access.token"
@@ -776,22 +801,13 @@ class TestProperties:
 
         assert auth_manager.access_token == test_token
 
-    def test_user_id_property_from_email(self, auth_manager):
-        """Test user_id property extraction from email."""
-        auth_manager._user_info = {"email": "testuser@mongodb.com"}
-
+    def test_user_id_property(self, auth_manager):
+        """Test user_id property."""
+        auth_manager._user_id = "testuser"
         assert auth_manager.user_id == "testuser"
 
-    def test_user_id_property_from_username(self, auth_manager):
-        """Test user_id property fallback to username."""
-        auth_manager._user_info = {"username": "testuser"}
-
-        assert auth_manager.user_id == "testuser"
-
-    def test_user_id_property_no_info(self, auth_manager):
-        """Test user_id property with no user info."""
-        auth_manager._user_info = {}
-
+    def test_user_id_property_none(self, auth_manager):
+        """Test user_id property when not set."""
         assert auth_manager.user_id is None
 
 

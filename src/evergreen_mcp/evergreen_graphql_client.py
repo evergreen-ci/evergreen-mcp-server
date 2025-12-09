@@ -34,6 +34,9 @@ class EvergreenGraphQLClient:
 
     This client provides async methods for querying the Evergreen GraphQL API.
     It handles authentication via API keys or Bearer tokens and manages the connection lifecycle.
+
+    For OIDC authentication, an auth_manager can be provided to enable automatic
+    token refresh when the access token expires.
     """
 
     def __init__(
@@ -42,6 +45,7 @@ class EvergreenGraphQLClient:
         api_key: str = None,
         bearer_token: str = None,
         endpoint: str = None,
+        auth_manager=None,
     ):
         """Initialize the GraphQL client
 
@@ -50,12 +54,14 @@ class EvergreenGraphQLClient:
             api_key: Evergreen API key (for API key auth)
             bearer_token: OAuth/OIDC bearer token (for token auth)
             endpoint: GraphQL endpoint URL (defaults to Evergreen's main instance)
+            auth_manager: OIDCAuthManager instance for automatic token refresh
         """
         self.user = user
         self.api_key = api_key
         self.bearer_token = bearer_token
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
+        self._auth_manager = auth_manager
 
         # Validate that we have some form of authentication
         if not bearer_token and not (user and api_key):
@@ -107,7 +113,7 @@ class EvergreenGraphQLClient:
     async def _execute_query(
         self, query_string: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Execute a GraphQL query with error handling
+        """Execute a GraphQL query with error handling and automatic token refresh
 
         Args:
             query_string: GraphQL query string
@@ -130,11 +136,53 @@ class EvergreenGraphQLClient:
             )
             return result
         except TransportError as e:
+            # Check if this is a 401 Unauthorized error
+            error_str = str(e).lower()
+            if "401" in error_str or "unauthorized" in error_str:
+                if await self._try_refresh_token():
+                    # Token refreshed, retry the query
+                    logger.info("Retrying query after token refresh")
+                    query = gql(query_string)
+                    result = await self._client.execute_async(
+                        query, variable_values=variables
+                    )
+                    logger.debug(
+                        "Query executed successfully after refresh: %s chars returned",
+                        len(str(result)),
+                    )
+                    return result
             logger.error("GraphQL transport error", exc_info=True)
             raise Exception(f"Failed to execute GraphQL query: {e}")
         except Exception:
             logger.error("GraphQL query execution error", exc_info=True)
             raise
+
+    async def _try_refresh_token(self) -> bool:
+        """Attempt to refresh the bearer token and reconnect.
+
+        Returns:
+            True if token was refreshed and client reconnected, False otherwise
+        """
+        if not self._auth_manager or not self.bearer_token:
+            logger.debug("No auth manager available for token refresh")
+            return False
+
+        logger.info("Access token expired, attempting refresh...")
+        try:
+            token_data = await self._auth_manager.refresh_token()
+            if token_data:
+                # Update bearer token and reconnect
+                self.bearer_token = token_data["access_token"]
+                await self.close()
+                await self.connect()
+                logger.info("Token refreshed and client reconnected")
+                return True
+            else:
+                logger.warning("Token refresh failed")
+                return False
+        except Exception as e:
+            logger.error("Error refreshing token: %s", e)
+            return False
 
     async def get_projects(self) -> List[Dict[str, Any]]:
         """Get all projects from Evergreen

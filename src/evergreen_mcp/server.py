@@ -239,9 +239,11 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     if auth_method == "oidc":
         logger.info("Initializing GraphQL client with OIDC Bearer token")
         # Use corp endpoint for OIDC authentication
+        # Pass auth_manager to enable automatic token refresh
         client = EvergreenGraphQLClient(
             bearer_token=evergreen_config["bearer_token"],
             endpoint="https://evergreen.corp.mongodb.com/graphql/query",
+            auth_manager=auth_manager,
         )
     else:
         logger.info("Initializing GraphQL client with API key")

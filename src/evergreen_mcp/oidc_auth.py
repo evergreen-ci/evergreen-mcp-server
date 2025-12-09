@@ -7,7 +7,6 @@ This module manages DEX authentication using authlib with:
 """
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -17,10 +16,9 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+import jwt as pyjwt
 import yaml
 from authlib.integrations.httpx_client import AsyncOAuth2Client
-from authlib.jose import jwt
-from authlib.jose.errors import DecodeError
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +42,41 @@ HTTP_TIMEOUT = 30
 
 
 def _load_oauth_config_from_evergreen_yml() -> dict:
-    """Load OAuth configuration from ~/.evergreen.yml if available."""
+    """Load OAuth configuration from ~/.evergreen.yml.
+
+    Raises:
+        OIDCAuthenticationError: If config file is missing or malformed
+    """
     if not EVERGREEN_CONFIG_FILE.exists():
-        return {}
+        raise OIDCAuthenticationError(
+            f"Evergreen config file not found: {EVERGREEN_CONFIG_FILE}\n"
+            "Please create ~/.evergreen.yml with oauth configuration."
+        )
 
     try:
         with open(EVERGREEN_CONFIG_FILE) as f:
             config = yaml.safe_load(f)
-        return config.get("oauth", {})
     except Exception as e:
-        logger.debug("Could not load oauth config from ~/.evergreen.yml: %s", e)
-        return {}
+        raise OIDCAuthenticationError(
+            f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
+        ) from e
+
+    oauth_config = config.get("oauth")
+    if not oauth_config:
+        raise OIDCAuthenticationError(
+            f"Missing 'oauth' section in {EVERGREEN_CONFIG_FILE}\n"
+            "Required fields: issuer, client_id"
+        )
+
+    # Validate required fields
+    required = ["issuer", "client_id"]
+    missing = [f for f in required if not oauth_config.get(f)]
+    if missing:
+        raise OIDCAuthenticationError(
+            f"Missing required oauth fields in {EVERGREEN_CONFIG_FILE}: {missing}"
+        )
+
+    return oauth_config
 
 
 class OIDCAuthManager:
@@ -96,7 +118,7 @@ class OIDCAuthManager:
         self._metadata: Optional[dict] = None
         self._access_token: Optional[str] = None
         self._refresh_token: Optional[str] = None
-        self._user_info: dict = {}
+        self._user_id: Optional[str] = None
         self._refresh_lock: asyncio.Lock = asyncio.Lock()
         self._auth_lock: asyncio.Lock = asyncio.Lock()
 
@@ -149,16 +171,13 @@ class OIDCAuthManager:
             return False, 0
 
         try:
-            # Decode JWT payload without verification
-            parts = access_token.split(".")
-            if len(parts) == 3:
-                payload = parts[1]
-                padding = 4 - len(payload) % 4
-                if padding != 4:
-                    payload += "=" * padding
-                claims_json = base64.urlsafe_b64decode(payload)
-                claims = json.loads(claims_json)
-                exp = claims.get("exp", 0)
+            # Use PyJWT to decode without signature verification
+            claims = pyjwt.decode(
+                access_token,
+                options={"verify_signature": False, "verify_exp": False},
+            )
+            exp = claims.get("exp", 0)
+            if exp:
                 remaining = exp - time.time()
                 return remaining > 60, int(remaining)
         except Exception:
@@ -168,45 +187,24 @@ class OIDCAuthManager:
         logger.warning("Could not determine token expiry, assuming valid")
         return True, 3600
 
-    def _extract_user_info(self, access_token: str) -> dict:
-        """Extract user info from JWT token."""
+    def _extract_user_id(self, access_token: str) -> str:
+        """Extract user identifier from JWT token for logging.
+
+        Raises:
+            Exception: If token cannot be decoded
+        """
         try:
-
-            # Decode without verification (we trust the token from DEX)
-            try:
-                claims = jwt.decode(access_token, key=None)
-                claims.validate()
-            except (DecodeError, Exception):
-                # If that fails, try extracting claims without validation
-                # JWT format: header.payload.signature
-                parts = access_token.split(".")
-                if len(parts) != 3:
-                    logger.error("Invalid JWT format")
-                    return {}
-
-                # Decode payload (add padding if needed)
-                payload = parts[1]
-                padding = 4 - len(payload) % 4
-                if padding != 4:
-                    payload += "=" * padding
-
-                claims_json = base64.urlsafe_b64decode(payload)
-                claims = json.loads(claims_json)
-
-            logger.debug("Extracted claims from token: %s", claims)
-
-            return {
-                "username": claims.get("preferred_username")
-                or claims.get("email")
-                or claims.get("sub"),
-                "email": claims.get("email"),
-                "name": claims.get("name"),
-                "groups": claims.get("groups", []),
-                "exp": claims.get("exp"),
-            }
-        except Exception as e:
-            logger.error("Error extracting user info: %s", e, exc_info=True)
-            return {}
+            claims = pyjwt.decode(
+                access_token,
+                options={"verify_signature": False, "verify_exp": False},
+            )
+            email = claims.get("email")
+            if email and "@" in email:
+                return email.split("@")[0]
+            return claims.get("preferred_username") or claims.get("sub") or "unknown"
+        except Exception:
+            logger.error("Failed to extract user ID from token")
+            raise
 
     def check_token_file(self) -> Optional[dict]:
         """Check configured token file for valid token.
@@ -299,7 +297,7 @@ class OIDCAuthManager:
                         self._refresh_token = token_data.get(
                             "refresh_token", self._refresh_token
                         )
-                        self._user_info = self._extract_user_info(self._access_token)
+                        self._user_id = self._extract_user_id(self._access_token)
 
                         # Save the new token
                         self._save_token(token_data)
@@ -432,9 +430,7 @@ class OIDCAuthManager:
                             # Update internal state
                             self._access_token = token_data["access_token"]
                             self._refresh_token = token_data.get("refresh_token")
-                            self._user_info = self._extract_user_info(
-                                self._access_token
-                            )
+                            self._user_id = self._extract_user_id(self._access_token)
 
                             # Save token to file
                             self._save_token(token_data)
@@ -540,7 +536,7 @@ class OIDCAuthManager:
             if token_data:
                 self._access_token = token_data["access_token"]
                 self._refresh_token = token_data.get("refresh_token")
-                self._user_info = self._extract_user_info(self._access_token)
+                self._user_id = self._extract_user_id(self._access_token)
                 return True
 
             # Try refresh if we have a refresh token
@@ -552,7 +548,7 @@ class OIDCAuthManager:
                     self._refresh_token = token_data.get(
                         "refresh_token", self._refresh_token
                     )
-                    self._user_info = self._extract_user_info(self._access_token)
+                    self._user_id = self._extract_user_id(self._access_token)
                     return True
 
             # Need to authenticate
@@ -561,7 +557,7 @@ class OIDCAuthManager:
             if token_data:
                 self._access_token = token_data["access_token"]
                 self._refresh_token = token_data.get("refresh_token")
-                self._user_info = self._extract_user_info(self._access_token)
+                self._user_id = self._extract_user_id(self._access_token)
                 return True
 
             return False
@@ -577,7 +573,7 @@ class OIDCAuthManager:
         """
         self._access_token = token_data["access_token"]
         self._refresh_token = token_data.get("refresh_token")
-        self._user_info = self._extract_user_info(self._access_token)
+        self._user_id = self._extract_user_id(self._access_token)
 
     def is_authenticated(self) -> bool:
         """Check if currently authenticated with a valid token."""
@@ -592,20 +588,11 @@ class OIDCAuthManager:
         return is_valid
 
     @property
-    def user_info(self) -> dict:
-        """Get current user information."""
-        return self._user_info
-
-    @property
     def access_token(self) -> Optional[str]:
         """Get current access token."""
         return self._access_token
 
     @property
     def user_id(self) -> Optional[str]:
-        """Get user ID (username) for API calls."""
-        email = self._user_info.get("email")
-        if email and "@" in email:
-            # Extract username from email (before @)
-            return email.split("@")[0]
-        return self._user_info.get("username")
+        """Get user ID (username) for logging."""
+        return self._user_id
