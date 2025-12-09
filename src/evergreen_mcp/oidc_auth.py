@@ -210,13 +210,13 @@ class OIDCAuthManager:
 
     def check_token_file(self) -> Optional[dict]:
         """Check configured token file for valid token.
-        
+
         The token file path must be configured in ~/.evergreen.yml under
         oauth.token_file_path.
-        
+
         If the access token is expired but a refresh token exists, this method
         will store the refresh token internally so it can be used for refresh.
-        
+
         Returns:
             Token data dict if valid token found, None otherwise
         """
@@ -241,9 +241,7 @@ class OIDCAuthManager:
                 else:
                     # Token expired - but store the refresh token so we can try to refresh
                     if token_data.get("refresh_token"):
-                        logger.info(
-                            "Access token expired, but refresh token available"
-                        )
+                        logger.info("Access token expired, but refresh token available")
                         self._refresh_token = token_data["refresh_token"]
                     else:
                         logger.warning("Token expired and no refresh token available")
@@ -321,7 +319,7 @@ class OIDCAuthManager:
 
     def _save_token(self, token_data: dict):
         """Save token to configured token file atomically.
-        
+
         The token file path must be configured in ~/.evergreen.yml under
         oauth.token_file_path. If not configured, tokens will not be persisted.
         """
@@ -336,7 +334,9 @@ class OIDCAuthManager:
         try:
             self.token_file.parent.mkdir(parents=True, exist_ok=True)
         except (OSError, PermissionError) as e:
-            logger.error("Cannot create token directory %s: %s", self.token_file.parent, e)
+            logger.error(
+                "Cannot create token directory %s: %s", self.token_file.parent, e
+            )
             return
 
         # Write to temporary file first
