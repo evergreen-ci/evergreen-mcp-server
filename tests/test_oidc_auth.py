@@ -278,9 +278,10 @@ class TestTokenExpiry:
     def test_check_token_expiry_invalid_jwt(self, auth_manager):
         """Test checking expiry with invalid JWT format."""
         token_data = {"access_token": "not.a.valid.jwt.token"}
-        # Should assume valid if can't decode
+        # Malformed tokens should be treated as invalid for security
         is_valid, remaining = auth_manager._check_token_expiry(token_data)
-        assert is_valid is True
+        assert is_valid is False
+        assert remaining == 0
 
 
 class TestUserIdExtraction:
@@ -627,7 +628,7 @@ class TestDeviceFlowAuth:
 
     @pytest.mark.asyncio
     async def test_device_flow_auth_expired(self, auth_manager_with_config):
-        """Test device flow with expired device code."""
+        """Test device flow with expired device code raises error."""
         auth_manager_with_config._metadata = {
             "device_authorization_endpoint": "https://dex.example.com/device",
             "token_endpoint": "https://dex.example.com/token",
@@ -658,8 +659,9 @@ class TestDeviceFlowAuth:
 
             with patch("webbrowser.open"):
                 with patch("asyncio.sleep", new_callable=AsyncMock):
-                    result = await auth_manager_with_config.device_flow_auth()
-                    assert result is None
+                    with pytest.raises(OIDCAuthenticationError) as exc_info:
+                        await auth_manager_with_config.device_flow_auth()
+                    assert "expired" in str(exc_info.value).lower()
 
 
 class TestEnsureAuthenticated:

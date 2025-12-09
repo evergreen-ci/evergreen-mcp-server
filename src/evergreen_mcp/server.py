@@ -122,84 +122,33 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
         logger.info("Using OIDC authentication...")
         auth_manager = OIDCAuthManager()
 
-        # Check for existing valid token
+        # Try authentication methods in order of preference
         token_data = auth_manager.check_token_file()
 
         if token_data:
-            # Found a valid token, set internal state
             auth_manager.set_token_from_data(token_data)
-
             logger.info("Found valid OIDC token")
-            user_id = auth_manager.user_id
-            logger.info("Authenticated as: %s", user_id)
-
-            evergreen_config = {
-                "user": user_id,
-                "bearer_token": auth_manager.access_token,
-                "auth_method": "oidc",
-            }
-        elif auth_manager._refresh_token:
-            # Try to refresh expired token
+        elif auth_manager.has_refresh_token:
             logger.info("Token expired, attempting refresh...")
             token_data = await auth_manager.refresh_token()
-            if token_data:
+            if not token_data:
+                logger.warning("Token refresh failed, starting device flow...")
+                await auth_manager.device_flow_auth()
+            else:
                 logger.info("Successfully refreshed OIDC token")
-                user_id = auth_manager.user_id
-                logger.info("Authenticated as: %s", user_id)
-
-                evergreen_config = {
-                    "user": user_id,
-                    "bearer_token": auth_manager.access_token,
-                    "auth_method": "oidc",
-                }
-            else:
-                # Refresh failed, need new authentication
-                logger.warning(
-                    "Token refresh failed, starting device flow authentication..."
-                )
-                token_data = await auth_manager.device_flow_auth()
-
-                if token_data:
-                    auth_manager.set_token_from_data(token_data)
-
-                    user_id = auth_manager.user_id
-                    logger.info("Successfully authenticated as: %s", user_id)
-
-                    evergreen_config = {
-                        "user": user_id,
-                        "bearer_token": auth_manager.access_token,
-                        "auth_method": "oidc",
-                    }
-                else:
-                    raise OIDCAuthenticationError(
-                        "OIDC device flow authentication failed"
-                    )
         else:
-            # No token found, trigger device flow authentication
-            logger.info(
-                "No valid OIDC token found, starting device flow authentication..."
-            )
-            logger.info("Please authenticate in your browser...")
+            logger.info("No valid OIDC token found, starting device flow...")
+            await auth_manager.device_flow_auth()
 
-            token_data = await auth_manager.device_flow_auth()
+        # Build config from authenticated auth_manager
+        user_id = auth_manager.user_id
+        logger.info("Authenticated as: %s", user_id)
 
-            if token_data:
-                # Set internal state from device flow
-                auth_manager.set_token_from_data(token_data)
-
-                user_id = auth_manager.user_id
-                logger.info("Successfully authenticated as: %s", user_id)
-
-                evergreen_config = {
-                    "user": user_id,
-                    "bearer_token": auth_manager.access_token,
-                    "auth_method": "oidc",
-                }
-            else:
-                raise OIDCAuthenticationError(
-                    "OIDC authentication required but device flow failed. "
-                    "Please ensure you have network access and can authenticate with DEX."
-                )
+        evergreen_config = {
+            "user": user_id,
+            "bearer_token": auth_manager.access_token,
+            "auth_method": "oidc",
+        }
 
     # Determine default project ID
     default_project_id = None

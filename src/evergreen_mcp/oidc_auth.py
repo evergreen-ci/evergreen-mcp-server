@@ -180,12 +180,10 @@ class OIDCAuthManager:
             if exp:
                 remaining = exp - time.time()
                 return remaining > 60, int(remaining)
-        except Exception:
-            pass
-
-        # If we can't decode, assume it's valid and let the API reject it
-        logger.warning("Could not determine token expiry, assuming valid")
-        return True, 3600
+        except Exception as e:
+            # Malformed/tampered token - treat as invalid for security
+            logger.warning("Could not decode token to check expiry: %s", e)
+            return False, 0
 
     def _extract_user_id(self, access_token: str) -> str:
         """Extract user identifier from JWT token for logging.
@@ -202,9 +200,9 @@ class OIDCAuthManager:
             if email and "@" in email:
                 return email.split("@")[0]
             return claims.get("preferred_username") or claims.get("sub") or "unknown"
-        except Exception:
-            logger.error("Failed to extract user ID from token")
-            raise
+        except Exception as e:
+            logger.error("Failed to extract user ID from token: %s", e)
+            raise RuntimeError(f"Failed to extract user ID from token: {e}") from e
 
     def check_token_file(self) -> Optional[dict]:
         """Check configured token file for valid token.
@@ -356,8 +354,15 @@ class OIDCAuthManager:
                 except OSError:
                     pass
 
-    async def device_flow_auth(self) -> Optional[dict]:
-        """Perform device authorization flow manually using httpx."""
+    async def device_flow_auth(self) -> dict:
+        """Perform device authorization flow manually using httpx.
+
+        Returns:
+            Token data dict containing access_token and refresh_token
+
+        Raises:
+            OIDCAuthenticationError: If authentication fails or times out
+        """
         try:
             await self._get_client()
 
@@ -406,98 +411,96 @@ class OIDCAuthManager:
 
                 logger.info("Waiting for authentication...")
 
-                # Step 2: Poll for token
+                # Step 2: Poll for token with maximum timeout
                 token_endpoint = self._metadata["token_endpoint"]
+                max_wait_time = 300  # 5 minutes
+                start_time = time.time()
 
                 while True:
-                    await asyncio.sleep(interval)
-
-                    try:
-                        # Poll token endpoint with device code
-                        response = await http_client.post(
-                            token_endpoint,
-                            data={
-                                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                                "device_code": device_code,
-                                "client_id": self.client_id,
-                            },
+                    if time.time() - start_time > max_wait_time:
+                        raise OIDCAuthenticationError(
+                            f"Device flow timed out after {max_wait_time} seconds"
                         )
 
-                        # Check response
-                        if response.status_code == 200:
-                            token_data = response.json()
+                    await asyncio.sleep(interval)
 
-                            # Update internal state
-                            self._access_token = token_data["access_token"]
-                            self._refresh_token = token_data.get("refresh_token")
-                            self._user_id = self._extract_user_id(self._access_token)
+                    # Poll token endpoint with device code
+                    response = await http_client.post(
+                        token_endpoint,
+                        data={
+                            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                            "device_code": device_code,
+                            "client_id": self.client_id,
+                        },
+                    )
 
-                            # Save token to file
-                            self._save_token(token_data)
-                            logger.info("Authentication successful!")
-                            return token_data
-                        else:
-                            # Parse error response - handle both 400 and 401
-                            # Some OAuth servers return 401 for authorization_pending
-                            try:
-                                error_data = response.json()
-                                error = error_data.get("error", "unknown_error")
-                                error_description = error_data.get(
-                                    "error_description", ""
-                                )
-                            except Exception:
-                                # Response might not be JSON
-                                logger.warning(
-                                    "Token poll returned %d: %s",
-                                    response.status_code,
-                                    response.text[:200] if response.text else "empty",
-                                )
-                                error = "unknown_error"
-                                error_description = response.text
+                    # Check response
+                    if response.status_code == 200:
+                        token_data = response.json()
 
-                            logger.debug(
-                                "Token poll response: status=%d, error=%s, desc=%s",
-                                response.status_code,
-                                error,
-                                error_description,
-                            )
+                        # Update internal state
+                        self._access_token = token_data["access_token"]
+                        self._refresh_token = token_data.get("refresh_token")
+                        self._user_id = self._extract_user_id(self._access_token)
 
-                            if error == "authorization_pending":
-                                logger.debug("Authorization pending, polling...")
-                                continue
-                            elif error == "slow_down":
-                                interval += 2
-                                logger.debug(
-                                    "Slowing down polling interval to %d seconds",
-                                    interval,
-                                )
-                                continue
-                            elif error == "expired_token":
-                                logger.error("Authentication request expired")
-                                return None
-                            elif response.status_code == 401:
-                                # 401 during polling often means still waiting
-                                # for user to complete authentication
-                                logger.debug(
-                                    "Got 401, treating as authorization pending..."
-                                )
-                                continue
-                            else:
-                                logger.error(
-                                    "Authentication failed: status=%d, error=%s, desc=%s",
-                                    response.status_code,
-                                    error,
-                                    error_description,
-                                )
-                                return None
+                        # Save token to file
+                        self._save_token(token_data)
+                        logger.info("Authentication successful!")
+                        return token_data
 
-                    except Exception as e:
-                        logger.error("Token polling error: %s", e)
-                        return None
+                    # Parse error response - handle both 400 and 401
+                    # Some OAuth servers return 401 for authorization_pending
+                    try:
+                        error_data = response.json()
+                        error = error_data.get("error", "unknown_error")
+                        error_description = error_data.get("error_description", "")
+                    except Exception:
+                        # Response might not be JSON
+                        logger.warning(
+                            "Token poll returned %d: %s",
+                            response.status_code,
+                            response.text[:200] if response.text else "empty",
+                        )
+                        error = "unknown_error"
+                        error_description = response.text or ""
 
+                    logger.debug(
+                        "Token poll response: status=%d, error=%s, desc=%s",
+                        response.status_code,
+                        error,
+                        error_description,
+                    )
+
+                    if error == "authorization_pending":
+                        logger.debug("Authorization pending, polling...")
+                        continue
+                    elif error == "slow_down":
+                        interval += 2
+                        logger.debug(
+                            "Slowing down polling interval to %d seconds",
+                            interval,
+                        )
+                        continue
+                    elif error == "expired_token":
+                        raise OIDCAuthenticationError(
+                            "Device code expired - please restart authentication"
+                        )
+                    elif response.status_code == 401:
+                        # 401 during polling often means still waiting
+                        # for user to complete authentication
+                        logger.debug("Got 401, treating as authorization pending...")
+                        continue
+                    else:
+                        raise OIDCAuthenticationError(
+                            f"Authentication failed: {error} - {error_description}"
+                        )
+
+        except OIDCAuthenticationError:
+            raise
         except Exception as e:
-            logger.error("Device flow authentication error: %s", e)
-            return None
+            raise OIDCAuthenticationError(
+                f"Device flow authentication error: {e}"
+            ) from e
 
     async def ensure_authenticated(self) -> bool:
         """
@@ -591,6 +594,11 @@ class OIDCAuthManager:
     def access_token(self) -> Optional[str]:
         """Get current access token."""
         return self._access_token
+
+    @property
+    def has_refresh_token(self) -> bool:
+        """Check if a refresh token is available."""
+        return self._refresh_token is not None
 
     @property
     def user_id(self) -> Optional[str]:
