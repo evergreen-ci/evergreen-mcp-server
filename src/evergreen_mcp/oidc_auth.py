@@ -247,6 +247,31 @@ class OIDCAuthManager:
 
         return None
 
+    def read_token_file(self) -> Optional[dict]:
+        """Read token file without validating expiry.
+
+        Returns the raw token data from the file, even if the token is expired.
+        Useful for extracting refresh_token from expired tokens to attempt refresh.
+
+        Returns:
+            Token data dict or None if file doesn't exist or is invalid
+        """
+        token_file_to_check = self.kanopy_token_file
+
+        if not token_file_to_check.exists():
+            default_path = DEFAULT_KANOPY_TOKEN_FILE
+            if default_path != token_file_to_check and default_path.exists():
+                token_file_to_check = default_path
+            else:
+                return None
+
+        try:
+            with open(token_file_to_check) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.debug("Error reading token file: %s", e)
+            return None
+
     async def refresh_token(self) -> Optional[dict]:
         """
         Attempt to refresh the token using authlib.
