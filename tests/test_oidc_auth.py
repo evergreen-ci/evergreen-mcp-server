@@ -325,7 +325,9 @@ class TestTokenFileCheck:
             result = auth_manager_with_config.check_token_file()
             assert result is None
 
-    def test_check_token_file_expired(self, auth_manager_with_config, expired_jwt_claims):
+    def test_check_token_file_expired(
+        self, auth_manager_with_config, expired_jwt_claims
+    ):
         """Test token file check with expired token."""
         token = create_mock_jwt(expired_jwt_claims)
         token_data = {
