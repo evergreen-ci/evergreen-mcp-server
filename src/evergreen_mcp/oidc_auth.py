@@ -6,6 +6,7 @@ This module manages DEX authentication using authlib with:
 
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -13,8 +14,6 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
-
-import asyncio
 
 import httpx
 import jwt as pyjwt
@@ -124,7 +123,6 @@ class OIDCAuthManager:
 
             # Fetch OIDC metadata manually
             try:
-
                 async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
                     response = await http_client.get(
                         f"{self.issuer}/.well-known/openid-configuration"
@@ -215,7 +213,11 @@ class OIDCAuthManager:
 
         OAuth servers typically return expires_in (seconds until expiry) rather than
         expires_at (absolute timestamp). This method ensures expires_at is always set
-        for consistent expiry checking.
+        for token file persistence, allowing other tools that read the token file to
+        check expiry without decoding the JWT.
+
+        Note: _check_token_expiry() decodes the JWT directly and doesn't use expires_at,
+        but this normalization is kept for compatibility with external token consumers.
         """
         if "expires_in" in token_data and "expires_at" not in token_data:
             token_data["expires_at"] = time.time() + token_data["expires_in"]

@@ -5,7 +5,10 @@ It handles authentication, connection management, and query execution.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .oidc_auth import OIDCAuthManager
 
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
@@ -45,7 +48,7 @@ class EvergreenGraphQLClient:
         api_key: str = None,
         bearer_token: str = None,
         endpoint: str = None,
-        auth_manager=None,
+        auth_manager: Optional["OIDCAuthManager"] = None,
     ):
         """Initialize the GraphQL client
 
