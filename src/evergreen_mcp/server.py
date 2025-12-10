@@ -10,15 +10,16 @@ import logging
 import os
 import os.path
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 import yaml
 from fastmcp import Context, FastMCP
 
+from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
-
-__version__ = "0.4.0"
+from evergreen_mcp.mcp_tools import register_tools
+from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +33,8 @@ class EvergreenContext:
     client: EvergreenGraphQLClient
     user_id: str
     default_project_id: str | None = None
+    workspace_dir: str | None = None
+    projects_for_directory: dict = field(default_factory=dict)
 
 
 def detect_project_from_workspace(
@@ -91,11 +94,11 @@ def detect_project_from_workspace(
     return None
 
 
-def load_evergreen_config() -> tuple[dict, str | None]:
+async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | None]:
     """Load Evergreen configuration from environment or config file.
 
     Returns:
-        Tuple of (config dict, default project ID)
+        Tuple of (config dict, default project ID, auth_manager if using OIDC)
     """
     # Check for environment variables first (Docker setup)
     evergreen_user = os.getenv("EVERGREEN_USER")
@@ -103,18 +106,47 @@ def load_evergreen_config() -> tuple[dict, str | None]:
     evergreen_project = os.getenv("EVERGREEN_PROJECT")
     workspace_dir = os.getenv("WORKSPACE_PATH")
 
+    auth_manager = None
+    evergreen_config = {}
+
+    # Load projects_for_directory from ~/.evergreen.yml for auto-detection
+    # This is needed regardless of auth method
+    projects_for_directory = {}
+    evergreen_yml_path = os.path.expanduser("~/.evergreen.yml")
+    try:
+        with open(evergreen_yml_path) as f:
+            full_config = yaml.safe_load(f) or {}
+            projects_for_directory = full_config.get("projects_for_directory", {})
+    except Exception:
+        pass  # Config file may not exist or be readable
+
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
         logger.info("Using environment variables for Evergreen configuration")
         evergreen_config = {
             "user": evergreen_user,
             "api_key": evergreen_api_key,
+            "auth_method": "api_key",
+            "projects_for_directory": projects_for_directory,
         }
     else:
-        # Fall back to config file (local setup)
-        logger.info("Using ~/.evergreen.yml for Evergreen configuration")
-        with open(os.path.expanduser("~/.evergreen.yml"), mode="rb") as f:
-            evergreen_config = yaml.safe_load(f)
+        # OIDC Authentication (always - no API key fallback)
+        logger.info("Using OIDC authentication...")
+        auth_manager = OIDCAuthManager()
+
+        # Use ensure_authenticated() which handles the full flow:
+        # token file check → refresh → device flow
+        if not await auth_manager.ensure_authenticated():
+            raise OIDCAuthenticationError("OIDC authentication failed")
+
+        logger.info("Authenticated as: %s", auth_manager.user_id)
+
+        evergreen_config = {
+            "user": auth_manager.user_id,
+            "bearer_token": auth_manager.access_token,
+            "auth_method": "oidc",
+            "projects_for_directory": projects_for_directory,
+        }
 
     # Determine default project ID
     default_project_id = None
@@ -130,7 +162,7 @@ def load_evergreen_config() -> tuple[dict, str | None]:
         default_project_id = evergreen_project
         logger.info("Using project ID from environment: %s", default_project_id)
 
-    return evergreen_config, default_project_id
+    return evergreen_config, default_project_id, auth_manager
 
 
 @asynccontextmanager
@@ -140,26 +172,56 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     This context manager initializes the Evergreen GraphQL client on startup
     and ensures proper cleanup on shutdown.
     """
-    evergreen_config, default_project_id = load_evergreen_config()
+    evergreen_config, default_project_id, auth_manager = await load_evergreen_config()
 
-    client = EvergreenGraphQLClient(
-        user=evergreen_config["user"], api_key=evergreen_config["api_key"]
-    )
+    # Get workspace directory for intelligent project detection
+    workspace_dir = os.getenv("WORKSPACE_PATH") or os.getenv("PWD") or os.getcwd()
+
+    # Extract projects_for_directory config for runtime auto-detection
+    projects_for_directory = evergreen_config.get("projects_for_directory", {})
+
+    # Create client based on authentication method
+    auth_method = evergreen_config.get("auth_method", "oidc")
+
+    if auth_method == "oidc":
+        logger.info("Initializing GraphQL client with OIDC Bearer token")
+        # Use corp endpoint for OIDC authentication
+        # Pass auth_manager to enable automatic token refresh
+        client = EvergreenGraphQLClient(
+            bearer_token=evergreen_config["bearer_token"],
+            endpoint="https://evergreen.corp.mongodb.com/graphql/query",
+            auth_manager=auth_manager,
+        )
+    else:
+        logger.info("Initializing GraphQL client with API key")
+        # These fields were validated during config loading
+        client = EvergreenGraphQLClient(
+            user=evergreen_config["user"], api_key=evergreen_config["api_key"]
+        )
 
     async with client:
         logger.info("Evergreen GraphQL client initialized")
+        logger.info("Authentication method: %s", auth_method)
+        logger.info("Current workspace directory: %s", workspace_dir)
+        if projects_for_directory:
+            logger.info(
+                "Loaded %d project directory mappings from config",
+                len(projects_for_directory),
+            )
         if default_project_id:
             logger.info("Default project ID configured: %s", default_project_id)
         else:
             logger.info(
                 "No default project ID configured - "
-                "tools will require explicit project_id parameter"
+                "tools will use intelligent auto-detection"
             )
 
         yield EvergreenContext(
             client=client,
             user_id=evergreen_config["user"],
             default_project_id=default_project_id,
+            workspace_dir=workspace_dir,
+            projects_for_directory=projects_for_directory,
         )
 
     logger.info("Evergreen GraphQL client closed")
@@ -172,9 +234,6 @@ mcp = FastMCP(
     lifespan=lifespan,
 )
 
-
-# Import and register tools after mcp is created
-from evergreen_mcp.mcp_tools import register_tools  # noqa: E402
 
 register_tools(mcp)
 

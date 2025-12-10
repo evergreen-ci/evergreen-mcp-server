@@ -87,6 +87,17 @@ class TestImports(unittest.TestCase):
         except ImportError as e:
             self.fail(f"Failed to import failed_jobs_tools: {e}")
 
+    def test_import_oidc_auth(self):
+        """Test that OIDC auth module can be imported"""
+        try:
+            from evergreen_mcp.oidc_auth import OIDCAuthManager
+
+            self.assertIsNotNone(
+                OIDCAuthManager, "OIDCAuthManager should be importable"
+            )
+        except ImportError as e:
+            self.fail(f"Failed to import OIDCAuthManager: {e}")
+
 
 class TestVersion(unittest.TestCase):
     """Test version constant"""

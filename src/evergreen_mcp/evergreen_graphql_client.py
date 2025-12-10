@@ -5,7 +5,10 @@ It handles authentication, connection management, and query execution.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .oidc_auth import OIDCAuthManager
 
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
@@ -33,30 +36,62 @@ class EvergreenGraphQLClient:
     """GraphQL client for Evergreen API
 
     This client provides async methods for querying the Evergreen GraphQL API.
-    It handles authentication via API keys and manages the connection lifecycle.
+    It handles authentication via API keys or Bearer tokens and manages the connection lifecycle.
+
+    For OIDC authentication, an auth_manager can be provided to enable automatic
+    token refresh when the access token expires.
     """
 
-    def __init__(self, user: str, api_key: str, endpoint: str = None):
+    def __init__(
+        self,
+        user: str = None,
+        api_key: str = None,
+        bearer_token: str = None,
+        endpoint: str = None,
+        auth_manager: Optional["OIDCAuthManager"] = None,
+    ):
         """Initialize the GraphQL client
 
         Args:
-            user: Evergreen username
-            api_key: Evergreen API key
+            user: Evergreen username (for API key auth)
+            api_key: Evergreen API key (for API key auth)
+            bearer_token: OAuth/OIDC bearer token (for token auth)
             endpoint: GraphQL endpoint URL (defaults to Evergreen's main instance)
+            auth_manager: OIDCAuthManager instance for automatic token refresh
         """
         self.user = user
         self.api_key = api_key
+        self.bearer_token = bearer_token
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
+        self._auth_manager = auth_manager
+
+        # Validate that we have some form of authentication
+        if not bearer_token and not (user and api_key):
+            raise ValueError(
+                "Either bearer_token or both user and api_key must be provided"
+            )
 
     async def connect(self):
         """Initialize GraphQL client connection"""
-        headers = {
-            "Api-User": self.user,
-            "Api-Key": self.api_key,
-            "Content-Type": "application/json",
-            "User-Agent": f"evergreen-mcp-server/{__version__}",
-        }
+        # Determine authentication method
+        if self.bearer_token:
+            # Use Bearer token authentication
+            headers = {
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/json",
+                "User-Agent": f"evergreen-mcp-server/{__version__}",
+            }
+            logger.debug("Using Bearer token authentication")
+        else:
+            # Use API key authentication
+            headers = {
+                "Api-User": self.user,
+                "Api-Key": self.api_key,
+                "Content-Type": "application/json",
+                "User-Agent": f"evergreen-mcp-server/{__version__}",
+            }
+            logger.debug("Using API key authentication")
 
         logger.debug("Connecting to GraphQL endpoint: %s", self.endpoint)
 
@@ -81,7 +116,7 @@ class EvergreenGraphQLClient:
     async def _execute_query(
         self, query_string: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Execute a GraphQL query with error handling
+        """Execute a GraphQL query with error handling and automatic token refresh
 
         Args:
             query_string: GraphQL query string
@@ -104,11 +139,69 @@ class EvergreenGraphQLClient:
             )
             return result
         except TransportError as e:
+            # Check if this is a 401 Unauthorized error
+            error_str = str(e).lower()
+            if "401" in error_str or "unauthorized" in error_str:
+                if await self._try_refresh_token():
+                    # Token refreshed, retry the query with proper error handling
+                    logger.info("Retrying query after token refresh")
+                    try:
+                        query = gql(query_string)
+                        result = await self._client.execute_async(
+                            query, variable_values=variables
+                        )
+                        logger.debug(
+                            "Query executed successfully after refresh: %s chars returned",
+                            len(str(result)),
+                        )
+                        return result
+                    except TransportError as retry_e:
+                        logger.error(
+                            "GraphQL transport error on retry after token refresh",
+                            exc_info=True,
+                        )
+                        raise Exception(
+                            f"Failed to execute GraphQL query after token refresh: {retry_e}"
+                        ) from retry_e
+                    except Exception as retry_e:
+                        logger.error(
+                            "GraphQL query execution error on retry after token refresh",
+                            exc_info=True,
+                        )
+                        raise Exception(
+                            f"Query failed after token refresh: {retry_e}"
+                        ) from retry_e
             logger.error("GraphQL transport error", exc_info=True)
-            raise Exception(f"Failed to execute GraphQL query: {e}")
+            raise Exception(f"Failed to execute GraphQL query: {e}") from e
         except Exception:
             logger.error("GraphQL query execution error", exc_info=True)
             raise
+
+    async def _try_refresh_token(self) -> bool:
+        """Attempt to refresh the bearer token and reconnect.
+
+        Returns:
+            True if token was refreshed and client reconnected, False otherwise
+        """
+        if not self._auth_manager or not self.bearer_token:
+            logger.debug("No auth manager available for token refresh")
+            return False
+
+        logger.info("Access token rejected by server, attempting refresh...")
+        try:
+            token_data = await self._auth_manager.refresh_token()
+            if token_data:
+                self.bearer_token = token_data["access_token"]
+                await self.close()
+                await self.connect()
+                logger.info("Token refreshed and client reconnected")
+                return True
+            else:
+                logger.warning("Token refresh failed")
+                return False
+        except Exception as e:
+            logger.error("Error refreshing token: %s", e)
+            return False
 
     async def get_projects(self) -> List[Dict[str, Any]]:
         """Get all projects from Evergreen
