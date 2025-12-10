@@ -6,7 +6,6 @@ This module manages DEX authentication using authlib with:
 
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -14,6 +13,8 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
+
+import asyncio
 
 import httpx
 import jwt as pyjwt
@@ -85,10 +86,6 @@ class OIDCAuthManager:
 
     This class handles OIDC/OAuth authentication with device flow
     and supports multiple token sources (Kanopy, Evergreen config).
-
-    Thread Safety:
-    - Uses asyncio locks to prevent race conditions during token refresh
-    - Ensures only one refresh/authentication happens at a time
     """
 
     def __init__(self):
@@ -119,8 +116,6 @@ class OIDCAuthManager:
         self._access_token: Optional[str] = None
         self._refresh_token: Optional[str] = None
         self._user_id: Optional[str] = None
-        self._refresh_lock: asyncio.Lock = asyncio.Lock()
-        self._auth_lock: asyncio.Lock = asyncio.Lock()
 
     async def _get_client(self) -> AsyncOAuth2Client:
         """Get or create the OAuth2 client with OIDC metadata."""
@@ -152,20 +147,14 @@ class OIDCAuthManager:
 
     def _check_token_expiry(self, token_data: dict) -> tuple[bool, int]:
         """
-        Check if token is expired.
+        Check if token is expired by decoding the JWT.
 
         Args:
-            token_data: Token data dict with 'access_token' and optionally 'expires_at'
+            token_data: Token data dict with 'access_token'
 
         Returns:
             Tuple of (is_valid, seconds_remaining)
         """
-        expires_at = token_data.get("expires_at", 0)
-        if expires_at:
-            remaining = expires_at - time.time()
-            return remaining > 60, int(remaining)  # 1 min buffer
-
-        # If no expiry info, try to decode the JWT token
         access_token = token_data.get("access_token")
         if not access_token:
             return False, 0
@@ -178,7 +167,8 @@ class OIDCAuthManager:
             exp = claims.get("exp", 0)
             if exp:
                 remaining = exp - time.time()
-                return remaining > 60, int(remaining)
+                return remaining > 60, int(remaining)  # 1 min buffer
+            return False, 0
         except Exception as e:
             # Malformed/tampered token - treat as invalid for security
             logger.warning("Could not decode token to check expiry: %s", e)
@@ -284,67 +274,50 @@ class OIDCAuthManager:
             logger.warning("No refresh token available")
             return None
 
-        async with self._refresh_lock:
-            if self._access_token:
-                token_data = {
-                    "access_token": self._access_token,
-                    "refresh_token": self._refresh_token,
-                }
-                is_valid, remaining = self._check_token_expiry(token_data)
-                if is_valid:
-                    logger.debug(
-                        "Token already refreshed by another request (%d min remaining)",
-                        remaining // 60,
+        logger.info("Attempting token refresh...")
+        try:
+            await self._get_client()
+
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                response = await http_client.post(
+                    self._metadata["token_endpoint"],
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": self._refresh_token,
+                        "client_id": self.client_id,
+                    },
+                )
+
+                if response.status_code == 200:
+                    token_data = self._normalize_token_data(response.json())
+
+                    # Validate token BEFORE updating state to ensure atomic updates
+                    new_access_token = token_data["access_token"]
+                    new_refresh_token = token_data.get(
+                        "refresh_token", self._refresh_token
                     )
+                    new_user_id = self._extract_user_id(new_access_token)
+
+                    # Token is valid - now update internal state
+                    self._access_token = new_access_token
+                    self._refresh_token = new_refresh_token
+                    self._user_id = new_user_id
+
+                    # Save the new token
+                    self._save_token(token_data)
+                    logger.info("Token refreshed successfully!")
                     return token_data
-
-            logger.info("Attempting token refresh...")
-            try:
-                await self._get_client()
-
-                # Refresh the token manually using httpx
-
-                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
-                    response = await http_client.post(
-                        self._metadata["token_endpoint"],
-                        data={
-                            "grant_type": "refresh_token",
-                            "refresh_token": self._refresh_token,
-                            "client_id": self.client_id,
-                        },
+                else:
+                    logger.error(
+                        "Token refresh failed with status %d: %s",
+                        response.status_code,
+                        response.text,
                     )
+                    return None
 
-                    if response.status_code == 200:
-                        token_data = self._normalize_token_data(response.json())
-
-                        # Validate token BEFORE updating state to ensure atomic updates
-                        # If this raises, we don't corrupt internal state
-                        new_access_token = token_data["access_token"]
-                        new_refresh_token = token_data.get(
-                            "refresh_token", self._refresh_token
-                        )
-                        new_user_id = self._extract_user_id(new_access_token)
-
-                        # Token is valid - now update internal state atomically
-                        self._access_token = new_access_token
-                        self._refresh_token = new_refresh_token
-                        self._user_id = new_user_id
-
-                        # Save the new token
-                        self._save_token(token_data)
-                        logger.info("Token refreshed successfully!")
-                        return token_data
-                    else:
-                        logger.error(
-                            "Token refresh failed with status %d: %s",
-                            response.status_code,
-                            response.text,
-                        )
-                        return None
-
-            except Exception as e:
-                logger.error("Token refresh failed: %s", e)
-                return None
+        except Exception as e:
+            logger.error("Token refresh failed: %s", e)
+            return None
 
     def _save_token(self, token_data: dict):
         """Save token to configured token file atomically.
@@ -542,115 +515,78 @@ class OIDCAuthManager:
 
     async def ensure_authenticated(self) -> bool:
         """
-        Main authentication flow with concurrency protection.
+        Main authentication flow.
 
         Steps:
-        1. Initialize OAuth2 client
-        2. Check kanopy token
-        3. Check evergreen token
-        4. Try refresh if expired
-        5. Do device flow if needed
+        1. Check if already authenticated
+        2. Check token file
+        3. Try refresh if expired
+        4. Do device flow if needed
         """
-        async with self._auth_lock:
-            logger.info("Checking authentication status...")
+        logger.info("Checking authentication status...")
 
-            # Check if already authenticated
-            if self._access_token:
-                token_data = {
-                    "access_token": self._access_token,
-                    "refresh_token": self._refresh_token,
-                }
-                is_valid, remaining = self._check_token_expiry(token_data)
-                if is_valid:
-                    logger.debug(
-                        "Already authenticated (%d min remaining)",
-                        remaining // 60,
-                    )
-                    return True
+        # Check if already authenticated
+        if self._access_token:
+            token_data = {
+                "access_token": self._access_token,
+                "refresh_token": self._refresh_token,
+            }
+            is_valid, remaining = self._check_token_expiry(token_data)
+            if is_valid:
+                logger.debug(
+                    "Already authenticated (%d min remaining)",
+                    remaining // 60,
+                )
+                return True
 
-            # Initialize client
-            await self._get_client()
+        # Initialize client
+        await self._get_client()
 
-            # Check configured token file (from oauth.token_file_path or default kanopy location)
-            logger.info("Checking for existing token...")
-            token_data = self.check_token_file()
+        # Check configured token file
+        logger.info("Checking for existing token...")
+        token_data = self.check_token_file()
+        if token_data:
+            self._access_token = token_data["access_token"]
+            self._refresh_token = token_data.get("refresh_token")
+            try:
+                self._user_id = self._extract_user_id(self._access_token)
+                return True
+            except OIDCAuthenticationError as e:
+                # Token file is corrupted - try refresh or device flow
+                logger.warning("Token file is malformed: %s. Trying refresh...", e)
+                self._access_token = None
+
+        # Try refresh if we have a refresh token
+        if self._refresh_token:
+            logger.info("Attempting token refresh...")
+            token_data = await self.refresh_token()
             if token_data:
                 self._access_token = token_data["access_token"]
-                self._refresh_token = token_data.get("refresh_token")
+                self._refresh_token = token_data.get(
+                    "refresh_token", self._refresh_token
+                )
                 try:
                     self._user_id = self._extract_user_id(self._access_token)
                     return True
                 except OIDCAuthenticationError as e:
-                    # Token file is corrupted - try refresh or device flow
-                    logger.warning("Token file is malformed: %s. Trying refresh...", e)
+                    # Refresh returned malformed token - try device flow
+                    logger.warning(
+                        "Refreshed token is malformed: %s. Trying device flow...", e
+                    )
                     self._access_token = None
 
-            # Try refresh if we have a refresh token
-            if self._refresh_token:
-                logger.info("Attempting token refresh...")
-                token_data = await self.refresh_token()
-                if token_data:
-                    self._access_token = token_data["access_token"]
-                    self._refresh_token = token_data.get(
-                        "refresh_token", self._refresh_token
-                    )
-                    try:
-                        self._user_id = self._extract_user_id(self._access_token)
-                        return True
-                    except OIDCAuthenticationError as e:
-                        # Refresh returned malformed token - try device flow
-                        logger.warning(
-                            "Refreshed token is malformed: %s. Trying device flow...", e
-                        )
-                        self._access_token = None
+        # Need to authenticate
+        logger.warning("No valid token found - authentication required")
+        token_data = await self.device_flow_auth()
+        if token_data:
+            self._access_token = token_data["access_token"]
+            self._refresh_token = token_data.get("refresh_token")
+            # If device flow returns malformed token, something is seriously wrong
+            # with the OIDC provider - let the exception propagate
+            self._user_id = self._extract_user_id(self._access_token)
+            return True
 
-            # Need to authenticate
-            logger.warning("No valid token found - authentication required")
-            token_data = await self.device_flow_auth()
-            if token_data:
-                self._access_token = token_data["access_token"]
-                self._refresh_token = token_data.get("refresh_token")
-                # If device flow returns malformed token, something is seriously wrong
-                # with the OIDC provider - let the exception propagate
-                self._user_id = self._extract_user_id(self._access_token)
-                return True
-
-            return False
-
-    def set_token_from_data(self, token_data: dict) -> None:
-        """Set internal token state from token data dict.
-
-        This is the preferred way to update the auth manager's token state
-        from external code, rather than accessing private attributes directly.
-
-        Args:
-            token_data: Dict containing 'access_token' and optionally 'refresh_token'
-
-        Raises:
-            OIDCAuthenticationError: If the token is malformed and cannot be decoded.
-        """
-        # Validate token BEFORE updating state to ensure atomic updates
-        new_access_token = token_data["access_token"]
-        new_refresh_token = token_data.get("refresh_token")
-        new_user_id = self._extract_user_id(new_access_token)
-
-        # Token is valid - now update internal state atomically
-        self._access_token = new_access_token
-        self._refresh_token = new_refresh_token
-        self._user_id = new_user_id
-
-    @property
-    def is_authenticated(self) -> bool:
-        """Check if currently authenticated with a valid token."""
-        if not self._access_token:
-            return False
-
-        token_data = {
-            "access_token": self._access_token,
-            "refresh_token": self._refresh_token,
-        }
-        is_valid, _ = self._check_token_expiry(token_data)
-        return is_valid
+        return False
 
     @property
     def access_token(self) -> Optional[str]:

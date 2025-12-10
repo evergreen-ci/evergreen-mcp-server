@@ -10,7 +10,6 @@ These tests validate the OIDCAuthManager class including:
 - Token file handling
 """
 
-import asyncio
 import base64
 import json
 import time
@@ -160,8 +159,6 @@ class TestOIDCAuthManagerInit:
         assert auth_manager._user_id is None
         assert auth_manager._client is None
         assert auth_manager._metadata is None
-        assert isinstance(auth_manager._refresh_lock, asyncio.Lock)
-        assert isinstance(auth_manager._auth_lock, asyncio.Lock)
 
     def test_init_with_config(self, auth_manager_with_config):
         """Test initialization with config from evergreen.yml."""
@@ -227,26 +224,6 @@ class TestGetClient:
 
 class TestTokenExpiry:
     """Test token expiry checking."""
-
-    def test_check_token_expiry_valid_with_expires_at(self, auth_manager):
-        """Test checking expiry with expires_at field."""
-        token_data = {
-            "access_token": "test.token",
-            "expires_at": time.time() + 3600,  # 1 hour from now
-        }
-        is_valid, remaining = auth_manager._check_token_expiry(token_data)
-        assert is_valid is True
-        assert remaining > 3500  # Should be close to 3600
-
-    def test_check_token_expiry_expired_with_expires_at(self, auth_manager):
-        """Test checking expiry with expired expires_at field."""
-        token_data = {
-            "access_token": "test.token",
-            "expires_at": time.time() - 3600,  # 1 hour ago
-        }
-        is_valid, remaining = auth_manager._check_token_expiry(token_data)
-        assert is_valid is False
-        assert remaining < 0
 
     def test_check_token_expiry_valid_from_jwt(self, auth_manager, valid_jwt_claims):
         """Test checking expiry from JWT token."""
@@ -428,24 +405,6 @@ class TestTokenRefresh:
 
         result = await auth_manager.refresh_token()
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_refresh_token_already_valid(
-        self, auth_manager_with_config, valid_jwt_claims
-    ):
-        """Test that refresh is skipped if token is already valid."""
-        token = create_mock_jwt(valid_jwt_claims)
-        auth_manager_with_config._refresh_token = "valid.refresh.token"
-        auth_manager_with_config._access_token = token
-        auth_manager_with_config._metadata = {
-            "token_endpoint": "https://dex.example.com/token"
-        }
-
-        result = await auth_manager_with_config.refresh_token()
-
-        # Should return existing token data without making network call
-        assert result is not None
-        assert result["access_token"] == token
 
     @pytest.mark.asyncio
     async def test_refresh_token_server_error(self, auth_manager_with_config):
@@ -783,29 +742,6 @@ class TestEnsureAuthenticated:
                     result = await auth_manager_with_config.ensure_authenticated()
 
                     assert result is False
-
-
-class TestIsAuthenticated:
-    """Test non-blocking authentication status check."""
-
-    def test_is_authenticated_true(self, auth_manager, valid_jwt_claims):
-        """Test is_authenticated returns True for valid token."""
-        token = create_mock_jwt(valid_jwt_claims)
-        auth_manager._access_token = token
-
-        assert auth_manager.is_authenticated is True
-
-    def test_is_authenticated_false_no_token(self, auth_manager):
-        """Test is_authenticated returns False when no token."""
-        auth_manager._access_token = None
-        assert auth_manager.is_authenticated is False
-
-    def test_is_authenticated_false_expired(self, auth_manager, expired_jwt_claims):
-        """Test is_authenticated returns False for expired token."""
-        token = create_mock_jwt(expired_jwt_claims)
-        auth_manager._access_token = token
-
-        assert auth_manager.is_authenticated is False
 
 
 class TestProperties:

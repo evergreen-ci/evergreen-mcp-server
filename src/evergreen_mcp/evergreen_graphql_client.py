@@ -4,7 +4,6 @@ This module provides a GraphQL client for interacting with the Evergreen CI/CD p
 It handles authentication, connection management, and query execution.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -63,7 +62,6 @@ class EvergreenGraphQLClient:
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
         self._auth_manager = auth_manager
-        self._refresh_lock = asyncio.Lock()
 
         # Validate that we have some form of authentication
         if not bearer_token and not (user and api_key):
@@ -179,9 +177,6 @@ class EvergreenGraphQLClient:
     async def _try_refresh_token(self) -> bool:
         """Attempt to refresh the bearer token and reconnect.
 
-        Uses a lock to prevent concurrent refresh attempts and ensure
-        atomic token update + reconnection.
-
         Returns:
             True if token was refreshed and client reconnected, False otherwise
         """
@@ -189,39 +184,21 @@ class EvergreenGraphQLClient:
             logger.debug("No auth manager available for token refresh")
             return False
 
-        # Capture the token that caused the 401 before acquiring lock
-        failed_token = self.bearer_token
-
-        async with self._refresh_lock:
-            # Double-check: another request may have already refreshed the token
-            # Compare actual tokens rather than using is_authenticated, because:
-            # 1. Server is the authority on token validity (clock skew, revocation)
-            # 2. is_authenticated only checks local expiry, not server-side validity
-            current_auth_token = self._auth_manager.access_token
-            if current_auth_token and current_auth_token != failed_token:
-                # Token was actually refreshed by another request, use it
-                self.bearer_token = current_auth_token
+        logger.info("Access token rejected by server, attempting refresh...")
+        try:
+            token_data = await self._auth_manager.refresh_token()
+            if token_data:
+                self.bearer_token = token_data["access_token"]
                 await self.close()
                 await self.connect()
-                logger.info("Token already refreshed by another request, reconnected")
+                logger.info("Token refreshed and client reconnected")
                 return True
-
-            logger.info("Access token rejected by server, attempting refresh...")
-            try:
-                token_data = await self._auth_manager.refresh_token()
-                if token_data:
-                    # Update bearer token and reconnect atomically under lock
-                    self.bearer_token = token_data["access_token"]
-                    await self.close()
-                    await self.connect()
-                    logger.info("Token refreshed and client reconnected")
-                    return True
-                else:
-                    logger.warning("Token refresh failed")
-                    return False
-            except Exception as e:
-                logger.error("Error refreshing token: %s", e)
+            else:
+                logger.warning("Token refresh failed")
                 return False
+        except Exception as e:
+            logger.error("Error refreshing token: %s", e)
+            return False
 
     async def get_projects(self) -> List[Dict[str, Any]]:
         """Get all projects from Evergreen
