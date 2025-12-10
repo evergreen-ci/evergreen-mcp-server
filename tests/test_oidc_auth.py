@@ -304,9 +304,24 @@ class TestUserIdExtraction:
         assert user_id == "user-123"
 
     def test_extract_user_id_invalid_token_raises(self, auth_manager):
-        """Test user ID extraction from invalid token raises."""
-        with pytest.raises(Exception):
+        """Test user ID extraction from invalid token raises OIDCAuthenticationError."""
+        with pytest.raises(OIDCAuthenticationError) as exc_info:
             auth_manager._extract_user_id("invalid.token")
+        assert "malformed" in str(exc_info.value).lower()
+        assert "re-authenticate" in str(exc_info.value).lower()
+
+    def test_extract_user_id_missing_claims_raises(self, auth_manager):
+        """Test user ID extraction raises when all identity claims are missing."""
+        # Token with no email, preferred_username, or sub
+        claims_without_identity = {
+            "exp": int(time.time()) + 3600,
+            "iat": int(time.time()),
+            "iss": "https://issuer.example.com",
+        }
+        token = create_mock_jwt(claims_without_identity)
+        with pytest.raises(OIDCAuthenticationError) as exc_info:
+            auth_manager._extract_user_id(token)
+        assert "missing required identity claims" in str(exc_info.value).lower()
 
 
 class TestTokenFileCheck:
@@ -778,19 +793,19 @@ class TestIsAuthenticated:
         token = create_mock_jwt(valid_jwt_claims)
         auth_manager._access_token = token
 
-        assert auth_manager.is_authenticated() is True
+        assert auth_manager.is_authenticated is True
 
     def test_is_authenticated_false_no_token(self, auth_manager):
         """Test is_authenticated returns False when no token."""
         auth_manager._access_token = None
-        assert auth_manager.is_authenticated() is False
+        assert auth_manager.is_authenticated is False
 
     def test_is_authenticated_false_expired(self, auth_manager, expired_jwt_claims):
         """Test is_authenticated returns False for expired token."""
         token = create_mock_jwt(expired_jwt_claims)
         auth_manager._access_token = token
 
-        assert auth_manager.is_authenticated() is False
+        assert auth_manager.is_authenticated is False
 
 
 class TestProperties:

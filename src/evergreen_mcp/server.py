@@ -16,10 +16,9 @@ from typing import AsyncIterator
 import yaml
 from fastmcp import Context, FastMCP
 
+from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
-
-__version__ = "0.4.0"
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -109,6 +108,17 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
     auth_manager = None
     evergreen_config = {}
 
+    # Load projects_for_directory from ~/.evergreen.yml for auto-detection
+    # This is needed regardless of auth method
+    projects_for_directory = {}
+    evergreen_yml_path = os.path.expanduser("~/.evergreen.yml")
+    try:
+        with open(evergreen_yml_path) as f:
+            full_config = yaml.safe_load(f) or {}
+            projects_for_directory = full_config.get("projects_for_directory", {})
+    except Exception:
+        pass  # Config file may not exist or be readable
+
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
         logger.info("Using environment variables for Evergreen configuration")
@@ -116,38 +126,25 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
             "user": evergreen_user,
             "api_key": evergreen_api_key,
             "auth_method": "api_key",
+            "projects_for_directory": projects_for_directory,
         }
     else:
         # OIDC Authentication (always - no API key fallback)
         logger.info("Using OIDC authentication...")
         auth_manager = OIDCAuthManager()
 
-        # Try authentication methods in order of preference
-        token_data = auth_manager.check_token_file()
+        # Use ensure_authenticated() which handles the full flow:
+        # token file check → refresh → device flow
+        if not await auth_manager.ensure_authenticated():
+            raise OIDCAuthenticationError("OIDC authentication failed")
 
-        if token_data:
-            auth_manager.set_token_from_data(token_data)
-            logger.info("Found valid OIDC token")
-        elif auth_manager.has_refresh_token:
-            logger.info("Token expired, attempting refresh...")
-            token_data = await auth_manager.refresh_token()
-            if not token_data:
-                logger.warning("Token refresh failed, starting device flow...")
-                await auth_manager.device_flow_auth()
-            else:
-                logger.info("Successfully refreshed OIDC token")
-        else:
-            logger.info("No valid OIDC token found, starting device flow...")
-            await auth_manager.device_flow_auth()
-
-        # Build config from authenticated auth_manager
-        user_id = auth_manager.user_id
-        logger.info("Authenticated as: %s", user_id)
+        logger.info("Authenticated as: %s", auth_manager.user_id)
 
         evergreen_config = {
-            "user": user_id,
+            "user": auth_manager.user_id,
             "bearer_token": auth_manager.access_token,
             "auth_method": "oidc",
+            "projects_for_directory": projects_for_directory,
         }
 
     # Determine default project ID

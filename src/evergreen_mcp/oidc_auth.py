@@ -55,7 +55,7 @@ def _load_oauth_config_from_evergreen_yml() -> dict:
 
     try:
         with open(EVERGREEN_CONFIG_FILE) as f:
-            config = yaml.safe_load(f)
+            config = yaml.safe_load(f) or {}
     except Exception as e:
         raise OIDCAuthenticationError(
             f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
@@ -171,7 +171,6 @@ class OIDCAuthManager:
             return False, 0
 
         try:
-            # Use PyJWT to decode without signature verification
             claims = pyjwt.decode(
                 access_token,
                 options={"verify_signature": False, "verify_exp": False},
@@ -186,10 +185,17 @@ class OIDCAuthManager:
             return False, 0
 
     def _extract_user_id(self, access_token: str) -> str:
-        """Extract user identifier from JWT token for logging.
+        """Extract user identifier from JWT token.
+
+        Note: Signature verification is disabled because this is only used for
+        extracting the username for display/query purposes. Actual authentication
+        is validated by the OIDC provider during token exchange.
+
+        Returns:
+            User ID string extracted from token claims.
 
         Raises:
-            Exception: If token cannot be decoded
+            OIDCAuthenticationError: If token cannot be decoded (malformed/corrupted).
         """
         try:
             claims = pyjwt.decode(
@@ -199,10 +205,31 @@ class OIDCAuthManager:
             email = claims.get("email")
             if email and "@" in email:
                 return email.split("@")[0]
-            return claims.get("preferred_username") or claims.get("sub") or "unknown"
+            user_id = claims.get("preferred_username") or claims.get("sub")
+            if not user_id:
+                raise OIDCAuthenticationError(
+                    "Token is missing required identity claims (email, preferred_username, sub). "
+                    "Please re-authenticate by removing your token file and restarting."
+                )
+            return user_id
+        except OIDCAuthenticationError:
+            raise  # Re-raise our own exceptions
         except Exception as e:
-            logger.error("Failed to extract user ID from token: %s", e)
-            raise RuntimeError(f"Failed to extract user ID from token: {e}") from e
+            raise OIDCAuthenticationError(
+                f"Token is malformed and cannot be decoded: {e}. "
+                "Please re-authenticate by removing your token file and restarting."
+            ) from e
+
+    def _normalize_token_data(self, token_data: dict) -> dict:
+        """Normalize token data by computing expires_at from expires_in if needed.
+        
+        OAuth servers typically return expires_in (seconds until expiry) rather than
+        expires_at (absolute timestamp). This method ensures expires_at is always set
+        for consistent expiry checking.
+        """
+        if "expires_in" in token_data and "expires_at" not in token_data:
+            token_data["expires_at"] = time.time() + token_data["expires_in"]
+        return token_data
 
     def check_token_file(self) -> Optional[dict]:
         """Check configured token file for valid token.
@@ -288,14 +315,20 @@ class OIDCAuthManager:
                     )
 
                     if response.status_code == 200:
-                        token_data = response.json()
+                        token_data = self._normalize_token_data(response.json())
 
-                        # Update internal state
-                        self._access_token = token_data["access_token"]
-                        self._refresh_token = token_data.get(
+                        # Validate token BEFORE updating state to ensure atomic updates
+                        # If this raises, we don't corrupt internal state
+                        new_access_token = token_data["access_token"]
+                        new_refresh_token = token_data.get(
                             "refresh_token", self._refresh_token
                         )
-                        self._user_id = self._extract_user_id(self._access_token)
+                        new_user_id = self._extract_user_id(new_access_token)
+
+                        # Token is valid - now update internal state atomically
+                        self._access_token = new_access_token
+                        self._refresh_token = new_refresh_token
+                        self._user_id = new_user_id
 
                         # Save the new token
                         self._save_token(token_data)
@@ -436,12 +469,17 @@ class OIDCAuthManager:
 
                     # Check response
                     if response.status_code == 200:
-                        token_data = response.json()
+                        token_data = self._normalize_token_data(response.json())
 
-                        # Update internal state
-                        self._access_token = token_data["access_token"]
-                        self._refresh_token = token_data.get("refresh_token")
-                        self._user_id = self._extract_user_id(self._access_token)
+                        # Validate token BEFORE updating state to ensure atomic updates
+                        new_access_token = token_data["access_token"]
+                        new_refresh_token = token_data.get("refresh_token")
+                        new_user_id = self._extract_user_id(new_access_token)
+
+                        # Token is valid - now update internal state atomically
+                        self._access_token = new_access_token
+                        self._refresh_token = new_refresh_token
+                        self._user_id = new_user_id
 
                         # Save token to file
                         self._save_token(token_data)
@@ -539,8 +577,13 @@ class OIDCAuthManager:
             if token_data:
                 self._access_token = token_data["access_token"]
                 self._refresh_token = token_data.get("refresh_token")
-                self._user_id = self._extract_user_id(self._access_token)
-                return True
+                try:
+                    self._user_id = self._extract_user_id(self._access_token)
+                    return True
+                except OIDCAuthenticationError as e:
+                    # Token file is corrupted - try refresh or device flow
+                    logger.warning("Token file is malformed: %s. Trying refresh...", e)
+                    self._access_token = None
 
             # Try refresh if we have a refresh token
             if self._refresh_token:
@@ -551,8 +594,15 @@ class OIDCAuthManager:
                     self._refresh_token = token_data.get(
                         "refresh_token", self._refresh_token
                     )
-                    self._user_id = self._extract_user_id(self._access_token)
-                    return True
+                    try:
+                        self._user_id = self._extract_user_id(self._access_token)
+                        return True
+                    except OIDCAuthenticationError as e:
+                        # Refresh returned malformed token - try device flow
+                        logger.warning(
+                            "Refreshed token is malformed: %s. Trying device flow...", e
+                        )
+                        self._access_token = None
 
             # Need to authenticate
             logger.warning("No valid token found - authentication required")
@@ -560,6 +610,8 @@ class OIDCAuthManager:
             if token_data:
                 self._access_token = token_data["access_token"]
                 self._refresh_token = token_data.get("refresh_token")
+                # If device flow returns malformed token, something is seriously wrong
+                # with the OIDC provider - let the exception propagate
                 self._user_id = self._extract_user_id(self._access_token)
                 return True
 
@@ -573,11 +625,21 @@ class OIDCAuthManager:
 
         Args:
             token_data: Dict containing 'access_token' and optionally 'refresh_token'
-        """
-        self._access_token = token_data["access_token"]
-        self._refresh_token = token_data.get("refresh_token")
-        self._user_id = self._extract_user_id(self._access_token)
 
+        Raises:
+            OIDCAuthenticationError: If the token is malformed and cannot be decoded.
+        """
+        # Validate token BEFORE updating state to ensure atomic updates
+        new_access_token = token_data["access_token"]
+        new_refresh_token = token_data.get("refresh_token")
+        new_user_id = self._extract_user_id(new_access_token)
+
+        # Token is valid - now update internal state atomically
+        self._access_token = new_access_token
+        self._refresh_token = new_refresh_token
+        self._user_id = new_user_id
+
+    @property
     def is_authenticated(self) -> bool:
         """Check if currently authenticated with a valid token."""
         if not self._access_token:

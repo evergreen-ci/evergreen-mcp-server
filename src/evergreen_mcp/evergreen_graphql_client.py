@@ -142,19 +142,36 @@ class EvergreenGraphQLClient:
             error_str = str(e).lower()
             if "401" in error_str or "unauthorized" in error_str:
                 if await self._try_refresh_token():
-                    # Token refreshed, retry the query
+                    # Token refreshed, retry the query with proper error handling
                     logger.info("Retrying query after token refresh")
-                    query = gql(query_string)
-                    result = await self._client.execute_async(
-                        query, variable_values=variables
-                    )
-                    logger.debug(
-                        "Query executed successfully after refresh: %s chars returned",
-                        len(str(result)),
-                    )
-                    return result
+                    try:
+                        query = gql(query_string)
+                        result = await self._client.execute_async(
+                            query, variable_values=variables
+                        )
+                        logger.debug(
+                            "Query executed successfully after refresh: %s chars returned",
+                            len(str(result)),
+                        )
+                        return result
+                    except TransportError as retry_e:
+                        logger.error(
+                            "GraphQL transport error on retry after token refresh",
+                            exc_info=True,
+                        )
+                        raise Exception(
+                            f"Failed to execute GraphQL query after token refresh: {retry_e}"
+                        ) from retry_e
+                    except Exception as retry_e:
+                        logger.error(
+                            "GraphQL query execution error on retry after token refresh",
+                            exc_info=True,
+                        )
+                        raise Exception(
+                            f"Query failed after token refresh: {retry_e}"
+                        ) from retry_e
             logger.error("GraphQL transport error", exc_info=True)
-            raise Exception(f"Failed to execute GraphQL query: {e}")
+            raise Exception(f"Failed to execute GraphQL query: {e}") from e
         except Exception:
             logger.error("GraphQL query execution error", exc_info=True)
             raise
@@ -172,17 +189,24 @@ class EvergreenGraphQLClient:
             logger.debug("No auth manager available for token refresh")
             return False
 
+        # Capture the token that caused the 401 before acquiring lock
+        failed_token = self.bearer_token
+
         async with self._refresh_lock:
-            # Double-check: another request may have already refreshed
-            if self._auth_manager.is_authenticated:
-                # Token was refreshed by another request, just reconnect
-                self.bearer_token = self._auth_manager.access_token
+            # Double-check: another request may have already refreshed the token
+            # Compare actual tokens rather than using is_authenticated, because:
+            # 1. Server is the authority on token validity (clock skew, revocation)
+            # 2. is_authenticated only checks local expiry, not server-side validity
+            current_auth_token = self._auth_manager.access_token
+            if current_auth_token and current_auth_token != failed_token:
+                # Token was actually refreshed by another request, use it
+                self.bearer_token = current_auth_token
                 await self.close()
                 await self.connect()
                 logger.info("Token already refreshed by another request, reconnected")
                 return True
 
-            logger.info("Access token expired, attempting refresh...")
+            logger.info("Access token rejected by server, attempting refresh...")
             try:
                 token_data = await self._auth_manager.refresh_token()
                 if token_data:
