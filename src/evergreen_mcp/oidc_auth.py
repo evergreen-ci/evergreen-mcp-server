@@ -222,7 +222,7 @@ class OIDCAuthManager:
 
     def _normalize_token_data(self, token_data: dict) -> dict:
         """Normalize token data by computing expires_at from expires_in if needed.
-        
+
         OAuth servers typically return expires_in (seconds until expiry) rather than
         expires_at (absolute timestamp). This method ensures expires_at is always set
         for consistent expiry checking.
