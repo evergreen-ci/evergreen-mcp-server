@@ -18,8 +18,8 @@ from fastmcp import Context, FastMCP
 
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
-from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 from evergreen_mcp.mcp_tools import register_tools
+from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
