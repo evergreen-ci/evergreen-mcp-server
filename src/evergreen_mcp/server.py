@@ -19,8 +19,8 @@ from fastmcp import Context, FastMCP
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
-# Import and register tools after mcp is created
-from evergreen_mcp.mcp_tools import register_tools  # noqa: E402
+from evergreen_mcp.mcp_tools import register_tools
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -233,8 +233,6 @@ mcp = FastMCP(
     version=__version__,
     lifespan=lifespan,
 )
-
-
 
 
 register_tools(mcp)
