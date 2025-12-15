@@ -8,12 +8,23 @@ This test validates the full MCP protocol integration by:
 3. Testing all available tools
 4. Validating error handling
 
-Run with: python tests/test_mcp_client.py
+Run with: pytest tests/test_mcp_client.py -m integration
 """
+
+import os
 
 import mcp.client.stdio
 import pytest
 from mcp.client.session import ClientSession
+
+# Mark as integration test - skip by default, run with: pytest -m integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("RUN_INTEGRATION_TESTS") != "1",
+        reason="Integration test - set RUN_INTEGRATION_TESTS=1 to run",
+    ),
+]
 
 
 async def _run_basic_tests(session):
