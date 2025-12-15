@@ -11,6 +11,7 @@ from typing import Annotated
 from fastmcp import Context, FastMCP
 
 from .failed_jobs_tools import (
+    fetch_inferred_project_ids,
     fetch_patch_failed_jobs,
     fetch_task_logs,
     fetch_task_test_results,
@@ -185,4 +186,29 @@ def register_tools(mcp: FastMCP) -> None:
         result = await fetch_task_test_results(evg_ctx.client, arguments)
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 4)
+    @mcp.tool(
+        description=(
+            "Get a list of unique project identifiers inferred from the user's "
+            "recent patches. This helps discover which Evergreen projects the user "
+            "has been working on, sorted by activity (patch count and recency). "
+            "Useful for understanding project context and filtering other queries."
+        )
+    )
+    async def get_inferred_project_ids_evergreen(
+        ctx: Context,
+        max_patches: Annotated[
+            int,
+            "Maximum number of recent patches to scan for project identifiers. "
+            "Use 20-50 for quick discovery, up to 50 for comprehensive analysis. "
+            "Default is 50.",
+        ] = 50,
+    ) -> str:
+        """Get unique project identifiers from user's recent patches."""
+        evg_ctx = ctx.request_context.lifespan_context
+
+        result = await fetch_inferred_project_ids(
+            evg_ctx.client, evg_ctx.user_id, max_patches
+        )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 5)

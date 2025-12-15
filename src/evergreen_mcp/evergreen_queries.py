@@ -294,3 +294,26 @@ query GetTaskTestResults(
   }
 }
 """
+
+# Get inferred project identifiers from user's patches
+GET_INFERRED_PROJECT_IDS = """
+query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {
+  user(userId: $userId) {
+    patches(
+      patchesInput: {
+        limit: $limit
+        page: $page
+        includeHidden: false
+        patchName: ""
+        statuses: []
+      }
+    ) {
+      patches {
+        id
+        createTime
+        projectIdentifier
+      }
+    }
+  }
+}
+"""

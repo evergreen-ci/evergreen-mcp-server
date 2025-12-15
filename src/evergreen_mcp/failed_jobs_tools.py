@@ -406,6 +406,79 @@ def process_logs(
     return sorted_logs[:max_lines]
 
 
+async def fetch_inferred_project_ids(
+    client, user_id: str, max_patches: int = 50
+) -> Dict[str, Any]:
+    """Fetch unique project identifiers from user's patches
+
+    Args:
+        client: Evergreen GraphQL client
+        user_id: User identifier (typically email)
+        max_patches: Maximum number of patches to scan (default: 50)
+
+    Returns:
+        Dictionary containing unique project identifiers with patch counts
+    """
+    logger.info(
+        "Fetching inferred project IDs for user %s (max %s patches)",
+        user_id,
+        max_patches,
+    )
+
+    # Fetch patches to infer project identifiers
+    patches = await client.get_inferred_project_ids(user_id, limit=max_patches, page=0)
+
+    # Extract unique project identifiers and count patches per project
+    project_counts: Dict[str, int] = {}
+    latest_patch_times: Dict[str, str] = {}
+
+    for patch in patches:
+        project_id = patch.get("projectIdentifier")
+        create_time = patch.get("createTime")
+
+        if project_id:
+            # Count patches per project
+            project_counts[project_id] = project_counts.get(project_id, 0) + 1
+
+            # Track latest patch time per project
+            if (
+                project_id not in latest_patch_times
+                or create_time > latest_patch_times[project_id]
+            ):
+                latest_patch_times[project_id] = create_time
+
+    # Build result list with project info
+    project_list = []
+    for project_id, count in project_counts.items():
+        project_list.append(
+            {
+                "project_identifier": project_id,
+                "patch_count": count,
+                "latest_patch_time": latest_patch_times.get(project_id),
+            }
+        )
+
+    # Sort by patch count (descending) then by latest patch time (descending)
+    project_list.sort(
+        key=lambda x: (-x["patch_count"], x["latest_patch_time"] or ""),
+        reverse=False,
+    )
+
+    logger.info(
+        "Successfully inferred %s unique project IDs from %s patches",
+        len(project_list),
+        len(patches),
+    )
+
+    return {
+        "user_id": user_id,
+        "projects": project_list,
+        "total_projects": len(project_list),
+        "patches_scanned": len(patches),
+        "max_patches": max_patches,
+    }
+
+
 def format_error_response(
     error_message: str, suggestions: List[str] = None
 ) -> Dict[str, Any]:

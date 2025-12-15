@@ -260,6 +260,80 @@ async def list_projects_resource(ctx: Context) -> str:
     )
 
 
+@mcp.prompt(
+    name="intelligent-project-detection",
+    description="How to use intelligent project ID auto-detection in Evergreen tools",
+)
+async def intelligent_project_detection_prompt() -> str:
+    """Prompt explaining intelligent project ID auto-detection."""
+    return """# Intelligent Project ID Auto-Detection
+
+The Evergreen MCP tools support intelligent automatic detection of project IDs with a user-confirmation flow when uncertain.
+
+## Detection Priority (when project_id is NOT specified):
+
+1. **Config mapping** - Check `~/.evergreen.yml` `projects_for_directory` section
+2. **Single project** - If user only has patches in one project, use it
+3. **Fuzzy matching** - Match workspace directory name against project identifiers
+4. **Ask user** - If uncertain, return project list and ask user to choose
+
+## Response Types:
+
+### Success (project auto-detected):
+```json
+{
+  "project_id": "mms",
+  "patches": [...]
+}
+```
+→ Project was determined, patches returned normally.
+
+### User Selection Required (uncertain):
+```json
+{
+  "status": "user_selection_required",
+  "message": "I found multiple projects...",
+  "available_projects": [
+    {"project_identifier": "mms", "patch_count": 6, ...},
+    {"project_identifier": "server", "patch_count": 3, ...}
+  ],
+  "action_required": "ASK THE USER which project they want to use..."
+}
+```
+→ **No patches returned.** You must ask the user and retry.
+
+## AI Agent Instructions:
+
+### Step 1: Call the tool without project_id
+```
+list_user_recent_patches_evergreen(limit=10)
+```
+
+### Step 2: Check the response
+
+**If patches returned** → Done! Show results to user.
+
+**If `status: "user_selection_required"`** → Ask the user:
+> "Which project would you like to use?"
+> - mms (6 patches)
+> - server (3 patches)
+
+### Step 3: Retry with user's choice
+```
+list_user_recent_patches_evergreen(project_id="mms", limit=10)
+```
+
+## Important:
+- **DO NOT guess** when `user_selection_required` is returned
+- **DO NOT return the project list as final results** - it's asking for clarification
+- **ALWAYS retry** with the user's chosen `project_id`
+
+## Tools with Auto-Detection:
+- `list_user_recent_patches_evergreen`
+- `get_patch_failed_jobs_evergreen`
+"""
+
+
 def main() -> None:
     """Main entry point for the FastMCP server."""
     logger.info("Starting Evergreen FastMCP Server v%s...", __version__)
