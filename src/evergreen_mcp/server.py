@@ -268,65 +268,32 @@ async def intelligent_project_detection_prompt() -> str:
     """Prompt explaining intelligent project ID auto-detection."""
     return """# Intelligent Project ID Auto-Detection
 
-The Evergreen MCP tools support intelligent automatic detection of project IDs with a user-confirmation flow when uncertain.
+The Evergreen MCP tools automatically detect the correct project ID by analyzing the user's recent patch history.
 
-## Detection Priority (when project_id is NOT specified):
+## How It Works (when project_id is NOT specified):
 
-1. **Config mapping** - Check `~/.evergreen.yml` `projects_for_directory` section
-2. **Single project** - If user only has patches in one project, use it
-3. **Fuzzy matching** - Match workspace directory name against project identifiers
-4. **Ask user** - If uncertain, return project list and ask user to choose
-
-## Response Types:
-
-### Success (project auto-detected):
-```json
-{
-  "project_id": "mms",
-  "patches": [...]
-}
-```
-→ Project was determined, patches returned normally.
-
-### User Selection Required (uncertain):
-```json
-{
-  "status": "user_selection_required",
-  "message": "I found multiple projects...",
-  "available_projects": [
-    {"project_identifier": "mms", "patch_count": 6, ...},
-    {"project_identifier": "server", "patch_count": 3, ...}
-  ],
-  "action_required": "ASK THE USER which project they want to use..."
-}
-```
-→ **No patches returned.** You must ask the user and retry.
+1. **Single project** - If user only has patches in one project, use it automatically (High confidence).
+2. **Multiple projects** - Selects the project with the **most recent activity** (Medium confidence).
+   - Returns patches for that project.
+   - Includes a list of other available projects in the response message.
 
 ## AI Agent Instructions:
 
-### Step 1: Call the tool without project_id
+**Step 1: Call the tool without project_id**
 ```
 list_user_recent_patches_evergreen(limit=10)
 ```
 
-### Step 2: Check the response
+**Step 2: Check the response**
+- If patches are returned: **Success!**
+- If the response mentions "Other active projects", inform the user:
+  > "Showing patches for 'mms' (most recent). Also found activity in: mongodb-mongo-master, server."
 
-**If patches returned** → Done! Show results to user.
-
-**If `status: "user_selection_required"`** → Ask the user:
-> "Which project would you like to use?"
-> - mms (6 patches)
-> - server (3 patches)
-
-### Step 3: Retry with user's choice
+**Step 3: If User Asks for Another Project**
+- Call the tool again with the specific `project_id`:
 ```
-list_user_recent_patches_evergreen(project_id="mms", limit=10)
+list_user_recent_patches_evergreen(project_id="mongodb-mongo-master", limit=10)
 ```
-
-## Important:
-- **DO NOT guess** when `user_selection_required` is returned
-- **DO NOT return the project list as final results** - it's asking for clarification
-- **ALWAYS retry** with the user's chosen `project_id`
 
 ## Tools with Auto-Detection:
 - `list_user_recent_patches_evergreen`

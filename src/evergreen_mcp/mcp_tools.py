@@ -6,7 +6,7 @@ Tools are registered with the FastMCP server instance.
 
 import json
 import logging
-from typing import Annotated
+from typing import Annotated, Any, Dict, Optional
 
 from fastmcp import Context, FastMCP
 
@@ -16,6 +16,8 @@ from .failed_jobs_tools import (
     fetch_task_logs,
     fetch_task_test_results,
     fetch_user_recent_patches,
+    infer_project_id_from_context,
+    ProjectInferenceResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,7 +31,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Retrieve the authenticated user's recent Evergreen patches/commits "
             "with their CI/CD status. Use this to see your recent code changes, "
             "check patch status (success/failed/running), and identify patches "
-            "that need attention. Returns patch IDs needed for other tools."
+            "that need attention. Returns patch IDs needed for other tools. "
+            "If project_id is not specified, will automatically detect it from "
+            "your workspace directory and recent patch activity."
         )
     )
     async def list_user_recent_patches_evergreen(
@@ -37,7 +41,7 @@ def register_tools(mcp: FastMCP) -> None:
         project_id: Annotated[
             str | None,
             "Evergreen project identifier (e.g., 'mongodb-mongo-master', 'mms') to "
-            "filter patches. If not provided, returns patches from all projects.",
+            "filter patches. If not provided, will auto-detect from recent activity.",
         ] = None,
         limit: Annotated[
             int,
@@ -48,8 +52,50 @@ def register_tools(mcp: FastMCP) -> None:
         """List the user's recent patches from Evergreen."""
         evg_ctx = ctx.request_context.lifespan_context
 
-        # Use default project ID if not provided
-        effective_project_id = project_id or evg_ctx.default_project_id
+        # Intelligent project ID resolution
+        effective_project_id = project_id
+        inference_result: Optional[ProjectInferenceResult] = None
+
+        # If no explicit project ID, attempt intelligent inference
+        if not effective_project_id:
+            logger.info("No project_id specified, attempting intelligent auto-detection...")
+            inference_result = await infer_project_id_from_context(
+                evg_ctx.client,
+                evg_ctx.user_id,
+            )
+
+            if inference_result.project_id:
+                effective_project_id = inference_result.project_id
+                logger.info(
+                    "Auto-detected project ID: %s (confidence: %s, source: %s)",
+                    effective_project_id,
+                    inference_result.confidence,
+                    inference_result.source,
+                )
+            else:
+                # User selection required - return ONLY the project list, no patches
+                logger.warning(
+                    "Could not auto-detect project ID, requesting user selection"
+                )
+                return json.dumps(
+                    {
+                        "status": "user_selection_required",
+                        "message": inference_result.message,
+                        "available_projects": [
+                            {
+                                "project_identifier": p["project_identifier"],
+                                "patch_count": p["patch_count"],
+                                "latest_patch_time": p["latest_patch_time"],
+                            }
+                            for p in inference_result.available_projects
+                        ],
+                        "action_required": (
+                            "ASK THE USER which project they want to use, then call "
+                            "this tool again with the project_id parameter set to their choice."
+                        ),
+                    },
+                    indent=2,
+                )
 
         if effective_project_id:
             logger.info("Using project ID: %s", effective_project_id)
@@ -60,6 +106,18 @@ def register_tools(mcp: FastMCP) -> None:
             limit,
             project_id=effective_project_id,
         )
+
+        # Include low-confidence warning if applicable
+        if inference_result and inference_result.confidence == "low":
+            result["project_detection"] = {
+                "status": "low_confidence",
+                "message": inference_result.message,
+                "detected_project": effective_project_id,
+                "available_projects": [
+                    p["project_identifier"] for p in inference_result.available_projects
+                ],
+            }
+
         return json.dumps(result, indent=2)
 
     @mcp.tool(
@@ -67,7 +125,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Analyze failed CI/CD jobs for a specific patch to understand why "
             "builds are failing. Shows detailed failure information including "
             "failed tasks, build variants, timeout issues, log links, and test "
-            "failure counts. Essential for debugging patch failures."
+            "failure counts. Essential for debugging patch failures. "
+            "If project_id is not specified, will automatically detect it from "
+            "your workspace directory and recent patch activity."
         )
     )
     async def get_patch_failed_jobs_evergreen(
@@ -79,7 +139,7 @@ def register_tools(mcp: FastMCP) -> None:
         ],
         project_id: Annotated[
             str | None,
-            "Evergreen project identifier for the patch (e.g., 'mongodb-mongo-master', 'mms').",
+            "Evergreen project identifier for the patch. If not provided, will auto-detect.",
         ] = None,
         max_results: Annotated[
             int,
@@ -90,12 +150,59 @@ def register_tools(mcp: FastMCP) -> None:
         """Get failed jobs for a specific patch."""
         evg_ctx = ctx.request_context.lifespan_context
 
-        # Use default project ID if not provided
-        effective_project_id = project_id or evg_ctx.default_project_id
+        # Intelligent project ID resolution
+        effective_project_id = project_id
+        inference_result: Optional[ProjectInferenceResult] = None
+
+        # If no explicit project ID, attempt intelligent inference
+        if not effective_project_id:
+            logger.info("No project_id specified, attempting intelligent auto-detection...")
+            inference_result = await infer_project_id_from_context(
+                evg_ctx.client,
+                evg_ctx.user_id,
+            )
+
+            if inference_result.project_id:
+                effective_project_id = inference_result.project_id
+                logger.info(
+                    "Auto-detected project ID: %s (confidence: %s)",
+                    effective_project_id,
+                    inference_result.confidence,
+                )
+            else:
+                # User selection required - return available projects
+                return json.dumps(
+                    {
+                        "status": "user_selection_required",
+                        "message": inference_result.message,
+                        "available_projects": [
+                            {
+                                "project_identifier": p["project_identifier"],
+                                "patch_count": p["patch_count"],
+                                "latest_patch_time": p["latest_patch_time"],
+                            }
+                            for p in inference_result.available_projects
+                        ],
+                        "action_required": (
+                            "ASK THE USER which project they want to use, then call "
+                            "this tool again with the project_id parameter set to their choice."
+                        ),
+                    },
+                    indent=2,
+                )
 
         result = await fetch_patch_failed_jobs(
             evg_ctx.client, patch_id, max_results, project_id=effective_project_id
         )
+
+        # Include low-confidence warning if applicable
+        if inference_result and inference_result.confidence == "low":
+            result["project_detection"] = {
+                "status": "low_confidence",
+                "message": inference_result.message,
+                "detected_project": effective_project_id,
+            }
+
         return json.dumps(result, indent=2)
 
     @mcp.tool(

@@ -479,6 +479,125 @@ async def fetch_inferred_project_ids(
     }
 
 
+class ProjectInferenceResult:
+    """Result of project ID inference with confidence information."""
+
+    def __init__(
+        self,
+        project_id: str | None,
+        confidence: str,
+        available_projects: List[Dict[str, Any]],
+        message: str,
+        source: str,
+    ):
+        self.project_id = project_id
+        self.confidence = confidence  # "high", "medium", "low", "none"
+        self.available_projects = available_projects
+        self.message = message
+        self.source = source  # "single_project", "workspace_match", "user_selection_required"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "project_id": self.project_id,
+            "confidence": self.confidence,
+            "available_projects": self.available_projects,
+            "message": self.message,
+            "source": self.source,
+        }
+
+
+async def infer_project_id_from_context(
+    client,
+    user_id: str,
+    max_patches: int = 50,
+) -> ProjectInferenceResult:
+    """Intelligently infer project ID from user's patches.
+
+    1. If only one project in patches, use it (highest confidence)
+    2. If multiple projects, use the one with the most recent patch (medium confidence)
+       and list others as alternatives.
+
+    Args:
+        client: Evergreen GraphQL client
+        user_id: User identifier (typically email)
+        max_patches: Maximum number of patches to scan (default: 50)
+
+    Returns:
+        ProjectInferenceResult with project_id, confidence, and available projects
+    """
+    result = await fetch_inferred_project_ids(client, user_id, max_patches)
+    available_projects = result["projects"]
+    
+    # TEST: Add fake projects to test multiple project selection logic
+    available_projects.extend([
+        {"project_identifier": "mongodb-mongo-master", "patch_count": 0, "latest_patch_time": None},
+        {"project_identifier": "cloud-bot", "patch_count": 0, "latest_patch_time": None},
+        {"project_identifier": "server", "patch_count": 0, "latest_patch_time": None},
+        {"project_identifier": "mcp-server", "patch_count": 0, "latest_patch_time": None},
+    ])
+    
+    project_ids = [p["project_identifier"] for p in available_projects]
+
+    if not project_ids:
+        logger.warning("No project IDs found in user's recent patches")
+        return ProjectInferenceResult(
+            project_id=None,
+            confidence="none",
+            available_projects=[],
+            message="No projects found in your recent patches. Please specify a project_id.",
+            source="user_selection_required",
+        )
+
+    if len(project_ids) == 1:
+        logger.info("Only one project found in patches, using: %s", project_ids[0])
+        return ProjectInferenceResult(
+            project_id=project_ids[0],
+            confidence="high",
+            available_projects=available_projects,
+            message=f"Using project '{project_ids[0]}' (only project found in your recent patches)",
+            source="single_project",
+        )
+
+    
+    # Sort by latest_patch_time descending, then patch_count descending
+    sorted_projects = sorted(
+        available_projects,
+        key=lambda x: (x.get("latest_patch_time") or "", x.get("patch_count", 0)),
+        reverse=True,
+    )
+    
+    most_recent = sorted_projects[0]
+    project_id = most_recent["project_identifier"]
+    
+    # Format message listing other projects
+    other_projects = [p["project_identifier"] for p in sorted_projects[1:]]
+    others_msg = ", ".join(other_projects[:3])  # List up to 3 others
+    if len(other_projects) > 3:
+        others_msg += f", and {len(other_projects) - 3} more"
+        
+    logger.info(
+        "Using most recent project '%s' (from %s) as default",
+        project_id,
+        most_recent.get("latest_patch_time"),
+    )
+    
+    return ProjectInferenceResult(
+        project_id=project_id,
+        confidence="medium",
+        available_projects=available_projects,
+        message=(
+            f"""
+                You are an ai assistant working with the user to help diagnose the recent patches. 
+                The patches are coming from the project_id {project_id}. 
+                However you should also verify with the user if that is the correct project_id,
+                as we have other project_ids that are also valid such as {others_msg}.
+                If this is incorrect, please specify project_id explicitly.
+            """
+        ),
+        source="most_recent_fallback",
+    )
+
+
 def format_error_response(
     error_message: str, suggestions: List[str] = None
 ) -> Dict[str, Any]:
