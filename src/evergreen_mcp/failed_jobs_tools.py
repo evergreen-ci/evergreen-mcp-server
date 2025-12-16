@@ -576,7 +576,7 @@ async def infer_project_id_from_context(
 
     return ProjectInferenceResult(
         project_id=project_id,
-        confidence="medium",
+        confidence="low",
         available_projects=available_projects,
         message=(
             f"""

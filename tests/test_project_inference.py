@@ -94,7 +94,7 @@ class TestInferProjectIdFromContext(unittest.IsolatedAsyncioTestCase):
         result = await infer_project_id_from_context(client, "user")
 
         self.assertEqual(result.project_id, "new-hotness")
-        self.assertEqual(result.confidence, "medium")
+        self.assertEqual(result.confidence, "low")
         self.assertEqual(result.source, "most_recent_fallback")
 
         # Check for key parts of the message

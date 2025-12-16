@@ -11,13 +11,13 @@ from typing import Annotated, Any, Dict, Optional
 from fastmcp import Context, FastMCP
 
 from .failed_jobs_tools import (
+    ProjectInferenceResult,
     fetch_inferred_project_ids,
     fetch_patch_failed_jobs,
     fetch_task_logs,
     fetch_task_test_results,
     fetch_user_recent_patches,
     infer_project_id_from_context,
-    ProjectInferenceResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,8 @@ def register_tools(mcp: FastMCP) -> None:
             "that need attention. Returns patch IDs needed for other tools. "
             "If project_id is not specified, will automatically detect it from "
             "your workspace directory and recent patch activity."
+            "This tool may return a list of available project_ids if it cannot determine the project_id automatically."
+            "You should ask the user which project they want to use, then call this tool again with the project_id parameter set to their choice."
         )
     )
     async def list_user_recent_patches_evergreen(
@@ -110,15 +112,21 @@ def register_tools(mcp: FastMCP) -> None:
         )
 
         # Include low-confidence warning if applicable
+        # We put the message at the top level for better visibility to the AI
         if inference_result and inference_result.confidence == "low":
-            result["project_detection"] = {
-                "status": "low_confidence",
-                "message": inference_result.message,
-                "detected_project": effective_project_id,
-                "available_projects": [
-                    p["project_identifier"] for p in inference_result.available_projects
-                ],
+            final_response = {
+                "emit_message": inference_result.message,
+                "project_detection": {
+                    "status": "low_confidence",
+                    "detected_project": effective_project_id,
+                    "available_projects": [
+                        p["project_identifier"]
+                        for p in inference_result.available_projects
+                    ],
+                },
             }
+            final_response.update(result)
+            return json.dumps(final_response, indent=2)
 
         return json.dumps(result, indent=2)
 
@@ -130,6 +138,8 @@ def register_tools(mcp: FastMCP) -> None:
             "failure counts. Essential for debugging patch failures. "
             "If project_id is not specified, will automatically detect it from "
             "your workspace directory and recent patch activity."
+            "This tool may return a list of available project_ids if it cannot determine the project_id automatically."
+            "You should ask the user which project they want to use, then call this tool again with the project_id parameter set to their choice."
         )
     )
     async def get_patch_failed_jobs_evergreen(
@@ -201,11 +211,15 @@ def register_tools(mcp: FastMCP) -> None:
 
         # Include low-confidence warning if applicable
         if inference_result and inference_result.confidence == "low":
-            result["project_detection"] = {
-                "status": "low_confidence",
-                "message": inference_result.message,
-                "detected_project": effective_project_id,
+            final_response = {
+                "emit_message": inference_result.message,
+                "project_detection": {
+                    "status": "low_confidence",
+                    "detected_project": effective_project_id,
+                },
             }
+            final_response.update(result)
+            return json.dumps(final_response, indent=2)
 
         return json.dumps(result, indent=2)
 
