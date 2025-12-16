@@ -58,7 +58,9 @@ def register_tools(mcp: FastMCP) -> None:
 
         # If no explicit project ID, attempt intelligent inference
         if not effective_project_id:
-            logger.info("No project_id specified, attempting intelligent auto-detection...")
+            logger.info(
+                "No project_id specified, attempting intelligent auto-detection..."
+            )
             inference_result = await infer_project_id_from_context(
                 evg_ctx.client,
                 evg_ctx.user_id,
@@ -156,7 +158,9 @@ def register_tools(mcp: FastMCP) -> None:
 
         # If no explicit project ID, attempt intelligent inference
         if not effective_project_id:
-            logger.info("No project_id specified, attempting intelligent auto-detection...")
+            logger.info(
+                "No project_id specified, attempting intelligent auto-detection..."
+            )
             inference_result = await infer_project_id_from_context(
                 evg_ctx.client,
                 evg_ctx.user_id,

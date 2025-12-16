@@ -494,7 +494,9 @@ class ProjectInferenceResult:
         self.confidence = confidence  # "high", "medium", "low", "none"
         self.available_projects = available_projects
         self.message = message
-        self.source = source  # "single_project", "workspace_match", "user_selection_required"
+        self.source = (
+            source  # "single_project", "workspace_match", "user_selection_required"
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -527,7 +529,7 @@ async def infer_project_id_from_context(
     """
     result = await fetch_inferred_project_ids(client, user_id, max_patches)
     available_projects = result["projects"]
-    
+
     project_ids = [p["project_identifier"] for p in available_projects]
 
     if not project_ids:
@@ -550,29 +552,28 @@ async def infer_project_id_from_context(
             source="single_project",
         )
 
-    
     # Sort by latest_patch_time descending, then patch_count descending
     sorted_projects = sorted(
         available_projects,
         key=lambda x: (x.get("latest_patch_time") or "", x.get("patch_count", 0)),
         reverse=True,
     )
-    
+
     most_recent = sorted_projects[0]
     project_id = most_recent["project_identifier"]
-    
+
     # Format message listing other projects
     other_projects = [p["project_identifier"] for p in sorted_projects[1:]]
     others_msg = ", ".join(other_projects[:3])  # List up to 3 others
     if len(other_projects) > 3:
         others_msg += f", and {len(other_projects) - 3} more"
-        
+
     logger.info(
         "Using most recent project '%s' (from %s) as default",
         project_id,
         most_recent.get("latest_patch_time"),
     )
-    
+
     return ProjectInferenceResult(
         project_id=project_id,
         confidence="medium",
