@@ -528,14 +528,6 @@ async def infer_project_id_from_context(
     result = await fetch_inferred_project_ids(client, user_id, max_patches)
     available_projects = result["projects"]
     
-    # TEST: Add fake projects to test multiple project selection logic
-    available_projects.extend([
-        {"project_identifier": "mongodb-mongo-master", "patch_count": 0, "latest_patch_time": None},
-        {"project_identifier": "cloud-bot", "patch_count": 0, "latest_patch_time": None},
-        {"project_identifier": "server", "patch_count": 0, "latest_patch_time": None},
-        {"project_identifier": "mcp-server", "patch_count": 0, "latest_patch_time": None},
-    ])
-    
     project_ids = [p["project_identifier"] for p in available_projects]
 
     if not project_ids:
