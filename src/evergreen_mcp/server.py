@@ -232,6 +232,9 @@ mcp = FastMCP(
     "Evergreen MCP Server",
     version=__version__,
     lifespan=lifespan,
+    instructions="""
+    If connected to evergreen mcp server, you must first trigger the get inferred project_ids tool call on startup. If given multiple id's verify with the user and use that project_id in the rest of the tool calls when required.
+""",
 )
 
 

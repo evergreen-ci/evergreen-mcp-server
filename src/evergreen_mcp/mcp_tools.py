@@ -41,10 +41,10 @@ def register_tools(mcp: FastMCP) -> None:
     async def list_user_recent_patches_evergreen(
         ctx: Context,
         project_id: Annotated[
-            str | None,
+            str,
             "Evergreen project identifier (e.g., 'mongodb-mongo-master', 'mms') to "
             "filter patches. If not provided, will auto-detect from recent activity.",
-        ] = None,
+        ],
         limit: Annotated[
             int,
             "Number of recent patches to return. Use smaller numbers (3-5) for "
