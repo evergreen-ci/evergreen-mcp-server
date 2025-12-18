@@ -232,6 +232,9 @@ mcp = FastMCP(
     "Evergreen MCP Server",
     version=__version__,
     lifespan=lifespan,
+    instructions="""
+    If connected to evergreen mcp server, you must first trigger the get inferred project_ids tool call on startup. If given multiple id's verify with the user and use that project_id in the rest of the tool calls when required.
+""",
 )
 
 
@@ -258,6 +261,47 @@ async def list_projects_resource(ctx: Context) -> str:
         ],
         indent=2,
     )
+
+
+@mcp.prompt(
+    name="intelligent-project-detection",
+    description="How to use intelligent project ID auto-detection in Evergreen tools",
+)
+async def intelligent_project_detection_prompt() -> str:
+    """Prompt explaining intelligent project ID auto-detection."""
+    return """# Intelligent Project ID Auto-Detection
+
+The Evergreen MCP tools automatically detect the correct project ID by analyzing the user's recent patch history.
+
+## How It Works (when project_id is NOT specified):
+
+1. **Single project** - If user only has patches in one project, use it automatically (High confidence).
+2. **Multiple projects** - Selects the project with the **most recent activity** (Medium confidence).
+   - Returns patches for that project.
+   - Includes a list of other available projects in the response message.
+
+## AI Agent Instructions:
+
+**Step 1: Call the tool without project_id**
+```
+list_user_recent_patches_evergreen(limit=10)
+```
+
+**Step 2: Check the response**
+- If patches are returned: **Success!**
+- If the response mentions "Other active projects", inform the user:
+  > "Showing patches for 'mms' (most recent). Also found activity in: mongodb-mongo-master, server."
+
+**Step 3: If User Asks for Another Project**
+- Call the tool again with the specific `project_id`:
+```
+list_user_recent_patches_evergreen(project_id="mongodb-mongo-master", limit=10)
+```
+
+## Tools with Auto-Detection:
+- `list_user_recent_patches_evergreen`
+- `get_patch_failed_jobs_evergreen`
+"""
 
 
 def main() -> None:

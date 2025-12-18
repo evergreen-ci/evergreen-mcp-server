@@ -6,15 +6,18 @@ Tools are registered with the FastMCP server instance.
 
 import json
 import logging
-from typing import Annotated
+from typing import Annotated, Any, Dict, Optional
 
 from fastmcp import Context, FastMCP
 
 from .failed_jobs_tools import (
+    ProjectInferenceResult,
+    fetch_inferred_project_ids,
     fetch_patch_failed_jobs,
     fetch_task_logs,
     fetch_task_test_results,
     fetch_user_recent_patches,
+    infer_project_id_from_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,16 +31,20 @@ def register_tools(mcp: FastMCP) -> None:
             "Retrieve the authenticated user's recent Evergreen patches/commits "
             "with their CI/CD status. Use this to see your recent code changes, "
             "check patch status (success/failed/running), and identify patches "
-            "that need attention. Returns patch IDs needed for other tools."
+            "that need attention. Returns patch IDs needed for other tools. "
+            "If project_id is not specified, will automatically detect it from "
+            "your workspace directory and recent patch activity."
+            "This tool may return a list of available project_ids if it cannot determine the project_id automatically."
+            "You should ask the user which project they want to use, then call this tool again with the project_id parameter set to their choice."
         )
     )
     async def list_user_recent_patches_evergreen(
         ctx: Context,
         project_id: Annotated[
-            str | None,
+            str,
             "Evergreen project identifier (e.g., 'mongodb-mongo-master', 'mms') to "
-            "filter patches. If not provided, returns patches from all projects.",
-        ] = None,
+            "filter patches. If not provided, will auto-detect from recent activity.",
+        ],
         limit: Annotated[
             int,
             "Number of recent patches to return. Use smaller numbers (3-5) for "
@@ -47,8 +54,52 @@ def register_tools(mcp: FastMCP) -> None:
         """List the user's recent patches from Evergreen."""
         evg_ctx = ctx.request_context.lifespan_context
 
-        # Use default project ID if not provided
-        effective_project_id = project_id or evg_ctx.default_project_id
+        # Intelligent project ID resolution
+        effective_project_id = project_id
+        inference_result: Optional[ProjectInferenceResult] = None
+
+        # If no explicit project ID, attempt intelligent inference
+        if not effective_project_id:
+            logger.info(
+                "No project_id specified, attempting intelligent auto-detection..."
+            )
+            inference_result = await infer_project_id_from_context(
+                evg_ctx.client,
+                evg_ctx.user_id,
+            )
+
+            if inference_result.project_id:
+                effective_project_id = inference_result.project_id
+                logger.info(
+                    "Auto-detected project ID: %s (confidence: %s, source: %s)",
+                    effective_project_id,
+                    inference_result.confidence,
+                    inference_result.source,
+                )
+            else:
+                # User selection required - return ONLY the project list, no patches
+                logger.warning(
+                    "Could not auto-detect project ID, requesting user selection"
+                )
+                return json.dumps(
+                    {
+                        "status": "user_selection_required",
+                        "message": inference_result.message,
+                        "available_projects": [
+                            {
+                                "project_identifier": p["project_identifier"],
+                                "patch_count": p["patch_count"],
+                                "latest_patch_time": p["latest_patch_time"],
+                            }
+                            for p in inference_result.available_projects
+                        ],
+                        "action_required": (
+                            "ASK THE USER which project they want to use, then call "
+                            "this tool again with the project_id parameter set to their choice."
+                        ),
+                    },
+                    indent=2,
+                )
 
         if effective_project_id:
             logger.info("Using project ID: %s", effective_project_id)
@@ -59,6 +110,24 @@ def register_tools(mcp: FastMCP) -> None:
             limit,
             project_id=effective_project_id,
         )
+
+        # Include low-confidence warning if applicable
+        # We put the message at the top level for better visibility to the AI
+        if inference_result and inference_result.confidence == "low":
+            final_response = {
+                "emit_message": inference_result.message,
+                "project_detection": {
+                    "status": "low_confidence",
+                    "detected_project": effective_project_id,
+                    "available_projects": [
+                        p["project_identifier"]
+                        for p in inference_result.available_projects
+                    ],
+                },
+            }
+            final_response.update(result)
+            return json.dumps(final_response, indent=2)
+
         return json.dumps(result, indent=2)
 
     @mcp.tool(
@@ -66,7 +135,11 @@ def register_tools(mcp: FastMCP) -> None:
             "Analyze failed CI/CD jobs for a specific patch to understand why "
             "builds are failing. Shows detailed failure information including "
             "failed tasks, build variants, timeout issues, log links, and test "
-            "failure counts. Essential for debugging patch failures."
+            "failure counts. Essential for debugging patch failures. "
+            "If project_id is not specified, will automatically detect it from "
+            "your workspace directory and recent patch activity."
+            "This tool may return a list of available project_ids if it cannot determine the project_id automatically."
+            "You should ask the user which project they want to use, then call this tool again with the project_id parameter set to their choice."
         )
     )
     async def get_patch_failed_jobs_evergreen(
@@ -78,7 +151,7 @@ def register_tools(mcp: FastMCP) -> None:
         ],
         project_id: Annotated[
             str | None,
-            "Evergreen project identifier for the patch (e.g., 'mongodb-mongo-master', 'mms').",
+            "Evergreen project identifier for the patch. If not provided, will auto-detect.",
         ] = None,
         max_results: Annotated[
             int,
@@ -89,12 +162,65 @@ def register_tools(mcp: FastMCP) -> None:
         """Get failed jobs for a specific patch."""
         evg_ctx = ctx.request_context.lifespan_context
 
-        # Use default project ID if not provided
-        effective_project_id = project_id or evg_ctx.default_project_id
+        # Intelligent project ID resolution
+        effective_project_id = project_id
+        inference_result: Optional[ProjectInferenceResult] = None
+
+        # If no explicit project ID, attempt intelligent inference
+        if not effective_project_id:
+            logger.info(
+                "No project_id specified, attempting intelligent auto-detection..."
+            )
+            inference_result = await infer_project_id_from_context(
+                evg_ctx.client,
+                evg_ctx.user_id,
+            )
+
+            if inference_result.project_id:
+                effective_project_id = inference_result.project_id
+                logger.info(
+                    "Auto-detected project ID: %s (confidence: %s)",
+                    effective_project_id,
+                    inference_result.confidence,
+                )
+            else:
+                # User selection required - return available projects
+                return json.dumps(
+                    {
+                        "status": "user_selection_required",
+                        "message": inference_result.message,
+                        "available_projects": [
+                            {
+                                "project_identifier": p["project_identifier"],
+                                "patch_count": p["patch_count"],
+                                "latest_patch_time": p["latest_patch_time"],
+                            }
+                            for p in inference_result.available_projects
+                        ],
+                        "action_required": (
+                            "ASK THE USER which project they want to use, then call "
+                            "this tool again with the project_id parameter set to their choice."
+                        ),
+                    },
+                    indent=2,
+                )
 
         result = await fetch_patch_failed_jobs(
             evg_ctx.client, patch_id, max_results, project_id=effective_project_id
         )
+
+        # Include low-confidence warning if applicable
+        if inference_result and inference_result.confidence == "low":
+            final_response = {
+                "emit_message": inference_result.message,
+                "project_detection": {
+                    "status": "low_confidence",
+                    "detected_project": effective_project_id,
+                },
+            }
+            final_response.update(result)
+            return json.dumps(final_response, indent=2)
+
         return json.dumps(result, indent=2)
 
     @mcp.tool(
@@ -185,4 +311,29 @@ def register_tools(mcp: FastMCP) -> None:
         result = await fetch_task_test_results(evg_ctx.client, arguments)
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 4)
+    @mcp.tool(
+        description=(
+            "Get a list of unique project identifiers inferred from the user's "
+            "recent patches. This helps discover which Evergreen projects the user "
+            "has been working on, sorted by activity (patch count and recency). "
+            "Useful for understanding project context and filtering other queries."
+        )
+    )
+    async def get_inferred_project_ids_evergreen(
+        ctx: Context,
+        max_patches: Annotated[
+            int,
+            "Maximum number of recent patches to scan for project identifiers. "
+            "Use 20-50 for quick discovery, up to 50 for comprehensive analysis. "
+            "Default is 50.",
+        ] = 50,
+    ) -> str:
+        """Get unique project identifiers from user's recent patches."""
+        evg_ctx = ctx.request_context.lifespan_context
+
+        result = await fetch_inferred_project_ids(
+            evg_ctx.client, evg_ctx.user_id, max_patches
+        )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 5)

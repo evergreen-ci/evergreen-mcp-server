@@ -16,6 +16,7 @@ from gql.transport.exceptions import TransportError
 
 from . import __version__
 from .evergreen_queries import (
+    GET_INFERRED_PROJECT_IDS,
     GET_PATCH_FAILED_TASKS,
     GET_PROJECT,
     GET_PROJECT_SETTINGS,
@@ -392,6 +393,35 @@ class EvergreenGraphQLClient:
         test_count = test_results.get("filteredTestCount", 0)
         logger.info("Retrieved %s test results for task %s", test_count, task_id)
         return task
+
+    async def get_inferred_project_ids(
+        self, user_id: str, limit: int = 50, page: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get project identifiers inferred from user's recent patches
+
+        Args:
+            user_id: User identifier (typically email)
+            limit: Maximum number of patches to scan (default: 50)
+            page: Page number (0-indexed, default: 0)
+
+        Returns:
+            List of patch dictionaries with project identifiers
+        """
+        variables = {
+            "userId": user_id,
+            "limit": min(limit, 50),
+            "page": page,
+        }
+
+        result = await self._execute_query(GET_INFERRED_PROJECT_IDS, variables)
+        patches = result.get("user", {}).get("patches", {}).get("patches", [])
+
+        logger.info(
+            "Retrieved %s patches for project inference for user %s",
+            len(patches),
+            user_id,
+        )
+        return patches
 
     async def __aenter__(self):
         """Async context manager entry"""
