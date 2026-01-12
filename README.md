@@ -1,13 +1,13 @@
 # Evergreen MCP Server
 
-A Model Context Protocol (MCP) server that provides access to the Evergreen CI/CD platform API. 
-This server enables AI assistants and other MCP clients to interact with Evergreen projects, builds, tasks, and other CI/CD resources.
+A Model Context Protocol (MCP) server that provides access to the Evergreen CI/CD platform API. This server enables AI assistants and other MCP clients to interact with Evergreen projects, builds, tasks, and other CI/CD resources.
 
 ## Overview
 
 [Evergreen](https://github.com/evergreen-ci/evergreen) is MongoDB's continuous integration platform. This MCP server exposes Evergreen's functionality through the Model Context Protocol, allowing AI assistants to help with CI/CD operations, project management, and build analysis.
+
 <p align="center">
-<img width="608" height="310"  src="https://github.com/user-attachments/assets/c6961ef5-5ab5-450f-a8da-dbaa4253bab7" />
+<img width="608" height="310" src="https://github.com/user-attachments/assets/c6961ef5-5ab5-450f-a8da-dbaa4253bab7" />
 </p>
 
 ## Features
@@ -16,602 +16,36 @@ This server enables AI assistants and other MCP clients to interact with Evergre
 - **Failed Jobs Analysis**: Fetch failed jobs and logs for specific commits to help identify CI/CD failures
 - **Unit Test Failure Analysis**: Detailed analysis of individual unit test failures with test-specific logs and metadata
 - **Task Log Retrieval**: Get detailed logs for failed tasks with error filtering
-- **Authentication**: Secure API key-based authentication
+- **Stepback Analysis**: Find failed mainline tasks that have undergone stepback bisection
+- **Authentication**: Secure OIDC-based authentication via `evergreen login`
 - **Async Operations**: Built on asyncio for efficient concurrent operations
 - **GraphQL Integration**: Uses Evergreen's GraphQL API for efficient data retrieval
 
-## Prerequisites
+## Quick Start
 
-- Access to an Evergreen instance
-- Valid Evergreen API credentials
-- Docker (recommended for org-based access users) or Python 3.13.3 (for development setup)
+### Step 1: Authenticate with Evergreen
 
-## Quick Start (Docker)
-
-### Using OIDC Authentication (Recommended)
-
-The fastest way to get started is using Docker with OIDC authentication:
+First, authenticate with Evergreen using the CLI. This creates the necessary credentials that the MCP server will use:
 
 ```bash
-# 1. Authenticate locally first to get tokens
-python -m evergreen_mcp.server
-
-# 2. Run with Docker, mounting your token files
-docker run --rm -i \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+evergreen login
 ```
 
-### Using API Keys (Legacy)
+This will:
+- Open your browser for OIDC authentication
+- Create `~/.evergreen.yml` with your credentials
+- Create `~/.kanopy/token-oidclogin.json` with your OIDC token
 
-Alternatively, you can use API key authentication:
+> **Note**: If you don't have the Evergreen CLI installed, see [Evergreen CLI Installation](https://github.com/evergreen-ci/evergreen/wiki/Using-the-Command-Line-Tool#installation).
 
-```bash
-docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
+### Step 2: Configure Your MCP Client
 
-### Building Locally
+Add the Evergreen MCP server to your AI assistant's MCP configuration.
 
-To build and run the Docker image locally:
+#### Cursor IDE
 
-```bash
-# Build the image
-docker build -t evergreen-mcp-server:local .
+Add to your Cursor MCP settings (`.cursor/mcp.json` or Settings → MCP):
 
-# Run with OIDC tokens
-docker run --rm -i \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
-  evergreen-mcp-server:local
-```
-
-**💡 Pro Tip:** The server can automatically detect your project ID from your workspace directory! Add a `projects_for_directory` section to your `~/.evergreen.yml` config file (see [Automatic Project Detection](#automatic-project-detection)).
-
-For detailed setup instructions and client configuration, see [Running the Server](#running-the-server) and [MCP Client Configuration](#mcp-client-configuration) sections below.
-
-## Installation (Development Setup)
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/evergreen-ci/evergreen-mcp-server.git
-cd evergreen-mcp-server
-```
-
-### 2. Set Up Python Environment
-
-```bash
-# Create a virtual environment
-python -m venv .venv
-
-# Activate the virtual environment
-# On macOS/Linux:
-source .venv/bin/activate
-# On Windows:
-# .venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
-# Install the package
-pip install -e .
-
-# For development (includes testing dependencies)
-pip install -e ".[dev]"
-```
-
-## Configuration
-
-### Evergreen API Configuration
-
-Create a configuration file at `~/.evergreen.yml` with your Evergreen credentials:
-
-```yaml
-user: your-evergreen-username
-api_key: your-evergreen-api-key
-```
-
-**How to get your API credentials:**
-
-1. Log in to your Evergreen instance
-2. Go to your user settings/preferences
-3. Generate or copy your API key
-4. Use your username and the generated API key in the configuration file
-
-### Project Configuration (Optional)
-
-The AI agent can determine the project from context naturally.
-
-#### Agent-Driven Approach (Recommended)
-
-AI agents automatically understand your project context through:
-
-1. **Automatic Memory** - When a project is detected, the agent receives it in context
-2. **Natural Language** - Simply mention your project: "Check my MMS patches"
-3. **Response Context** - All tool responses include project information
-4. **Conversation Memory** - Tell the agent once: "My project is mongodb" and it remembers
-
-**No configuration files needed!** The agent handles project context intelligently.
-
-#### Auto-Detection (Local Development Convenience)
-
-For local development, you can optionally enable auto-detection to pre-populate project context:
-
-**Add to `~/.evergreen.yml`:**
-
-```yaml
-user: your-evergreen-username
-api_key: your-evergreen-api-key
-projects_for_directory:  # Optional!
-  /path/to/mongodb: mongodb
-  /path/to/mms: mms
-```
-
-**Benefits:**
-- Automatically injects project context into agent memory
-- No need to mention project in conversation
-- Works great for local development with multiple projects
-
-**Note:** This is a convenience feature for local development. In Docker or production, the agent-driven approach is simpler and recommended.
-
-#### Priority Order (If You Use Multiple Methods)
-
-1. Command-line `--project-id` argument (explicit override)
-2. Auto-detected from workspace directory (convenience)
-3. `EVERGREEN_PROJECT` environment variable (Docker/CI)
-4. Agent determines from context (natural language)
-
-### How Agent Memory Works
-
-When the server detects a project (via auto-detection or configuration), it automatically provides a **context prompt** to the AI agent. This happens behind the scenes without user intervention.
-
-**What the agent receives:**
-```
-"Remember: The Evergreen project for this workspace is 'mongodb'. 
-When I ask about Evergreen patches, builds, or tasks, assume I'm 
-referring to the 'mongodb' project unless I specify otherwise."
-```
-
-**This means:**
-- Agent automatically knows your project context
-- No need to repeat project name in every conversation
-- Agent provides more accurate, contextual responses
-- Works seamlessly with auto-detection or environment variables
-
-**Even without auto-detection:**
-- All tool responses include `project_identifier` fields
-- Agent learns project from the data naturally
-- You can tell the agent: "My project is MMS" - it remembers
-
-### Server Configuration Options
-
-The MCP server supports additional configuration options via command-line arguments:
-
-**Available Arguments:**
-- `--project-id <PROJECT_ID>`: Specify the default Evergreen project identifier (optional, can be auto-detected)
-- `--workspace-dir <PATH>`: Workspace directory for auto-detecting project ID (optional, defaults to current directory)
-- `--help`: Show help information
-
-**Examples:**
-
-```bash
-# Auto-detect project from current directory (if configured in ~/.evergreen.yml)
-evergreen-mcp-server
-
-# Explicitly specify project ID (overrides auto-detection)
-evergreen-mcp-server --project-id mms
-
-# Specify workspace directory for auto-detection
-evergreen-mcp-server --workspace-dir /path/to/mongodb
-
-# Combine both (project-id takes precedence)
-evergreen-mcp-server --workspace-dir /path/to/mongodb --project-id custom-project
-```
-
-**Environment Variables for Workspace Detection:**
-
-The server checks these environment variables for workspace directory (in order):
-1. `WORKSPACE_PATH` - explicitly set workspace path
-2. `PWD` - current working directory
-3. Falls back to `os.getcwd()` - Python's current directory
-
-## Available Tools
-
-### `list_user_recent_patches_evergreen`
-
-Lists recent patches for the authenticated user, enabling AI agents to browse and select patches for analysis.
-
-**Parameters:**
-- `limit` (optional): Number of patches to return (default: 10, max: 50)
-
-**Example Usage:**
-```json
-{
-  "tool": "list_user_recent_patches_evergreen",
-  "arguments": {
-    "limit": 10
-  }
-}
-```
-
-**Response Format:**
-```json
-{
-  "user_id": "developer@example.com",
-  "patches": [
-    {
-      "patch_id": "507f1f77bcf86cd799439011",
-      "patch_number": 12345,
-      "githash": "9e484ce50be1335393eeb056c91ef4a72fe48bfd",
-      "description": "Fix authentication bug in user service",
-      "author": "developer@example.com",
-      "author_display_name": "Jane Developer",
-      "status": "failed",
-      "create_time": "2025-09-23T10:30:00Z",
-      "project_identifier": "mms",
-      "has_version": true,
-      "version_status": "failed"
-    }
-  ],
-  "total_patches": 10
-}
-```
-
-### `get_patch_failed_jobs_evergreen`
-
-Retrieves failed jobs for a specific patch, enabling detailed analysis of CI/CD failures. Now includes unit test failure counts for each task.
-
-**Parameters:**
-- `patch_id` (required): Patch identifier from `list_user_recent_patches_evergreen`
-- `max_results` (optional): Maximum number of failed tasks to return (default: 50)
-
-**Example Usage:**
-```json
-{
-  "tool": "get_patch_failed_jobs_evergreen",
-  "arguments": {
-    "patch_id": "507f1f77bcf86cd799439011",
-    "max_results": 10
-  }
-}
-```
-
-**Response Format:**
-```json
-{
-  "patch_info": {
-    "patch_id": "507f1f77bcf86cd799439011",
-    "githash": "9e484ce50be1335393eeb056c91ef4a72fe48bfd",
-    "description": "Fix authentication bug in user service",
-    "author": "developer@example.com",
-    "status": "failed"
-  },
-  "version_info": {
-    "version_id": "version_123",
-    "status": "failed"
-  },
-  "failed_tasks": [
-    {
-      "task_id": "task_456",
-      "task_name": "test-unit",
-      "build_variant": "ubuntu2004",
-      "status": "failed",
-      "execution": 0,
-      "failure_details": {
-        "description": "Test failures in authentication module",
-        "timed_out": false,
-        "failing_command": "npm test"
-      },
-      "duration_ms": 120000,
-      "finish_time": "2025-09-23T10:32:00Z",
-      "test_info": {
-        "has_test_results": true,
-        "failed_test_count": 5,
-        "total_test_count": 150
-      },
-      "logs": {
-        "task_log": "https://evergreen.mongodb.com/task_log/...",
-        "agent_log": "https://evergreen.mongodb.com/agent_log/...",
-        "system_log": "https://evergreen.mongodb.com/system_log/...",
-        "all_logs": "https://evergreen.mongodb.com/all_log/..."
-      }
-    }
-  ],
-  "summary": {
-    "total_failed_tasks": 3,
-    "returned_tasks": 3,
-    "failed_build_variants": ["ubuntu2004", "windows"],
-    "has_timeouts": false
-  }
-}
-```
-
-### `get_task_logs_evergreen`
-
-Retrieves detailed logs for a specific Evergreen task, with optional error filtering for focused analysis.
-
-**Parameters:**
-- `task_id` (required): Task identifier from failed jobs response
-- `execution` (optional): Task execution number (default: 0)
-- `max_lines` (optional): Maximum number of log lines to return (default: 1000)
-- `filter_errors` (optional): Whether to filter for error messages only (default: true)
-
-**Example Usage:**
-```json
-{
-  "tool": "get_task_logs_evergreen",
-  "arguments": {
-    "task_id": "task_456",
-    "execution": 0,
-    "filter_errors": true,
-    "max_lines": 500
-  }
-}
-```
-
-**Response Format:**
-```json
-{
-  "task_id": "task_456",
-  "execution": 0,
-  "task_name": "test-unit",
-  "log_type": "task",
-  "total_lines": 45,
-  "logs": [
-    {
-      "severity": "error",
-      "message": "Test failed: authentication module",
-      "timestamp": "2025-09-22T10:35:15Z",
-      "type": "test"
-    }
-  ],
-  "truncated": false
-}
-```
-
-### `get_task_test_results_evergreen`
-
-Retrieves detailed unit test results for a specific Evergreen task, including individual test failures. Essential for debugging unit test failures when a task shows `failed_test_count > 0`.
-
-**Parameters:**
-- `task_id` (required): Task identifier from failed jobs response
-- `execution` (optional): Task execution number (default: 0)
-- `failed_only` (optional): Whether to fetch only failed tests (default: true)
-- `limit` (optional): Maximum number of test results to return (default: 100)
-
-**Example Usage:**
-```json
-{
-  "tool": "get_task_test_results_evergreen",
-  "arguments": {
-    "task_id": "task_456",
-    "execution": 0,
-    "failed_only": true,
-    "limit": 50
-  }
-}
-```
-
-**Response Format:**
-```json
-{
-  "task_info": {
-    "task_id": "task_456",
-    "task_name": "test-unit",
-    "build_variant": "ubuntu2004",
-    "status": "failed",
-    "execution": 0,
-    "has_test_results": true,
-    "failed_test_count": 5,
-    "total_test_count": 150
-  },
-  "test_results": [
-    {
-      "test_id": "test_auth_login_failure",
-      "test_file": "tests/auth/test_login.py",
-      "status": "failed",
-      "duration": 2.5,
-      "start_time": "2025-09-23T10:30:15Z",
-      "end_time": "2025-09-23T10:30:17Z",
-      "exit_code": 1,
-      "group_id": "auth_tests",
-      "logs": {
-        "url": "https://evergreen.mongodb.com/test_log/...",
-        "url_parsley": "https://parsley.mongodb.com/evergreen/...",
-        "url_raw": "https://evergreen.mongodb.com/test_log_raw/...",
-        "line_num": 45,
-        "rendering_type": "resmoke",
-        "version": 1
-      }
-    }
-  ],
-  "summary": {
-    "total_test_results": 150,
-    "filtered_test_count": 5,
-    "returned_tests": 5,
-    "failed_tests_in_results": 5,
-    "filter_applied": "failed tests only"
-  }
-}
-```
-
-## Running the Server
-
-The Evergreen MCP server is designed to be used with MCP clients (like Claude Desktop, VS Code with MCP extension) or for testing with the MCP Inspector. It communicates via stdio and is not meant to be run as a standalone HTTP server.
-
-### Method 1: Using Docker (Recommended)
-
-#### Option A: OIDC Authentication (Recommended)
-
-The most secure approach uses OIDC tokens mounted from files:
-
-```bash
-# 1. Authenticate locally to get tokens (one-time setup)
-python -m evergreen_mcp.server
-
-# 2. Run with Docker, mounting token files
-docker run --rm -i \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-**Why this approach:**
-- ✅ More secure: Tokens not exposed in environment variables
-- ✅ Automatic refresh: Server refreshes expired tokens
-- ✅ Simple: Just mount two files
-
-**With project configuration:**
-```bash
-docker run --rm -i \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
-  -e EVERGREEN_PROJECT=mongodb-mongo-master \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-#### Option B: API Key Authentication (Legacy)
-
-For environments without OIDC support:
-
-```bash
-docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=mongodb \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-```
-
-This approach:
-- Works in Kubernetes ConfigMaps/Secrets
-- No file mounts required
-- Legacy authentication method
-
-### Method 2: Direct Execution (for Development)
-
-```bash
-# Make sure your virtual environment is activated
-source .venv/bin/activate
-
-# Run the server (will wait for stdio input from an MCP client)
-evergreen-mcp-server
-
-# With explicit workspace directory
-evergreen-mcp-server --workspace-dir /path/to/mongodb
-
-# With explicit project ID (overrides auto-detection)
-evergreen-mcp-server --project-id your-evergreen-project-id
-```
-
-**Note**: When run directly, the server expects to communicate via stdio with an MCP client. It will not provide a command-line interface or HTTP endpoint.
-
-### Method 3: With MCP Inspector (for Testing and Development)
-
-```bash
-# Using npx (no installation required)
-npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
-
-# This will:
-# - Start the MCP server
-# - Launch a web interface for testing
-# - Open your browser automatically
-```
-
-## MCP Client Configuration
-
-> **Note**: Docker-based configurations require org-based access to the Evergreen MCP server image. If you don't have org-based access, use the local installation configurations instead.
-
-### VS Code with MCP Extension
-
-**Using Docker with OIDC (Recommended):**
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "docker",
-            "args": [
-                "run", "--rm", "-i",
-                "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-                "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-            ]
-        }
-    }
-}
-```
-
-**With Project Configuration:**
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "docker",
-            "args": [
-                "run", "--rm", "-i",
-                "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-                "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-                "-e", "EVERGREEN_PROJECT=mongodb-mongo-master",
-                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-            ]
-        }
-    }
-}
-```
-
-**Using Docker with API Keys (Legacy):**
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "docker",
-            "args": [
-                "run", "--rm", "-i",
-                "-e", "EVERGREEN_USER=your_username",
-                "-e", "EVERGREEN_API_KEY=your_api_key",
-                "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-            ]
-        }
-    }
-}
-```
-
-**Using Local Installation with Auto-Detection:**
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": ["--workspace-dir", "${workspaceFolder}"]
-        }
-    }
-}
-```
-
-**Using Local Installation with Explicit Project ID:**
-```json
-{
-    "servers": {
-        "evergreen-mcp-server": {
-            "type": "stdio",
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": ["--project-id", "your-evergreen-project-id"]
-        }
-    }
-}
-```
-
-### Claude Desktop
-
-**Using Docker with OIDC (Recommended):**
 ```json
 {
   "mcpServers": {
@@ -628,7 +62,149 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**With Project Configuration:**
+#### Claude Desktop
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+#### VS Code with MCP Extension
+
+Add to your VS Code settings (`settings.json`):
+
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+### Step 3: Start Using It
+
+Once configured, you can ask your AI assistant questions like:
+- "Show me my recent Evergreen patches"
+- "What failed in my last patch?"
+- "Get the logs for this failing task"
+- "Find stepback failures in the mms project"
+
+That's it! The server will use your `evergreen login` credentials automatically.
+
+---
+
+## Alternative Setup Methods
+
+### Using API Keys (Legacy)
+
+If you can't use OIDC authentication, you can use API keys instead:
+
+1. Get your API key from Evergreen (User Settings → API Key)
+2. Configure your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "EVERGREEN_USER=your_username",
+        "-e", "EVERGREEN_API_KEY=your_api_key",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+### Local Development Setup
+
+For development or if you prefer not to use Docker:
+
+1. **Clone and install:**
+   ```bash
+   git clone https://github.com/evergreen-ci/evergreen-mcp-server.git
+   cd evergreen-mcp-server
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   pip install -e .
+   ```
+
+2. **Configure your MCP client to use the local installation:**
+   ```json
+   {
+     "mcpServers": {
+       "evergreen": {
+         "command": "/path/to/evergreen-mcp-server/.venv/bin/evergreen-mcp-server",
+         "args": []
+       }
+     }
+   }
+   ```
+
+---
+
+## Running the Server (Detailed)
+
+The Evergreen MCP server is designed to be used with MCP clients and communicates via stdio by default. This section covers all the ways you can run the server.
+
+### Understanding MCP Server Architecture
+
+The MCP server operates as a **subprocess** spawned by your AI assistant (like Cursor, Claude Desktop, etc.). The assistant communicates with the server through standard input/output (stdio), sending JSON-RPC messages back and forth.
+
+**Key concepts:**
+- **stdio transport**: The server reads from stdin and writes to stdout (default)
+- **HTTP transports**: Alternative transports (SSE, streamable-http) for when stdio isn't available
+- **Lifespan management**: The client (your AI assistant) manages starting/stopping the server
+
+### Method 1: Docker with OIDC (Recommended)
+
+This is the most secure and easiest approach for most users.
+
+**Prerequisites:**
+- Docker installed and running
+- Evergreen CLI installed (`evergreen login` completed)
+
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**With project configuration:**
 ```json
 {
   "mcpServers": {
@@ -646,7 +222,17 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**Using Docker with API Keys (Legacy):**
+### Method 2: Docker with API Keys
+
+For environments where OIDC isn't available or when using service accounts.
+
+**When to use:**
+- Kubernetes/cloud deployments
+- CI/CD pipelines
+- Service accounts
+- Environments where file mounting is difficult
+
+**Configuration:**
 ```json
 {
   "mcpServers": {
@@ -656,6 +242,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
         "run", "--rm", "-i",
         "-e", "EVERGREEN_USER=your_username",
         "-e", "EVERGREEN_API_KEY=your_api_key",
+        "-e", "EVERGREEN_PROJECT=mongodb-mongo-master",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
     }
@@ -663,221 +250,345 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 }
 ```
 
-**Using Local Installation:**
-```json
-{
-    "mcpServers": {
-        "evergreen": {
-            "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-            "args": []
-        }
-    }
-}
+**⚠️ Security considerations:**
+- API keys in environment variables are visible in process lists
+- Consider using credential management systems in production
+- Rotate API keys regularly
+
+### Method 3: Local Installation (Development)
+
+Running the server directly from source code for development or customization.
+
+**When to use:**
+- Developing the MCP server itself
+- Testing local changes
+- Environments without Docker
+- Maximum control over dependencies
+
+**Setup:**
+```bash
+# Clone and set up
+git clone https://github.com/evergreen-ci/evergreen-mcp-server.git
+cd evergreen-mcp-server
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e .
+
+# Verify installation
+evergreen-mcp-server --help
 ```
 
-**Local Installation with Project ID:**
+**Configuration:**
 ```json
 {
   "mcpServers": {
     "evergreen": {
-      "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-      "args": ["--project-id", "your-evergreen-project-id"]
+      "command": "/absolute/path/to/evergreen-mcp-server/.venv/bin/evergreen-mcp-server",
+      "args": []
     }
   }
 }
 ```
 
-### IDE AI Tools Integration
+**With workspace auto-detection:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "/path/to/.venv/bin/evergreen-mcp-server",
+      "args": ["--workspace-dir", "${workspaceFolder}"]
+    }
+  }
+}
+```
 
-The Evergreen MCP server can be integrated with various IDE-based AI tools that support the Model Context Protocol. This section provides setup instructions for popular IDE AI assistants.
+**Development workflow:**
+```bash
+# Activate environment
+source .venv/bin/activate
 
-#### Augment Code Assistant
+# Run tests
+pytest tests/ -v
 
-[Augment](https://www.augmentcode.com/) is an AI coding assistant that supports MCP integration for enhanced contextual assistance.
+# Test with MCP Inspector
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 
-**Setup Steps:**
+# Make changes to code
+# Changes are immediately available due to editable install (pip install -e .)
+```
 
-1. **Install Augment Extension**: Install the Augment extension in your IDE (VS Code, IntelliJ, etc.)
+### Method 4: HTTP/SSE Transport
 
-2. **Configure MCP Server**: Add the Evergreen MCP server to Augment's configuration:
+For scenarios where stdio isn't practical, run the server as a standalone HTTP service.
 
-   **For VS Code with Augment (using Docker with OIDC - Recommended):**
-   ```json
-   {
-     "augment.mcpServers": {
-       "evergreen": {
-         "command": "docker",
-         "args": [
-           "run", "--rm", "-i",
-           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-         ],
-         "env": {}
-       }
-     }
-   }
-   ```
+**When to use:**
+- Debugging with network inspection tools
+- Shared server instances
+- Non-stdio MCP clients
+- Browser-based AI assistants
 
-   **For VS Code with Augment (using local installation):**
-   ```json
-   {
-     "augment.mcpServers": {
-       "evergreen": {
-         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-         "args": ["--project-id", "your-evergreen-project-id"],
-         "env": {}
-       }
-     }
-   }
-   ```
+**Start the server:**
+```bash
+# Using Docker
+docker run --rm -p 8000:8000 \
+  -e EVERGREEN_MCP_TRANSPORT=sse \
+  -e EVERGREEN_MCP_HOST=0.0.0.0 \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 
-   **For JetBrains IDEs with Augment (using Docker with OIDC - Recommended):**
-   ```json
-   {
-     "mcpServers": {
-       "evergreen": {
-         "command": "docker",
-         "args": [
-           "run", "--rm", "-i",
-           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-         ]
-       }
-     }
-   }
-   ```
+# Using local installation
+EVERGREEN_MCP_TRANSPORT=sse \
+EVERGREEN_MCP_HOST=0.0.0.0 \
+EVERGREEN_MCP_PORT=8000 \
+evergreen-mcp-server
+```
 
-   **For JetBrains IDEs with Augment (using local installation):**
-   ```json
-   {
-     "mcpServers": {
-       "evergreen": {
-         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-         "args": ["--project-id", "your-evergreen-project-id"]
-       }
-     }
-   }
-   ```
+**Client configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
 
-3. **Authentication**: Ensure your `~/.evergreen.yml` configuration file is properly set up with your Evergreen credentials.
+**Transport options:**
+- `sse` (Server-Sent Events): Best for most HTTP scenarios
+- `streamable-http`: Alternative streaming protocol
+- `stdio`: Default, for subprocess communication
 
-4. **Usage**: Once configured, you can ask Augment to help with CI/CD debugging:
-   - "Show me recent failed patches in Evergreen"
-   - "Analyze the failed jobs for patch XYZ"
-   - "Get the logs for the failing test task"
+### Building Custom Docker Images
 
-#### Claude Code (IDE Integration)
+If you need to customize the Docker image:
 
-Claude's IDE integration provides direct access to Claude AI within your development environment with MCP support.
+```bash
+# Clone the repository
+git clone https://github.com/evergreen-ci/evergreen-mcp-server.git
+cd evergreen-mcp-server
 
-**Setup for VS Code:**
+# Build custom image
+docker build -t evergreen-mcp-server:custom .
 
-1. **Install Claude Extension**: Install the official Claude extension from the VS Code marketplace
+# Test the custom image
+docker run --rm -it \
+  -e EVERGREEN_USER=your_username \
+  -e EVERGREEN_API_KEY=your_api_key \
+  evergreen-mcp-server:custom --help
 
-2. **Configure MCP in VS Code Settings** (using Docker with OIDC - Recommended):
-   ```json
-   {
-     "claude.mcpServers": {
-       "evergreen": {
-         "command": "docker",
-         "args": [
-           "run", "--rm", "-i",
-           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-         ],
-         "type": "stdio"
-       }
-     }
-   }
-   ```
+# Use in MCP configuration
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+    "evergreen-mcp-server:custom"
+  ]
+}
+```
 
-   **Using local installation:**
-   ```json
-   {
-     "claude.mcpServers": {
-       "evergreen": {
-         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-         "args": ["--project-id", "your-evergreen-project-id"],
-         "type": "stdio"
-       }
-     }
-   }
-   ```
+---
 
-3. **Alternative Configuration**: Create a `.claude/mcp.json` file in your project root:
+## MCP Client Configuration (Detailed)
 
-   **Using Docker with OIDC (Recommended):**
-   ```json
-   {
-     "mcpServers": {
-       "evergreen": {
-         "command": "docker",
-         "args": [
-           "run", "--rm", "-i",
-           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-         ]
-       }
-     }
-   }
-   ```
+Comprehensive setup guides for various MCP clients and AI assistants.
 
-   **Using local installation:**
-   ```json
-   {
-     "mcpServers": {
-       "evergreen": {
-         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-         "args": ["--project-id", "your-evergreen-project-id"]
-       }
-     }
-   }
-   ```
+### Cursor IDE
 
-**Setup for JetBrains IDEs:**
+**Location:** `.cursor/mcp.json` in your workspace, or Settings → Features → MCP
 
-1. **Install Claude Plugin**: Install the Claude plugin from JetBrains marketplace
+**Basic configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
 
-2. **Configure MCP Server**: In Claude plugin settings:
+**With environment variables:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ],
+      "env": {
+        "EVERGREEN_PROJECT": "mongodb-mongo-master"
+      }
+    }
+  }
+}
+```
 
-   **Using Docker with OIDC (Recommended):**
-   ```json
-   {
-     "servers": {
-       "evergreen": {
-         "command": "docker",
-         "args": [
-           "run", "--rm", "-i",
-           "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-         ]
-       }
-     }
-   }
-   ```
+**Local installation:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "/Users/yourname/projects/evergreen-mcp-server/.venv/bin/evergreen-mcp-server",
+      "args": ["--workspace-dir", "${workspaceFolder}"]
+    }
+  }
+}
+```
 
-   **Using local installation:**
-   ```json
-   {
-     "servers": {
-       "evergreen": {
-         "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-         "args": ["--project-id", "your-evergreen-project-id"]
-       }
-     }
-   }
-   ```
+**Testing the configuration:**
+1. Save your `.cursor/mcp.json` file
+2. Restart Cursor (or reload the window)
+3. Open the MCP panel (View → MCP or Cmd+Shift+P → "MCP")
+4. Verify the Evergreen server shows as "Connected"
+5. Try a test query: "Show me my recent Evergreen patches"
 
-#### GitHub Copilot Chat with MCP
+### Claude Desktop
 
-GitHub Copilot Chat can be extended with MCP servers through various configuration methods.
+**Location:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
 
-**VS Code Configuration (using Docker with OIDC - Recommended):**
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**Testing:**
+1. Save the config file
+2. Quit Claude Desktop completely
+3. Restart Claude Desktop
+4. Look for the 🔌 icon in the bottom-right corner
+5. Click it to see connected MCP servers
+6. Test with: "List my recent Evergreen patches"
+
+**Troubleshooting Claude Desktop:**
+- **Server not connecting**: Check Docker is running (`docker ps`)
+- **No 🔌 icon**: Verify config file syntax (use a JSON validator)
+- **Permission errors**: Ensure credential files exist and are readable
+- **Logs**: View logs in Settings → Advanced → View Logs
+
+### VS Code with MCP Extension
+
+**Prerequisites:**
+- Install the MCP extension from VS Code marketplace
+
+**Location:** VS Code Settings (JSON) - `settings.json`
+
+**Configuration:**
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+**Note:** VS Code uses `${userHome}` instead of `${HOME}` for path expansion.
+
+**Per-workspace configuration:**
+Create `.vscode/settings.json` in your workspace:
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "command": "/path/to/.venv/bin/evergreen-mcp-server",
+      "args": ["--workspace-dir", "${workspaceFolder}"],
+      "env": {
+        "EVERGREEN_PROJECT": "mongodb-mongo-master"
+      }
+    }
+  }
+}
+```
+
+### Augment Code Assistant
+
+**For VS Code:**
+```json
+{
+  "augment.mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+**For JetBrains IDEs:**
+Add to Augment plugin settings:
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**Using HTTP transport with Augment:**
+```json
+{
+  "augment.mcpServers": {
+    "evergreen": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+### GitHub Copilot Chat
+
+**Configuration:**
 ```json
 {
   "github.copilot.chat.mcp": {
@@ -896,229 +607,50 @@ GitHub Copilot Chat can be extended with MCP servers through various configurati
 }
 ```
 
-**VS Code Configuration (using local installation):**
-```json
-{
-  "github.copilot.chat.mcp": {
-    "servers": {
-      "evergreen": {
-        "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-        "args": ["--project-id", "your-evergreen-project-id"]
-      }
-    }
-  }
-}
-```
+### Universal Configuration Pattern
 
-#### Other IDE AI Tools
+For any MCP-compatible client, follow this pattern:
 
-For other IDE-based AI assistants that support MCP, the general configuration pattern is:
-
-1. **Locate MCP Configuration**: Find your IDE AI tool's MCP server configuration section
-2. **Add Server Entry**: Add an entry for the Evergreen MCP server:
-
-   **Using Docker with OIDC (Recommended):**
-   ```json
-   {
-     "command": "docker",
-     "args": [
-       "run", "--rm", "-i",
-       "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-       "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-       "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-     ],
-     "type": "stdio"
-   }
-   ```
-
-   **Using local installation:**
-   ```json
-   {
-     "command": "/path/to/your/project/.venv/bin/evergreen-mcp-server",
-     "args": ["--project-id", "your-evergreen-project-id"],
-     "type": "stdio"
-   }
-   ```
-
-3. **Set Environment**: 
-   - For Docker: Set environment variables as shown in the configuration above
-   - For local installation: Ensure your Evergreen credentials are available in `~/.evergreen.yml`
-
-#### Configuration Tips
-
-**Path Resolution:**
-- Use absolute paths to the virtual environment binary
-- On Windows: Use `.venv\Scripts\evergreen-mcp-server.exe`
-- On macOS/Linux: Use `.venv/bin/evergreen-mcp-server`
-
-**Docker Integration with OIDC (Recommended):**
-Many IDE AI tools also support Docker-based MCP servers:
+**Docker with OIDC:**
 ```json
 {
   "command": "docker",
   "args": [
     "run", "--rm", "-i",
-    "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-    "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+    "-v", "<path-to-token>:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "<path-to-config>:/home/evergreen/.evergreen.yml:ro",
     "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
   ]
 }
 ```
 
-**Environment Variables:**
-Instead of using `~/.evergreen.yml`, you can set environment variables:
+**Local installation:**
 ```json
 {
-  "command": "/path/to/.venv/bin/evergreen-mcp-server",
-  "args": ["--project-id", "your-evergreen-project-id"],
-  "env": {
-    "EVERGREEN_USER": "your_username",
-    "EVERGREEN_API_KEY": "your_api_key"
-  }
+  "command": "<absolute-path-to-venv>/bin/evergreen-mcp-server",
+  "args": []
 }
 ```
 
-**Troubleshooting:**
-- Test with Docker first: `docker run --rm -it -e EVERGREEN_USER=your_username -e EVERGREEN_API_KEY=your_api_key -e EVERGREEN_PROJECT=your_project ghcr.io/evergreen-ci/evergreen-mcp-server:latest --help`
-- Test with MCP Inspector: `npx @modelcontextprotocol/inspector docker run --rm -i -e EVERGREEN_USER=your_username -e EVERGREEN_API_KEY=your_api_key -e EVERGREEN_PROJECT=your_project ghcr.io/evergreen-ci/evergreen-mcp-server:latest`
-- For local installation: Verify the MCP server runs correctly: `evergreen-mcp-server --help`
-- Check IDE AI tool logs for MCP connection errors
-- Ensure Docker is installed and running for Docker-based configurations
+**Path variables by platform:**
+- macOS/Linux: `${HOME}` or `~`
+- Windows: `${USERPROFILE}` or `%USERPROFILE%`
+- VS Code: `${userHome}`
+- Cursor: `${HOME}`
 
-## MCP Inspector Integration
+---
 
-The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a powerful debugging and testing tool that provides a web-based interface for interacting with MCP servers. It's especially useful for development, testing, and understanding how the Evergreen MCP server works.
+## Tool Reference
 
-### Installing MCP Inspector
+### `list_user_recent_patches_evergreen`
 
-The MCP Inspector can be installed globally or run directly with `npx` (recommended for one-time use):
+Lists recent patches for the authenticated user.
 
-```bash
-# Option 1: Install globally via npm
-npm install -g @modelcontextprotocol/inspector
+**Parameters:**
+- `limit` (optional): Number of patches to return (default: 10, max: 50)
+- `project_id` (optional): Filter by project identifier
 
-# Option 2: Use npx (no installation required)
-# This will be shown in the examples below
-```
-
-### Using Inspector with Evergreen MCP Server
-
-#### Method 1: Using Docker (Recommended)
-
-```bash
-# Start the inspector with the Docker image (requires Docker environment variables)
-npx @modelcontextprotocol/inspector docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-
-# With project ID configuration
-npx @modelcontextprotocol/inspector docker run --rm -i \
-  -e EVERGREEN_USER=your_username \
-  -e EVERGREEN_API_KEY=your_api_key \
-  -e EVERGREEN_PROJECT=your_project \
-  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
-  --project-id your-evergreen-project-id
-```
-
-#### Method 2: Using Local Installation with npx
-
-```bash
-# Start the inspector with the Evergreen MCP server using the full path to the virtual environment
-npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
-
-# Or if your virtual environment is activated:
-npx @modelcontextprotocol/inspector evergreen-mcp-server
-```
-
-#### Method 3: Using Globally Installed Inspector
-
-```bash
-# If you installed mcp-inspector globally
-mcp-inspector .venv/bin/evergreen-mcp-server
-
-# With project ID configuration
-mcp-inspector .venv/bin/evergreen-mcp-server --project-id your-evergreen-project-id
-```
-
-#### Method 4: Using Python Module Directly
-
-```bash
-# Using the Python module directly
-npx @modelcontextprotocol/inspector python -m evergreen_mcp.server
-```
-
-### Inspector Features for Evergreen MCP
-
-The MCP Inspector provides several useful features when working with the Evergreen MCP server:
-
-1. **Tool Testing**: Interactive forms to test all available tools:
-   - `list_user_recent_patches_evergreen`
-   - `get_patch_failed_jobs_evergreen`
-   - `get_task_logs_evergreen`
-   - `get_task_test_results_evergreen`
-
-2. **Resource Browsing**: View available Evergreen project resources
-
-3. **Real-time Logging**: See server logs and debug information in real-time
-
-4. **Request/Response Inspection**: Examine the exact JSON payloads being sent and received
-
-5. **Schema Validation**: Verify that tool inputs match the expected schemas
-
-### Typical Inspector Workflow
-
-1. **Start Inspector**: Launch the inspector with your Evergreen MCP server
-2. **Test Authentication**: Verify your Evergreen credentials are working by listing projects
-3. **Explore Tools**: Use the interactive forms to test each tool with sample data
-4. **Debug Issues**: Use the logging panel to troubleshoot any authentication or API issues
-5. **Validate Responses**: Examine the JSON responses to understand the data structure
-
-### Inspector Configuration Tips
-
-- **Environment Variables**: The inspector will use the same `~/.evergreen.yml` configuration file as the server
-- **Logging Level**: Set `PYTHONPATH=src` and enable debug logging for more detailed output
-- **Network Issues**: If you encounter connection issues, verify your Evergreen API endpoint and credentials
-
-### Example Inspector Session
-
-When you start the inspector, it will:
-1. Install the inspector package (if using npx)
-2. Start the proxy server (typically on port 6277)
-3. Open your browser automatically to the inspector interface (typically at `http://localhost:6274`)
-4. Display an authentication token in the URL
-
-Then you can:
-1. Navigate to the "Tools" tab in the web interface
-2. Try `list_user_recent_patches_evergreen` with `limit: 5`
-3. Copy a patch ID from the response
-4. Use `get_patch_failed_jobs_evergreen` with the copied patch ID
-5. Look for tasks with `test_info.failed_test_count > 0` in the response
-6. For tasks with test failures, use `get_task_test_results_evergreen` with the task ID to see specific unit test failures
-7. Use `get_task_logs_evergreen` with the task ID to see detailed error logs
-8. Use test-specific log URLs from the test results for focused debugging
-
-This workflow demonstrates the comprehensive debugging process for CI/CD failures, including unit test analysis, using the Evergreen MCP server.
-
-## Available Resources
-
-The server currently provides the following MCP resources:
-
-### Projects
-
-- **URI Pattern**: `evergreen://project/{project_id}`
-- **Description**: Access to Evergreen project information
-- **MIME Type**: `application/json`
-
-The server automatically discovers and lists all projects you have access to in your Evergreen instance.
-
-## Usage Examples
-
-### Analyzing Failed Jobs - Multi-Step Workflow
-
-#### Step 1: List Recent Patches
-
+**Example Usage:**
 ```json
 {
   "tool": "list_user_recent_patches_evergreen",
@@ -1128,125 +660,1180 @@ The server automatically discovers and lists all projects you have access to in 
 }
 ```
 
-This returns your recent patches with status information, allowing you to identify failed patches.
+**Response Format:**
+```json
+{
+  "user_id": "developer@example.com",
+  "patches": [
+    {
+      "patch_id": "507f1f77bcf86cd799439011",
+      "description": "Fix authentication bug",
+      "status": "failed",
+      "create_time": "2025-09-23T10:30:00Z",
+      "project_identifier": "mms"
+    }
+  ]
+}
+```
 
-#### Step 2: Analyze Failed Jobs for Selected Patch
+### `get_patch_failed_jobs_evergreen`
 
+Retrieves failed jobs for a specific patch with test failure counts.
+
+**Parameters:**
+- `patch_id` (required): Patch identifier
+- `project_id` (optional): Evergreen project identifier
+- `max_results` (optional): Maximum failed tasks to return (default: 50)
+
+**Example Usage:**
 ```json
 {
   "tool": "get_patch_failed_jobs_evergreen",
   "arguments": {
-    "patch_id": "507f1f77bcf86cd799439011",
-    "max_results": 20
+    "patch_id": "507f1f77bcf86cd799439011"
   }
 }
 ```
 
-This now includes test failure counts in the response, showing which tasks have unit test failures.
+**Response Format:**
+```json
+{
+  "patch_info": { "status": "failed" },
+  "failed_tasks": [
+    {
+      "task_id": "task_456",
+      "status": "failed",
+      "test_info": {
+        "failed_test_count": 5
+      }
+    }
+  ]
+}
+```
 
-#### Step 3: Get Detailed Unit Test Results (for tasks with test failures)
+### `get_task_logs_evergreen`
 
+Retrieves detailed logs for a specific task with error filtering.
+
+**Parameters:**
+- `task_id` (required): Task identifier
+- `execution` (optional): Task execution number (default: 0)
+- `max_lines` (optional): Maximum log lines (default: 1000)
+- `filter_errors` (optional): Filter for errors only (default: true)
+
+**Example Usage:**
+```json
+{
+  "tool": "get_task_logs_evergreen",
+  "arguments": {
+    "task_id": "task_456",
+    "filter_errors": true
+  }
+}
+```
+
+### `get_task_test_results_evergreen`
+
+Retrieves detailed unit test results for a task.
+
+**Parameters:**
+- `task_id` (required): Task identifier
+- `execution` (optional): Task execution number (default: 0)
+- `failed_only` (optional): Only failed tests (default: true)
+- `limit` (optional): Maximum test results (default: 100)
+
+**Example Usage:**
 ```json
 {
   "tool": "get_task_test_results_evergreen",
   "arguments": {
     "task_id": "task_456",
-    "failed_only": true,
-    "limit": 50
+    "failed_only": true
   }
 }
 ```
 
-This provides detailed information about individual unit test failures, including test files, durations, and log URLs.
+### `get_stepback_tasks_evergreen`
 
-#### Step 4: Getting Detailed Logs for a Failed Task
+Finds failed mainline tasks that have undergone stepback bisection.
 
+**Parameters:**
+- `project_id` (required): Evergreen project identifier
+- `limit` (optional): Versions to analyze (default: 20)
+- `requesters` (optional): Filter by requester type (e.g. `['gitter_request']`)
+- `variants` (optional): Filter to specific build variants
+- `exclude_variants` (optional): Exclude specific build variants
+
+**Example Usage:**
+```json
+{
+  "tool": "get_stepback_tasks_evergreen",
+  "arguments": {
+    "project_id": "mongodb-mongo-master",
+    "limit": 10,
+    "variants": ["enterprise-rhel-80-64-bit"]
+  }
+}
+```
+
+### `get_inferred_project_ids_evergreen`
+
+Discovers which Evergreen projects you've been working on based on recent patches.
+
+**Parameters:**
+- `max_patches` (optional): Patches to scan (default: 50)
+
+---
+
+## Complete Workflow Examples
+
+### Workflow 1: Debugging a Failed Patch
+
+**Scenario**: Your patch failed in CI, and you want to understand why.
+
+#### Step 1: List Your Recent Patches
+
+Ask your AI assistant: *"Show me my recent Evergreen patches"*
+
+The assistant calls:
+```json
+{
+  "tool": "list_user_recent_patches_evergreen",
+  "arguments": { "limit": 10, "project_id": "mms" }
+}
+```
+
+Response shows:
+```json
+{
+  "patches": [
+    {
+      "patch_id": "abc123",
+      "description": "CLOUDP-12345: Fix auth bug",
+      "status": "failed",
+      "create_time": "2025-01-12T10:30:00Z"
+    }
+  ]
+}
+```
+
+#### Step 2: Analyze Failed Jobs
+
+Ask: *"What failed in patch abc123?"*
+
+The assistant calls:
+```json
+{
+  "tool": "get_patch_failed_jobs_evergreen",
+  "arguments": { "patch_id": "abc123" }
+}
+```
+
+Response shows:
+```json
+{
+  "failed_tasks": [
+    {
+      "task_id": "task_auth_tests_123",
+      "task_name": "auth_unit_tests",
+      "build_variant": "ubuntu2004",
+      "status": "failed",
+      "test_info": {
+        "failed_test_count": 3,
+        "total_test_count": 150
+      }
+    }
+  ]
+}
+```
+
+#### Step 3: Get Specific Test Failures
+
+Ask: *"Show me the failing tests in that task"*
+
+The assistant calls:
+```json
+{
+  "tool": "get_task_test_results_evergreen",
+  "arguments": {
+    "task_id": "task_auth_tests_123",
+    "failed_only": true
+  }
+}
+```
+
+Response shows specific test names, files, and log URLs.
+
+#### Step 4: Examine Error Logs
+
+Ask: *"Get the error logs for that task"*
+
+The assistant calls:
 ```json
 {
   "tool": "get_task_logs_evergreen",
   "arguments": {
-    "task_id": "task_from_failed_jobs_response",
+    "task_id": "task_auth_tests_123",
     "filter_errors": true,
     "max_lines": 100
   }
 }
 ```
 
-### Agent Workflow Example
+#### Step 5: AI Analysis
 
-1. **Agent lists user patches**: Calls `list_user_recent_patches_evergreen` to get recent patches
-2. **Agent selects relevant patch**: Chooses patch based on status, description, or user input
-3. **Agent analyzes failures**: Calls `get_patch_failed_jobs_evergreen` to get detailed failure information with test counts
-4. **Agent identifies test failures**: Examines `test_info` in failed tasks to find unit test failures
-5. **Agent gets unit test details**: Calls `get_task_test_results_evergreen` for tasks with `failed_test_count > 0`
-6. **Agent gets detailed logs**: Calls `get_task_logs_evergreen` for specific failed tasks or uses test-specific log URLs
-7. **Agent suggests fixes**: Based on error patterns, specific test failures, and log analysis
+The assistant synthesizes all this information and provides:
+- Root cause analysis
+- Suggested fixes
+- Links to relevant logs
+- Similar past failures
 
-### Typical Agent Selection Logic
+### Workflow 2: Investigating Mainline Failures
 
-```python
-# Agent examines patches and selects based on criteria:
-for patch in patches:
-    if patch['status'] == 'failed' or patch['version_status'] == 'failed':
-        # This patch has failures - good candidate for analysis
-        selected_patch = patch
-        break
-    elif 'fix' in patch['description'].lower():
-        # This might be a fix attempt - worth checking
-        selected_patch = patch
+**Scenario**: You want to find recent mainline commit failures that have been bisected via stepback.
 
-# After getting failed jobs, agent can identify test failures:
-failed_jobs = get_patch_failed_jobs_evergreen(selected_patch['patch_id'])
-for task in failed_jobs['failed_tasks']:
-    test_info = task.get('test_info', {})
-    if test_info.get('has_test_results') and test_info.get('failed_test_count', 0) > 0:
-        # This task has unit test failures - get detailed test results
-        test_results = get_task_test_results_evergreen(task['task_id'])
-        # Analyze specific test failures for targeted suggestions
+Ask: *"Find recent stepback failures in the mongodb-mongo-master project for the compile task"*
+
+```json
+{
+  "tool": "get_stepback_tasks_evergreen",
+  "arguments": {
+    "project_id": "mongodb-mongo-master",
+    "limit": 20,
+    "variants": ["enterprise-rhel-80-64-bit-compile"]
+  }
+}
 ```
 
-## Testing
+The response shows:
+- Versions with failures
+- Tasks that failed
+- Stepback information (which commits were tested)
+- Links to investigate further
 
-The project includes comprehensive tests to ensure functionality and reliability.
+### Workflow 3: Monitoring Team's Patch Status
+
+**Scenario**: You're on-call and want to check if team members have failing patches.
+
+Ask: *"Are there any recent failing patches I should know about?"*
+
+The assistant:
+1. Calls `list_user_recent_patches_evergreen` to get your patches
+2. Checks status of each
+3. For failed patches, calls `get_patch_failed_jobs_evergreen`
+4. Summarizes failures with severity and urgency
+
+### Workflow 4: Comparative Analysis
+
+**Scenario**: Your test is flaky, and you want to compare multiple failures.
+
+Ask: *"Compare the failures in my last 3 patches"*
+
+The assistant:
+1. Lists your recent patches
+2. Gets failed jobs for each
+3. Analyzes common patterns
+4. Identifies if it's the same test failing
+5. Suggests if it's a flaky test vs. a real issue
+
+---
+
+## Advanced Configuration
+
+### Understanding Evergreen Configuration File
+
+The `~/.evergreen.yml` file is your central configuration for Evergreen authentication and project settings.
+
+**Basic structure:**
+```yaml
+user: your.email@example.com
+api_key: your_api_key_here
+api_server_host: https://evergreen.mongodb.com
+ui_server_host: https://spruce.mongodb.com
+```
+
+**With OIDC (managed by `evergreen login`):**
+```yaml
+user: your.email@example.com
+api_server_host: https://evergreen.mongodb.com
+ui_server_host: https://spruce.mongodb.com
+```
+
+The OIDC token is stored separately in `~/.kanopy/token-oidclogin.json`.
+
+### Project Auto-Detection
+
+Configure automatic project detection based on your workspace directory:
+
+```yaml
+user: your.email@example.com
+api_key: your_api_key
+projects_for_directory:
+  /Users/yourname/mongodb: mongodb-mongo-master
+  /Users/yourname/mms: mms
+  /Users/yourname/atlas-proxy: atlasproxy
+```
+
+**How it works:**
+1. The MCP server checks your current workspace directory
+2. Matches it against the configured paths
+3. Automatically sets the project context for tool calls
+4. The AI assistant receives this as part of its context
+
+**Priority order:**
+1. Explicit `project_id` argument in tool calls
+2. `EVERGREEN_PROJECT` environment variable
+3. Auto-detected from workspace directory
+4. Project specified in `~/.evergreen.yml` (if single project)
+
+### Environment Variables Reference
+
+| Variable | Type | Description | Example |
+|----------|------|-------------|---------|
+| `EVERGREEN_USER` | string | Username for API key auth | `john.doe@example.com` |
+| `EVERGREEN_API_KEY` | string | API key for authentication | `abc123def456...` |
+| `EVERGREEN_PROJECT` | string | Default project identifier | `mongodb-mongo-master` |
+| `EVERGREEN_API_SERVER` | string | API server URL (advanced) | `https://evergreen.mongodb.com` |
+| `EVERGREEN_MCP_TRANSPORT` | enum | Transport protocol | `stdio`, `sse`, `streamable-http` |
+| `EVERGREEN_MCP_HOST` | string | HTTP host binding | `0.0.0.0`, `127.0.0.1` |
+| `EVERGREEN_MCP_PORT` | integer | HTTP port | `8000` |
+| `WORKSPACE_PATH` | string | Workspace directory | `/path/to/project` |
+
+### Command-Line Arguments
+
+All command-line arguments and their usage:
+
+```bash
+evergreen-mcp-server [OPTIONS]
+```
+
+**Options:**
+
+`--project-id <PROJECT_ID>`
+- Explicitly set the default Evergreen project
+- Overrides auto-detection and environment variables
+- Example: `--project-id mongodb-mongo-master`
+
+`--workspace-dir <PATH>`
+- Specify workspace directory for project auto-detection
+- Useful when running outside the actual workspace
+- Example: `--workspace-dir /path/to/mongodb`
+
+`--transport <TRANSPORT>`
+- Choose transport protocol
+- Values: `stdio` (default), `sse`, `streamable-http`
+- Example: `--transport sse`
+
+`--host <HOST>`
+- Host to bind for HTTP transports
+- Default: `127.0.0.1` (localhost only)
+- Use `0.0.0.0` to allow external connections
+- Example: `--host 0.0.0.0`
+
+`--port <PORT>`
+- Port to listen on for HTTP transports
+- Default: `8000`
+- Example: `--port 9000`
+
+`--help`
+- Display help information and exit
+
+**Usage examples:**
+
+```bash
+# Basic usage (stdio with auto-detection)
+evergreen-mcp-server
+
+# Explicit project
+evergreen-mcp-server --project-id mms
+
+# HTTP server mode
+evergreen-mcp-server --transport sse --host 0.0.0.0 --port 8080
+
+# With workspace detection
+evergreen-mcp-server --workspace-dir ~/projects/mongodb
+
+# Combined
+evergreen-mcp-server --project-id mms --workspace-dir ~/projects/mms
+```
+
+### Advanced Docker Configuration
+
+#### Custom Networking
+
+Run on a specific Docker network:
+```bash
+docker network create mcp-network
+
+docker run --rm -i \
+  --network mcp-network \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+#### Resource Limits
+
+Limit CPU and memory:
+```bash
+docker run --rm -i \
+  --cpus="1.0" \
+  --memory="512m" \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+#### Using Docker Compose
+
+Create `docker-compose.yml`:
+```yaml
+version: '3.8'
+services:
+  evergreen-mcp:
+    image: ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+    stdin_open: true
+    volumes:
+      - ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro
+      - ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro
+    environment:
+      - EVERGREEN_PROJECT=mongodb-mongo-master
+      - EVERGREEN_MCP_TRANSPORT=sse
+      - EVERGREEN_MCP_HOST=0.0.0.0
+      - EVERGREEN_MCP_PORT=8000
+    ports:
+      - "8000:8000"
+```
+
+Start with: `docker-compose up`
+
+---
+
+## MCP Inspector Deep Dive
+
+The MCP Inspector is an essential tool for testing, debugging, and understanding your MCP server.
+
+### Installing MCP Inspector
+
+**Option 1: Use with npx (recommended for occasional use)**
+```bash
+npx @modelcontextprotocol/inspector <command>
+```
+
+**Option 2: Global installation**
+```bash
+npm install -g @modelcontextprotocol/inspector
+mcp-inspector <command>
+```
+
+### Basic Inspector Usage
+
+#### Testing Docker-based Server
+
+```bash
+npx @modelcontextprotocol/inspector docker run --rm -i \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+#### Testing Local Installation
+
+```bash
+# From the project directory
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
+
+# With project configuration
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server --project-id mms
+```
+
+### Inspector Interface Walkthrough
+
+When you start the inspector, it opens a web interface (typically at `http://localhost:6274`).
+
+#### 1. Connection Status Panel
+
+**Top-left corner** shows:
+- ✅ **Connected**: Server is running and responding
+- 🔄 **Connecting**: Inspector is starting the server
+- ❌ **Error**: Connection failed (check logs)
+
+#### 2. Server Info Tab
+
+Shows:
+- Server name and version
+- Available capabilities
+- Server metadata
+- Connection details
+
+#### 3. Tools Tab
+
+**This is where you test tool calls.**
+
+**Interface elements:**
+- **Tool Selector**: Dropdown of available tools
+- **Parameters Panel**: JSON editor for tool arguments
+- **Call Tool Button**: Execute the tool call
+- **Response Panel**: Shows the result
+
+**Example workflow:**
+
+1. Select `list_user_recent_patches_evergreen`
+2. Edit parameters:
+   ```json
+   {
+     "limit": 5,
+     "project_id": "mms"
+   }
+   ```
+3. Click "Call Tool"
+4. View response in the panel below
+5. Copy patch IDs for next calls
+
+#### 4. Resources Tab
+
+Browse available MCP resources:
+- List all resources
+- View resource URIs
+- Read resource contents
+- Test resource access
+
+#### 5. Prompts Tab
+
+If the server exposes prompt templates, you can:
+- List available prompts
+- View prompt templates
+- Test prompt execution
+
+#### 6. Logs Panel
+
+**Bottom panel** shows real-time logs:
+- Server stdout/stderr
+- Request/response messages
+- Error traces
+- Debug information
+
+**Log filtering:**
+- Click icons to filter by severity
+- Search logs with Cmd+F
+- Copy logs for debugging
+
+### Advanced Inspector Workflows
+
+#### Workflow 1: Complete Failure Investigation
+
+Simulate the AI assistant's workflow manually:
+
+```bash
+# Start inspector
+npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
+```
+
+1. **List patches** (Tools tab):
+   ```json
+   {
+     "tool": "list_user_recent_patches_evergreen",
+     "arguments": { "limit": 10 }
+   }
+   ```
+
+2. **Copy a patch_id** from the response
+
+3. **Get failed jobs**:
+   ```json
+   {
+     "tool": "get_patch_failed_jobs_evergreen",
+     "arguments": { "patch_id": "<copied_id>" }
+   }
+   ```
+
+4. **Copy a task_id** from the failed_tasks array
+
+5. **Get test results**:
+   ```json
+   {
+     "tool": "get_task_test_results_evergreen",
+     "arguments": { "task_id": "<copied_task_id>", "failed_only": true }
+   }
+   ```
+
+6. **Get logs**:
+   ```json
+   {
+     "tool": "get_task_logs_evergreen",
+     "arguments": { "task_id": "<copied_task_id>", "filter_errors": true }
+   }
+   ```
+
+#### Workflow 2: Performance Testing
+
+Test tool response times and data volume:
+
+1. Start inspector with logs visible
+2. Call `list_user_recent_patches_evergreen` with `limit: 50`
+3. Note response time in logs
+4. Check data size in response panel
+5. Test with different limits to find optimal values
+
+#### Workflow 3: Error Reproduction
+
+If users report issues:
+
+1. Start inspector with same configuration as user
+2. Reproduce the exact tool calls
+3. Check logs for error messages
+4. Verify authentication status
+5. Test with different parameters to isolate the issue
+
+### Debugging with Inspector
+
+#### Authentication Issues
+
+**Symptoms:**
+- 401 errors in logs
+- "Unauthorized" in responses
+
+**Debug steps:**
+1. Check "Logs" panel for auth errors
+2. Verify credential files are mounted (Docker) or exist (local)
+3. Test with: `list_user_recent_patches_evergreen` with `limit: 1`
+4. Check response for user identification
+
+#### Tool Parameter Issues
+
+**Symptoms:**
+- Tool calls fail with validation errors
+
+**Debug steps:**
+1. Use the Inspector's parameter editor
+2. Check required vs optional parameters
+3. Verify parameter types (string vs int vs array)
+4. Look at example responses to understand expected formats
+
+#### Network/API Issues
+
+**Symptoms:**
+- Timeouts
+- Partial responses
+
+**Debug steps:**
+1. Check logs for GraphQL errors
+2. Monitor response times
+3. Test with smaller data requests
+4. Verify Evergreen API is accessible
+
+### Inspector Tips and Tricks
+
+**Keyboard shortcuts:**
+- `Cmd/Ctrl + F`: Search logs
+- `Cmd/Ctrl + K`: Clear logs
+- `Cmd/Ctrl + E`: Focus parameter editor
+
+**JSON editing:**
+- Use the built-in JSON editor for syntax highlighting
+- Format JSON with Cmd+Shift+F
+- Validate before calling
+
+**Saving test cases:**
+- Copy successful tool calls for documentation
+- Save parameter sets for regression testing
+- Export responses for test fixtures
+
+---
+
+## IDE Integration (Detailed)
+
+Comprehensive guides for integrating the Evergreen MCP server with various IDEs and AI coding assistants.
+
+### Cursor IDE (Comprehensive)
+
+**Setup locations:**
+1. **Workspace-specific**: `.cursor/mcp.json` in your project root
+2. **Global**: Settings → Features → MCP
+
+**Basic configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**With automatic project detection:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "-v", "${workspaceFolder}:${workspaceFolder}:ro",
+        "-e", "WORKSPACE_PATH=${workspaceFolder}",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**Using local installation:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "/Users/yourname/evergreen-mcp-server/.venv/bin/evergreen-mcp-server",
+      "args": ["--workspace-dir", "${workspaceFolder}"]
+    }
+  }
+}
+```
+
+**Testing in Cursor:**
+1. Save `.cursor/mcp.json`
+2. Reload window: Cmd+Shift+P → "Developer: Reload Window"
+3. Open MCP panel: Cmd+Shift+P → "MCP: Show Panel"
+4. Verify "evergreen" server shows ✓ Connected
+5. Test by asking: "Show my recent Evergreen patches"
+
+**Cursor-specific tips:**
+- Cursor automatically injects workspace context
+- Use `${workspaceFolder}` for workspace-relative paths
+- Cursor shows MCP status in the status bar
+- Click the MCP icon to see connected servers
+
+### Claude Desktop (Comprehensive)
+
+**Configuration file locations:**
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+**Full configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ],
+      "env": {
+        "EVERGREEN_PROJECT": "mongodb-mongo-master"
+      }
+    }
+  },
+  "globalShortcut": "Ctrl+Space"
+}
+```
+
+**Multiple servers example:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-v", "...", "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/yourname/projects"]
+    }
+  }
+}
+```
+
+**Setup checklist:**
+1. ✅ Create/edit config file
+2. ✅ Validate JSON syntax
+3. ✅ Quit Claude Desktop completely (not just close window)
+4. ✅ Verify Docker is running: `docker ps`
+5. ✅ Start Claude Desktop
+6. ✅ Look for 🔌 icon (bottom-right)
+7. ✅ Click 🔌 to verify "evergreen" is connected
+8. ✅ Test with a query
+
+**Troubleshooting Claude Desktop:**
+
+*Problem: No 🔌 icon appears*
+- Verify JSON syntax (use `jsonlint` or online validator)
+- Check file location is correct
+- Ensure file is named exactly `claude_desktop_config.json`
+
+*Problem: Server shows as disconnected*
+- Check Docker is running: `docker ps`
+- Verify credential files exist: `ls -la ~/.evergreen.yml`
+- Check Claude logs: Settings → Advanced → View Logs
+
+*Problem: Server connects but tools don't work*
+- Test authentication with: `evergreen --version`
+- Verify `evergreen login` was successful
+- Check token file exists: `ls -la ~/.kanopy/token-oidclogin.json`
+
+### VS Code MCP Extension (Comprehensive)
+
+**Prerequisites:**
+1. Install VS Code MCP extension from marketplace
+2. Ensure Docker is installed (for Docker method)
+
+**Configuration location:**
+- Open Settings (JSON): Cmd+, → Open Settings (JSON)
+- Or edit `.vscode/settings.json` in workspace
+
+**Docker configuration:**
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+**Per-workspace configuration:**
+Create `.vscode/settings.json`:
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/evergreen-mcp-server",
+      "args": ["--workspace-dir", "${workspaceFolder}"],
+      "env": {
+        "EVERGREEN_PROJECT": "mongodb-mongo-master"
+      }
+    }
+  }
+}
+```
+
+**VS Code variable reference:**
+- `${workspaceFolder}`: Current workspace root
+- `${userHome}`: User's home directory
+- `${env:VAR_NAME}`: Environment variable
+
+**Testing in VS Code:**
+1. Save settings.json
+2. Reload window: Cmd+Shift+P → "Developer: Reload Window"
+3. Open MCP panel (if extension provides one)
+4. Check Output panel → MCP for logs
+
+### Augment (Comprehensive)
+
+Augment is an AI coding assistant available for VS Code and JetBrains IDEs.
+
+#### Augment in VS Code
+
+**Configuration in settings.json:**
+```json
+{
+  "augment.mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+**Using HTTP/SSE transport:**
+
+First, start the server:
+```bash
+docker run --rm -p 8000:8000 \
+  -e EVERGREEN_MCP_TRANSPORT=sse \
+  -e EVERGREEN_MCP_HOST=0.0.0.0 \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+Then configure Augment:
+```json
+{
+  "augment.mcpServers": {
+    "evergreen": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+#### Augment in JetBrains IDEs
+
+**Configuration:**
+1. Open Augment plugin settings
+2. Navigate to MCP Servers section
+3. Add new server configuration:
+
+```json
+{
+  "evergreen": {
+    "command": "docker",
+    "args": [
+      "run", "--rm", "-i",
+      "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+      "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+      "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+    ]
+  }
+}
+```
+
+**Testing Augment integration:**
+1. Restart IDE/reload Augment
+2. Open Augment chat
+3. Type: "Can you check my recent Evergreen patches?"
+4. Augment should use the MCP server to fetch the data
+
+### GitHub Copilot Chat (Comprehensive)
+
+**Note**: MCP support in GitHub Copilot is experimental and may require specific Copilot versions.
+
+**VS Code configuration:**
+```json
+{
+  "github.copilot.chat.mcp": {
+    "servers": {
+      "evergreen": {
+        "command": "docker",
+        "args": [
+          "run", "--rm", "-i",
+          "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+          "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+          "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Using with Copilot Workspace:**
+
+If using Copilot in workspace mode:
+```json
+{
+  "github.copilot.chat.mcp": {
+    "servers": {
+      "evergreen": {
+        "command": "${workspaceFolder}/.venv/bin/evergreen-mcp-server",
+        "args": ["--workspace-dir", "${workspaceFolder}"]
+      }
+    }
+  }
+}
+```
+
+### Windsurf (Comprehensive)
+
+Windsurf is Codeium's agentic IDE.
+
+**Configuration location:**
+- Settings → Extensions → MCP Servers
+
+**Configuration:**
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+### Other IDEs and Generic Setup
+
+For any IDE that supports MCP, follow this general pattern:
+
+**Step 1: Identify MCP configuration location**
+- Check IDE documentation for MCP settings
+- Usually in settings JSON or dedicated MCP panel
+
+**Step 2: Use appropriate configuration format**
+
+Docker-based (most portable):
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-v", "<home>/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "<home>/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+    "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+  ]
+}
+```
+
+Local installation:
+```json
+{
+  "command": "/absolute/path/to/.venv/bin/evergreen-mcp-server",
+  "args": []
+}
+```
+
+**Step 3: Test the configuration**
+1. Save configuration
+2. Restart IDE or reload settings
+3. Verify server appears in MCP panel (if available)
+4. Test with a simple query
+
+### Configuration Troubleshooting Guide
+
+#### Problem: Server won't start
+
+**Checklist:**
+- ✅ Docker is running: `docker ps`
+- ✅ Credentials exist: `ls -la ~/.evergreen.yml ~/.kanopy/token-oidclogin.json`
+- ✅ Path is absolute (for local installations)
+- ✅ Virtual environment is activated (for local)
+- ✅ JSON syntax is valid
+
+#### Problem: Server starts but authentication fails
+
+**Check:**
+1. `evergreen login` status
+2. Token file permissions
+3. Config file format
+4. Environment variables
+
+**Test manually:**
+```bash
+# Docker method
+docker run --rm -it \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
+  --help
+
+# Local method
+.venv/bin/evergreen-mcp-server --help
+```
+
+#### Problem: Tools don't appear or aren't working
+
+**Debug steps:**
+1. Check IDE logs for MCP errors
+2. Use MCP Inspector to verify tool availability
+3. Test tool calls directly with Inspector
+4. Verify project_id is correct
+
+---
+
+## Troubleshooting
+
+### "Authentication failed" errors
+
+1. Re-run `evergreen login` to refresh your credentials
+2. Verify `~/.evergreen.yml` exists and has valid credentials
+3. Check that `~/.kanopy/token-oidclogin.json` exists (for OIDC)
+4. Test authentication: `evergreen --version`
+
+### "Project not found" errors
+
+1. Use `get_inferred_project_ids_evergreen` to discover available projects
+2. Specify `project_id` explicitly in your tool calls
+3. Add project mappings to `~/.evergreen.yml`
+4. Verify project identifier spelling (case-sensitive)
+
+### Docker permission errors
+
+Ensure Docker can read your credential files:
+```bash
+ls -la ~/.evergreen.yml ~/.kanopy/token-oidclogin.json
+chmod 600 ~/.evergreen.yml ~/.kanopy/token-oidclogin.json
+```
+
+### Token refresh issues
+
+OIDC tokens expire. Re-run `evergreen login` if you see authentication errors after some time.
+
+### MCP Server won't connect
+
+1. Check if Docker is running: `docker ps`
+2. Test Docker image manually:
+   ```bash
+   docker run --rm -it ghcr.io/evergreen-ci/evergreen-mcp-server:latest --help
+   ```
+3. Verify JSON configuration syntax
+4. Check IDE/client logs for error messages
+
+### Tools return no data
+
+1. Verify you have access to the Evergreen project
+2. Check if patches/tasks exist in the specified time range
+3. Test with broader parameters (higher `limit`, no filters)
+4. Use MCP Inspector to isolate the issue
+
+---
+
+## Development
+
+### Project Structure
+
+```
+evergreen-mcp-server/
+├── src/evergreen_mcp/
+│   ├── server.py                    # Main MCP server
+│   ├── mcp_tools.py                 # Tool definitions
+│   ├── evergreen_graphql_client.py  # GraphQL client
+│   └── evergreen_queries.py         # GraphQL queries
+├── tests/
+├── Dockerfile
+├── pyproject.toml
+└── README.md
+```
 
 ### Running Tests
 
 ```bash
-# Run all tests with pytest (recommended)
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
 python -m pytest tests/ -v
 
-# Run specific test files
-python -m pytest tests/test_basic.py -v
-python -m pytest tests/test_mcp_client.py -v
-
-# Run tests with unittest
-python -m unittest tests.test_basic -v
-
-# Run integration test directly
-python tests/test_mcp_client.py
+# Run with coverage
+python -m pytest --cov=evergreen_mcp tests/
 ```
 
-### Test Structure
-
-- **`tests/test_basic.py`**: Unit tests for individual components
-  - Tool definitions and handlers validation
-  - Module import verification
-  - Component functionality testing
-
-- **`tests/test_mcp_client.py`**: Full integration test
-  - End-to-end MCP protocol testing
-  - Real Evergreen API connectivity
-  - Tool execution and response validation
-
-### Test Requirements
-
-- **Unit Tests**: No external dependencies, run offline
-- **Integration Tests**: Require valid `~/.evergreen.yml` configuration
-- **Development Dependencies**: Install with `pip install -e ".[dev]"`
-
 ### Code Quality
-
-The project uses automated code formatting and linting:
 
 ```bash
 # Format code
@@ -1255,87 +1842,25 @@ black src/ tests/
 # Sort imports
 isort src/ tests/
 
-# Check for syntax errors and style issues
-flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+# Lint
+flake8 src/ tests/
 ```
-
-### Continuous Integration
-
-GitHub Actions workflows automatically:
-- **Test Workflow**: Tests code compilation, imports, and unit tests across Python 3.11-3.13
-- **Lint Workflow**: Validates code formatting, import sorting, and style guidelines
-- **PR Checks**: All workflows run on pull requests to ensure code quality
-
-## Development
-
-### Project Structure
-
-```
-evergreen-mcp-server/
-├── src/
-│   └── evergreen_mcp/
-│       ├── __init__.py                  # Package initialization
-│       ├── server.py                    # Main MCP server implementation
-│       ├── tools.py                     # MCP tool definitions and handlers
-│       ├── evergreen_graphql_client.py  # GraphQL client for Evergreen API
-│       ├── failed_jobs_tools.py         # Core logic for patch and failed jobs analysis
-│       └── evergreen_queries.py         # GraphQL query definitions
-├── tests/
-│   ├── test_basic.py                    # Unit tests for components
-│   └── test_mcp_client.py               # MCP integration tests (full end-to-end)
-├── scripts/
-│   └── fetch_graphql_schema.sh          # Script to update GraphQL schema
-├── Dockerfile                           # Docker container configuration
-├── pyproject.toml                       # Project configuration and dependencies
-└── README.md                            # This file
-```
-
-### Key Components
-
-- **Server Lifespan**: Manages Evergreen API client lifecycle
-- **Resource Handlers**: Provide access to Evergreen resources
-- **Authentication**: Handles API key authentication with Evergreen
-
-### Dependencies
-
-**Runtime Dependencies:**
-- `mcp`: Model Context Protocol implementation
-- `aiohttp`: Async HTTP client for API calls
-- `gql[aiohttp]`: GraphQL client with async HTTP transport
-- `pyyaml`: YAML configuration file parsing
-- `pydantic`: Data validation and serialization
-- `python-dateutil`: Date/time parsing utilities
-
-**Development Dependencies:**
-- `pytest`: Testing framework
-- `pytest-asyncio`: Async test support
 
 ### Updating GraphQL Schema
-
-To update the Evergreen GraphQL schema:
 
 ```bash
 ./scripts/fetch_graphql_schema.sh
 ```
 
-### Cleaning Generated Files
+### Contributing
 
-```bash
-./scripts/clean
-```
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Ensure all tests pass
+5. Submit a pull request
 
-
-### Debug Mode
-
-For debugging, you can run the server with additional logging:
-
-```bash
-# Set environment variable for debug logging
-export PYTHONPATH=src
-python -c "import logging; logging.basicConfig(level=logging.DEBUG); from server import main; main()"
-```
-
-
+---
 
 ## License
 
@@ -1344,3 +1869,4 @@ This project follows the same license as the main Evergreen project.
 ## Version
 
 Current version: 0.4.0
+
