@@ -187,20 +187,7 @@ This is the most secure and easiest approach for most users.
 - Docker installed and running
 - Evergreen CLI installed (`evergreen login` completed)
 
-**How it works:**
-1. Your AI assistant executes the Docker command
-2. Docker mounts your credential files as read-only volumes
-3. The server inside the container uses these credentials to authenticate with Evergreen
-4. Communication happens via stdio through Docker's input/output streams
-
-**Advantages:**
-- ✅ No local Python environment needed
-- ✅ Credentials stay secure (never in environment variables)
-- ✅ Automatic token refresh
-- ✅ Isolated from your system
-- ✅ Always uses the latest stable version
-
-**Configuration example:**
+**Configuration:**
 ```json
 {
   "mcpServers": {
