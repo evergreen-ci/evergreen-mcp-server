@@ -24,6 +24,4 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
         send_default_pii=True,
         integrations=[MCPIntegration()],
     )
-    sys.stderr.write(
-        "Sentry MCP observability enabled"
-    )
+    sys.stderr.write("Sentry MCP observability enabled")
