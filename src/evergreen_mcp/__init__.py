@@ -25,5 +25,5 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
         integrations=[MCPIntegration()],
     )
     sys.stderr.write(
-        f"Sentry MCP observability enabled (environment: {os.getenv('SENTRY_ENVIRONMENT', 'production')})\n"
+        "Sentry MCP observability enabled"
     )
