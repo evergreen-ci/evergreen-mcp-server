@@ -112,6 +112,8 @@ Once configured, you can ask your AI assistant questions like:
 
 That's it! The server will use your `evergreen login` credentials automatically.
 
+> **Note:** Telemetry is disabled by default to help improve reliability. To disable it, add `-e SENTRY_ENABLED=true` to the Docker args. See [Telemetry](#telemetry) for details.
+
 ---
 
 ## Alternative Setup Methods
@@ -998,6 +1000,7 @@ projects_for_directory:
 | `EVERGREEN_MCP_HOST` | string | HTTP host binding | `0.0.0.0`, `127.0.0.1` |
 | `EVERGREEN_MCP_PORT` | integer | HTTP port | `8000` |
 | `WORKSPACE_PATH` | string | Workspace directory | `/path/to/project` |
+| `SENTRY_ENABLED` | boolean | Enable/disable telemetry (default: true) | `true`, `false` |
 
 ### Command-Line Arguments
 
@@ -1800,6 +1803,45 @@ OIDC tokens expire. Re-run `evergreen login` if you see authentication errors af
 2. Check if patches/tasks exist in the specified time range
 3. Test with broader parameters (higher `limit`, no filters)
 4. Use MCP Inspector to isolate the issue
+
+---
+
+## Telemetry
+
+The Evergreen MCP Server includes optional telemetry via Sentry to help improve reliability and diagnose issues.
+
+### What's Collected
+
+- Error reports and stack traces when the server encounters failures
+- Performance traces for MCP tool calls
+- No personally identifiable information (PII) is collected by default
+
+### Disabling Telemetry
+
+Telemetry is **enabled by default**. To disable it, set the `SENTRY_ENABLED` environment variable to `false`:
+
+**Docker:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "SENTRY_ENABLED=false",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**Local installation:**
+```bash
+SENTRY_ENABLED=false evergreen-mcp-server
+```
 
 ---
 
