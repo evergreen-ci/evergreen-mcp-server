@@ -19,11 +19,9 @@ SENTRY_DSN = os.getenv(
 
 if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
     sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "1.0")),
-        send_default_pii=os.getenv("SENTRY_SEND_DEFAULT_PII", "false").lower()
-        == "true",
-        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        dsn=os.getenv("SENTRY_DSN", SENTRY_DSN),
+        traces_sample_rate=1.0,
+        send_default_pii=True,
         integrations=[MCPIntegration()],
     )
     sys.stderr.write(
