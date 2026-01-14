@@ -7,6 +7,7 @@ __version__ = "0.4.0"
 
 import os
 import sys
+
 import sentry_sdk
 from sentry_sdk.integrations.mcp import MCPIntegration
 
