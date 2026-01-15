@@ -21,10 +21,6 @@ USER evergreen
 # This overrides the path in ~/.evergreen.yml which has host paths
 ENV EVERGREEN_TOKEN_FILE=/home/evergreen/.kanopy/token-oidclogin.json
 
-# Telemetry: Sentry is disabled by default for error monitoring
-# Set SENTRY_ENABLED=true to enable telemetry
-ENV SENTRY_ENABLED=false
-
 # Set entry point
 ENTRYPOINT ["evergreen-mcp-server"]
 

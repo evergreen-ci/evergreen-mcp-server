@@ -55,6 +55,7 @@ Add to your Cursor MCP settings (`.cursor/mcp.json` or Settings → MCP):
         "run", "--rm", "-i",
         "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "-e", "SENTRY_ENABLED=true",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
     }
@@ -112,7 +113,7 @@ Once configured, you can ask your AI assistant questions like:
 
 That's it! The server will use your `evergreen login` credentials automatically.
 
-> **Note:** Telemetry is disabled by default to help improve reliability. To disable it, add `-e SENTRY_ENABLED=true` to the Docker args. See [Telemetry](#telemetry) for details.
+> **Note:** Telemetry is disabled by default. To enable it and help improve reliability, add `-e SENTRY_ENABLED=true` to the Docker args. See [Telemetry](#telemetry) for details.
 
 ---
 
@@ -134,6 +135,7 @@ If you can't use OIDC authentication, you can use API keys instead:
         "run", "--rm", "-i",
         "-e", "EVERGREEN_USER=your_username",
         "-e", "EVERGREEN_API_KEY=your_api_key",
+        "-e", "SENTRY_ENABLED=true",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
     }
@@ -1000,7 +1002,7 @@ projects_for_directory:
 | `EVERGREEN_MCP_HOST` | string | HTTP host binding | `0.0.0.0`, `127.0.0.1` |
 | `EVERGREEN_MCP_PORT` | integer | HTTP port | `8000` |
 | `WORKSPACE_PATH` | string | Workspace directory | `/path/to/project` |
-| `SENTRY_ENABLED` | boolean | Enable/disable telemetry (default: true) | `true`, `false` |
+| `SENTRY_ENABLED` | boolean | Enable/disable telemetry (default: false) | `true`, `false` |
 
 ### Command-Line Arguments
 
@@ -1816,9 +1818,9 @@ The Evergreen MCP Server includes optional telemetry via Sentry to help improve 
 - Performance traces for MCP tool calls
 - No personally identifiable information (PII) is collected by default
 
-### Disabling Telemetry
+### Enabling Telemetry
 
-Telemetry is **disabled by default**. To disable it, set the `SENTRY_ENABLED` environment variable to `true`:
+Telemetry is **disabled by default**. To enable it and help improve reliability, set the `SENTRY_ENABLED` environment variable to `true`:
 
 **Docker:**
 ```json
@@ -1840,7 +1842,7 @@ Telemetry is **disabled by default**. To disable it, set the `SENTRY_ENABLED` en
 
 **Local installation:**
 ```bash
-SENTRY_ENABLED=false evergreen-mcp-server
+SENTRY_ENABLED=true evergreen-mcp-server
 ```
 
 ---
