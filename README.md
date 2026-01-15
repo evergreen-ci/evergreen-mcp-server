@@ -113,7 +113,7 @@ Once configured, you can ask your AI assistant questions like:
 
 That's it! The server will use your `evergreen login` credentials automatically.
 
-> **Note:** Telemetry is disabled by default. To enable it and help improve reliability, add `-e SENTRY_ENABLED=true` to the Docker args. See [Telemetry](#telemetry) for details.
+> **Note:** Telemetry is enabled by default to help improve reliability. To disable it, change the arg SENTRY_ENABLED from true to false i.e. `-e SENTRY_ENABLED=false`. See [Telemetry](#telemetry) for details.
 
 ---
 
@@ -1002,7 +1002,7 @@ projects_for_directory:
 | `EVERGREEN_MCP_HOST` | string | HTTP host binding | `0.0.0.0`, `127.0.0.1` |
 | `EVERGREEN_MCP_PORT` | integer | HTTP port | `8000` |
 | `WORKSPACE_PATH` | string | Workspace directory | `/path/to/project` |
-| `SENTRY_ENABLED` | boolean | Enable/disable telemetry (default: false) | `true`, `false` |
+| `SENTRY_ENABLED` | boolean | Enable/disable telemetry (default: true) | `true`, `false` |
 
 ### Command-Line Arguments
 
