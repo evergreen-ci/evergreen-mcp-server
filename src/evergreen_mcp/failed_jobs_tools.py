@@ -47,7 +47,9 @@ async def fetch_user_recent_patches(
         patches = await client.get_user_recent_patches(user_id, page_size, page)
     except Exception as e:
         error_message = str(e)
-        logger.warning("Failed to fetch patches for user %s: %s", user_id, error_message)
+        logger.warning(
+            "Failed to fetch patches for user %s: %s", user_id, error_message
+        )
         return format_error_response(
             error_message=f"Failed to fetch patches: {error_message}",
             suggestions=[
