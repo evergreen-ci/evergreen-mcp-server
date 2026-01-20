@@ -15,7 +15,6 @@ from typing import AsyncIterator
 
 import yaml
 from fastmcp import Context, FastMCP
-
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.mcp_tools import register_tools
@@ -237,21 +236,6 @@ mcp = FastMCP(
 """,
 )
 
-
-async def error_handling_middleware(context, call_next):
-    """Middleware to catch tool errors and return clean error responses.
-
-    Logs errors with exc_info=True so Sentry captures them automatically,
-    while returning a structured error dict to the client.
-    """
-    try:
-        return await call_next(context)
-    except Exception as e:
-        logger.error("Tool call failed: %s - %s", context.method, str(e), exc_info=True)
-        return {"error": str(e)}
-
-
-mcp.add_middleware(error_handling_middleware)
 
 register_tools(mcp)
 

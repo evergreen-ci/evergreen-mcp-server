@@ -8,8 +8,10 @@ __version__ = "0.4.0"
 import os
 import sys
 
+import logging
+
 import sentry_sdk
-from sentry_sdk.integrations.mcp import MCPIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 SENTRY_DSN = os.getenv(
     "SENTRY_DSN",
@@ -22,6 +24,9 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
         dsn=os.getenv("SENTRY_DSN", SENTRY_DSN),
         traces_sample_rate=1.0,
         send_default_pii=True,
-        integrations=[MCPIntegration()],
+        shutdown_timeout=10,  # Give more time to flush events before process exit
+        integrations=[
+            LoggingIntegration(level=logging.INFO, event_level=logging.CRITICAL),
+        ],
     )
     sys.stderr.write("Sentry MCP observability enabled")
