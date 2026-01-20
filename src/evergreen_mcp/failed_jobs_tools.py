@@ -43,20 +43,7 @@ async def fetch_user_recent_patches(
         logger.info("Project filter: %s", project_id)
 
     # Get user's recent patches for this page
-    try:
-        patches = await client.get_user_recent_patches(user_id, page_size, page)
-    except Exception as e:
-        error_message = str(e)
-        logger.warning(
-            "Failed to fetch patches for user %s: %s", user_id, error_message
-        )
-        return format_error_response(
-            error_message=f"Failed to fetch patches: {error_message}",
-            suggestions=[
-                "Check your authentication credentials",
-                "Verify you have access to Evergreen",
-            ],
-        )
+    patches = await client.get_user_recent_patches(user_id, page_size, page)
 
     # Process and format patches
     processed_patches = []
@@ -123,21 +110,8 @@ async def fetch_patch_failed_jobs(
         logger.info("Project context: %s", project_id)
 
     # Get patch with failed tasks
-    try:
-        patch = await client.get_patch_failed_tasks(patch_id)
-    except Exception as e:
-        # Return structured error response instead of raising
-        # This prevents duplicate Sentry notifications from FastMCP's exception handler
-        error_message = str(e)
-        logger.warning("Failed to fetch patch %s: %s", patch_id, error_message)
-        return format_error_response(
-            error_message=f"Failed to fetch patch '{patch_id}': {error_message}",
-            suggestions=[
-                "Verify the patch_id is correct (should be a 24-character hex string)",
-                "Check that you have access to this patch",
-                "Use list_user_recent_patches_evergreen to find valid patch IDs",
-            ],
-        )
+    patch = await client.get_patch_failed_tasks(patch_id)
+
     if project_id and patch.get("projectIdentifier") != project_id:
         raise ValueError("Patch does not belong to the specified project")
 
@@ -268,29 +242,14 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
     # Extract and validate arguments
     task_id = arguments.get("task_id")
     if not task_id:
-        return format_error_response(
-            error_message="task_id parameter is required",
-            suggestions=["Provide a valid task_id from get_patch_failed_jobs results"],
-        )
+        raise ValueError("task_id parameter is required")
 
     execution = arguments.get("execution", 0)
     max_lines = arguments.get("max_lines", 1000)
     filter_errors = arguments.get("filter_errors", True)
 
     # Fetch task logs
-    try:
-        task_data = await client.get_task_logs(task_id, execution)
-    except Exception as e:
-        error_message = str(e)
-        logger.warning("Failed to fetch logs for task %s: %s", task_id, error_message)
-        return format_error_response(
-            error_message=f"Failed to fetch logs for task '{task_id}': {error_message}",
-            suggestions=[
-                "Verify the task_id is correct",
-                "Check that the execution number is valid",
-                "Use get_patch_failed_jobs to find valid task IDs",
-            ],
-        )
+    task_data = await client.get_task_logs(task_id, execution)
 
     # Process logs
     raw_logs = task_data.get("taskLogs", {}).get("taskLogs", [])
@@ -327,33 +286,16 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
     # Extract and validate arguments
     task_id = arguments.get("task_id")
     if not task_id:
-        return format_error_response(
-            error_message="task_id parameter is required",
-            suggestions=["Provide a valid task_id from get_patch_failed_jobs results"],
-        )
+        raise ValueError("task_id parameter is required")
 
     execution = arguments.get("execution", 0)
     failed_only = arguments.get("failed_only", True)
     limit = arguments.get("limit", 100)
 
     # Fetch task test results
-    try:
-        task_data = await client.get_task_test_results(
-            task_id, execution, failed_only, limit
-        )
-    except Exception as e:
-        error_message = str(e)
-        logger.warning(
-            "Failed to fetch test results for task %s: %s", task_id, error_message
-        )
-        return format_error_response(
-            error_message=f"Failed to fetch test results for task '{task_id}': {error_message}",
-            suggestions=[
-                "Verify the task_id is correct",
-                "Check that the task has test results (hasTestResults: true)",
-                "Use get_patch_failed_jobs to find tasks with test results",
-            ],
-        )
+    task_data = await client.get_task_test_results(
+        task_id, execution, failed_only, limit
+    )
 
     # Extract task information
     task_info = {
@@ -489,22 +431,7 @@ async def fetch_inferred_project_ids(
     )
 
     # Fetch patches to infer project identifiers
-    try:
-        patches = await client.get_inferred_project_ids(
-            user_id, limit=max_patches, page=0
-        )
-    except Exception as e:
-        error_message = str(e)
-        logger.warning(
-            "Failed to fetch project IDs for user %s: %s", user_id, error_message
-        )
-        return format_error_response(
-            error_message=f"Failed to fetch project IDs: {error_message}",
-            suggestions=[
-                "Check your authentication credentials",
-                "Verify you have access to Evergreen",
-            ],
-        )
+    patches = await client.get_inferred_project_ids(user_id, limit=max_patches, page=0)
 
     # Extract unique project identifiers and count patches per project
     project_counts: Dict[str, int] = {}
@@ -656,30 +583,14 @@ async def infer_project_id_from_context(
         project_id=project_id,
         confidence="low",
         available_projects=available_projects,
-        message=(f"""
+        message=(
+            f"""
                 You are an ai assistant working with the user to help diagnose the recent patches. 
                 The patches are coming from the project_id {project_id}. 
                 However you should also verify with the user if that is the correct project_id,
                 as we have other project_ids that are also valid such as {others_msg}.
                 If this is incorrect, please specify project_id explicitly.
-            """),
+            """
+        ),
         source="most_recent_fallback",
     )
-
-
-def format_error_response(
-    error_message: str, suggestions: List[str] = None
-) -> Dict[str, Any]:
-    """Format a standardized error response
-
-    Args:
-        error_message: Main error message
-        suggestions: Optional list of suggestions for the user
-
-    Returns:
-        Formatted error response dictionary
-    """
-    response = {"error": error_message}
-    if suggestions:
-        response["suggestions"] = suggestions
-    return response

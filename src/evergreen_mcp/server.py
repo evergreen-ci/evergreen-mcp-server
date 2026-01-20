@@ -238,6 +238,21 @@ mcp = FastMCP(
 )
 
 
+async def error_handling_middleware(context, call_next):
+    """Middleware to catch tool errors and return clean error responses.
+
+    Logs errors with exc_info=True so Sentry captures them automatically,
+    while returning a structured error dict to the client.
+    """
+    try:
+        return await call_next(context)
+    except Exception as e:
+        logger.error("Tool call failed: %s - %s", context.method, str(e), exc_info=True)
+        return {"error": str(e)}
+
+
+mcp.add_middleware(error_handling_middleware)
+
 register_tools(mcp)
 
 
