@@ -157,15 +157,25 @@ class EvergreenGraphQLClient:
                         )
                         return result
                     except TransportError as retry_e:
+                        logger.error(
+                            "GraphQL transport error on retry after token refresh",
+                            exc_info=True,
+                        )
                         raise Exception(
                             f"Failed to execute GraphQL query after token refresh: {retry_e}"
                         ) from retry_e
                     except Exception as retry_e:
+                        logger.error(
+                            "GraphQL query execution error on retry after token refresh",
+                            exc_info=True,
+                        )
                         raise Exception(
                             f"Query failed after token refresh: {retry_e}"
                         ) from retry_e
+            logger.error("GraphQL transport error", exc_info=True)
             raise Exception(f"Failed to execute GraphQL query: {e}") from e
         except Exception:
+            logger.error("GraphQL query execution error", exc_info=True)
             raise
 
     async def _try_refresh_token(self) -> bool:
