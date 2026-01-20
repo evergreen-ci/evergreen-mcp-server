@@ -5,10 +5,9 @@ This is the upgraded version of the Evergreen MCP Server using FastMCP.
 
 __version__ = "0.4.0"
 
+import logging
 import os
 import sys
-
-import logging
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration

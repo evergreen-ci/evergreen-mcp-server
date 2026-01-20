@@ -15,6 +15,7 @@ from typing import AsyncIterator
 
 import yaml
 from fastmcp import Context, FastMCP
+
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.mcp_tools import register_tools
