@@ -1808,45 +1808,6 @@ OIDC tokens expire. Re-run `evergreen login` if you see authentication errors af
 
 ---
 
-## Telemetry
-
-The Evergreen MCP Server includes optional telemetry via Sentry to help improve reliability and diagnose issues.
-
-### What's Collected
-
-- Error reports and stack traces when the server encounters failures
-- Performance traces for MCP tool calls
-- No personally identifiable information (PII) is collected by default
-
-### Enabling Telemetry
-
-Telemetry is **disabled by default**. To enable it and help improve reliability, set the `SENTRY_ENABLED` environment variable to `true`:
-
-**Docker:**
-```json
-{
-  "mcpServers": {
-    "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "SENTRY_ENABLED=true",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-      ]
-    }
-  }
-}
-```
-
-**Local installation:**
-```bash
-SENTRY_ENABLED=true evergreen-mcp-server
-```
-
----
-
 ## Development
 
 ### Project Structure

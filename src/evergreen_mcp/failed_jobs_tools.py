@@ -43,7 +43,18 @@ async def fetch_user_recent_patches(
         logger.info("Project filter: %s", project_id)
 
     # Get user's recent patches for this page
-    patches = await client.get_user_recent_patches(user_id, page_size, page)
+    try:
+        patches = await client.get_user_recent_patches(user_id, page_size, page)
+    except Exception as e:
+        error_message = str(e)
+        logger.warning("Failed to fetch patches for user %s: %s", user_id, error_message)
+        return format_error_response(
+            error_message=f"Failed to fetch patches: {error_message}",
+            suggestions=[
+                "Check your authentication credentials",
+                "Verify you have access to Evergreen",
+            ],
+        )
 
     # Process and format patches
     processed_patches = []
@@ -102,14 +113,29 @@ async def fetch_patch_failed_jobs(
         project_id: Optional project identifier to validate patch ownership
 
     Returns:
-        Dictionary containing patch info and failed jobs data
+        Dictionary containing patch info and failed jobs data,
+        or an error response if the patch is not found/invalid
     """
     logger.info("Fetching failed jobs for patch %s", patch_id)
     if project_id:
         logger.info("Project context: %s", project_id)
 
     # Get patch with failed tasks
-    patch = await client.get_patch_failed_tasks(patch_id)
+    try:
+        patch = await client.get_patch_failed_tasks(patch_id)
+    except Exception as e:
+        # Return structured error response instead of raising
+        # This prevents duplicate Sentry notifications from FastMCP's exception handler
+        error_message = str(e)
+        logger.warning("Failed to fetch patch %s: %s", patch_id, error_message)
+        return format_error_response(
+            error_message=f"Failed to fetch patch '{patch_id}': {error_message}",
+            suggestions=[
+                "Verify the patch_id is correct (should be a 24-character hex string)",
+                "Check that you have access to this patch",
+                "Use list_user_recent_patches_evergreen to find valid patch IDs",
+            ],
+        )
     if project_id and patch.get("projectIdentifier") != project_id:
         raise ValueError("Patch does not belong to the specified project")
 
@@ -234,19 +260,35 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
                    filter_errors
 
     Returns:
-        Dictionary containing task logs
+        Dictionary containing task logs,
+        or an error response if the task is not found/invalid
     """
     # Extract and validate arguments
     task_id = arguments.get("task_id")
     if not task_id:
-        raise ValueError("task_id parameter is required")
+        return format_error_response(
+            error_message="task_id parameter is required",
+            suggestions=["Provide a valid task_id from get_patch_failed_jobs results"],
+        )
 
     execution = arguments.get("execution", 0)
     max_lines = arguments.get("max_lines", 1000)
     filter_errors = arguments.get("filter_errors", True)
 
     # Fetch task logs
-    task_data = await client.get_task_logs(task_id, execution)
+    try:
+        task_data = await client.get_task_logs(task_id, execution)
+    except Exception as e:
+        error_message = str(e)
+        logger.warning("Failed to fetch logs for task %s: %s", task_id, error_message)
+        return format_error_response(
+            error_message=f"Failed to fetch logs for task '{task_id}': {error_message}",
+            suggestions=[
+                "Verify the task_id is correct",
+                "Check that the execution number is valid",
+                "Use get_patch_failed_jobs to find valid task IDs",
+            ],
+        )
 
     # Process logs
     raw_logs = task_data.get("taskLogs", {}).get("taskLogs", [])
@@ -277,21 +319,39 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         arguments: Tool arguments containing task_id, execution, failed_only, limit
 
     Returns:
-        Dictionary containing detailed test results
+        Dictionary containing detailed test results,
+        or an error response if the task is not found/invalid
     """
     # Extract and validate arguments
     task_id = arguments.get("task_id")
     if not task_id:
-        raise ValueError("task_id parameter is required")
+        return format_error_response(
+            error_message="task_id parameter is required",
+            suggestions=["Provide a valid task_id from get_patch_failed_jobs results"],
+        )
 
     execution = arguments.get("execution", 0)
     failed_only = arguments.get("failed_only", True)
     limit = arguments.get("limit", 100)
 
     # Fetch task test results
-    task_data = await client.get_task_test_results(
-        task_id, execution, failed_only, limit
-    )
+    try:
+        task_data = await client.get_task_test_results(
+            task_id, execution, failed_only, limit
+        )
+    except Exception as e:
+        error_message = str(e)
+        logger.warning(
+            "Failed to fetch test results for task %s: %s", task_id, error_message
+        )
+        return format_error_response(
+            error_message=f"Failed to fetch test results for task '{task_id}': {error_message}",
+            suggestions=[
+                "Verify the task_id is correct",
+                "Check that the task has test results (hasTestResults: true)",
+                "Use get_patch_failed_jobs to find tasks with test results",
+            ],
+        )
 
     # Extract task information
     task_info = {
@@ -417,7 +477,8 @@ async def fetch_inferred_project_ids(
         max_patches: Maximum number of patches to scan (default: 50)
 
     Returns:
-        Dictionary containing unique project identifiers with patch counts
+        Dictionary containing unique project identifiers with patch counts,
+        or an error response if fetching fails
     """
     logger.info(
         "Fetching inferred project IDs for user %s (max %s patches)",
@@ -426,7 +487,22 @@ async def fetch_inferred_project_ids(
     )
 
     # Fetch patches to infer project identifiers
-    patches = await client.get_inferred_project_ids(user_id, limit=max_patches, page=0)
+    try:
+        patches = await client.get_inferred_project_ids(
+            user_id, limit=max_patches, page=0
+        )
+    except Exception as e:
+        error_message = str(e)
+        logger.warning(
+            "Failed to fetch project IDs for user %s: %s", user_id, error_message
+        )
+        return format_error_response(
+            error_message=f"Failed to fetch project IDs: {error_message}",
+            suggestions=[
+                "Check your authentication credentials",
+                "Verify you have access to Evergreen",
+            ],
+        )
 
     # Extract unique project identifiers and count patches per project
     project_counts: Dict[str, int] = {}
