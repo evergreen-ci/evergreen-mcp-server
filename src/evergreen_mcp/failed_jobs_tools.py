@@ -7,6 +7,7 @@ It uses a patch-based approach focused on the authenticated user's recent patche
 
 import logging
 from typing import Any, Dict, List
+from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 
 logger = logging.getLogger(__name__)
 
@@ -607,3 +608,49 @@ def format_error_response(
     if suggestions:
         response["suggestions"] = suggestions
     return response
+
+
+async def fetch_evergreen_task_logs(
+    client: EvergreenRestClient,
+    arguments: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Fetch task logs and test results for a specific task
+
+    Args:
+        client: EvergreenRestClient instance
+        arguments: Tool arguments containing task_id, execution_retries
+
+    Returns:
+        Dictionary containing task logs and test results
+    """
+    logger.info("fetch_task_logs_and_test_results called with arguments: %s", arguments)
+    task_id = arguments.get("task_id")
+    execution_retries = arguments.get("execution_retries", 0)
+    
+    logger.info("Calling client.get_task_logs for task %s", task_id)
+    response = await client.get_task_logs(task_id, execution_retries)
+    logger.info("client.get_task_logs returned type: %s", type(response))
+    
+    return {"logs": response}
+
+async def fetch_evergreen_task_test_results(
+    client: EvergreenRestClient,
+    arguments: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Fetch test results for a specific task
+
+    Args:
+        client: EvergreenRestClient instance
+        arguments: Tool arguments containing task_id, execution_retries, job_name
+
+    Returns:
+        Dictionary containing test results
+    """
+    logger.info("fetch_task_test_results called with arguments: %s", arguments)
+    task_id = arguments.get("task_id")
+    execution_retries = arguments.get("execution_retries", 0)
+    job_name = arguments.get("job_name")
+    tail_limit = arguments.get("tail_limit", 1000)
+    logger.info(f"Fetching test results with tail_limit: {tail_limit}")
+    response = await client.get_task_test_results(task_id, execution_retries, job_name, tail_limit=tail_limit)
+    return {"logs": response}
