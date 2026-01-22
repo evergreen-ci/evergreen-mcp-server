@@ -167,9 +167,7 @@ class EvergreenGraphQLClient:
                         logger.warning(
                             "GraphQL query execution error on retry after token refresh",
                         )
-                        raise Exception(
-                            f"Query failed after token refresh: {retry_e}"
-                        )
+                        raise Exception(f"Query failed after token refresh: {retry_e}")
             logger.warning("GraphQL transport error")
             raise Exception(f"Failed to execute GraphQL query: {e}")
         except Exception:
