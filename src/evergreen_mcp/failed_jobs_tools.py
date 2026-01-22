@@ -102,7 +102,8 @@ async def fetch_patch_failed_jobs(
         project_id: Optional project identifier to validate patch ownership
 
     Returns:
-        Dictionary containing patch info and failed jobs data
+        Dictionary containing patch info and failed jobs data,
+        or an error response if the patch is not found/invalid
     """
     logger.info("Fetching failed jobs for patch %s", patch_id)
     if project_id:
@@ -110,6 +111,7 @@ async def fetch_patch_failed_jobs(
 
     # Get patch with failed tasks
     patch = await client.get_patch_failed_tasks(patch_id)
+
     if project_id and patch.get("projectIdentifier") != project_id:
         raise ValueError("Patch does not belong to the specified project")
 
@@ -234,7 +236,8 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
                    filter_errors
 
     Returns:
-        Dictionary containing task logs
+        Dictionary containing task logs,
+        or an error response if the task is not found/invalid
     """
     # Extract and validate arguments
     task_id = arguments.get("task_id")
@@ -277,7 +280,8 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         arguments: Tool arguments containing task_id, execution, failed_only, limit
 
     Returns:
-        Dictionary containing detailed test results
+        Dictionary containing detailed test results,
+        or an error response if the task is not found/invalid
     """
     # Extract and validate arguments
     task_id = arguments.get("task_id")
@@ -417,7 +421,8 @@ async def fetch_inferred_project_ids(
         max_patches: Maximum number of patches to scan (default: 50)
 
     Returns:
-        Dictionary containing unique project identifiers with patch counts
+        Dictionary containing unique project identifiers with patch counts,
+        or an error response if fetching fails
     """
     logger.info(
         "Fetching inferred project IDs for user %s (max %s patches)",
@@ -578,32 +583,12 @@ async def infer_project_id_from_context(
         project_id=project_id,
         confidence="low",
         available_projects=available_projects,
-        message=(
-            f"""
+        message=(f"""
                 You are an ai assistant working with the user to help diagnose the recent patches. 
                 The patches are coming from the project_id {project_id}. 
                 However you should also verify with the user if that is the correct project_id,
                 as we have other project_ids that are also valid such as {others_msg}.
                 If this is incorrect, please specify project_id explicitly.
-            """
-        ),
+            """),
         source="most_recent_fallback",
     )
-
-
-def format_error_response(
-    error_message: str, suggestions: List[str] = None
-) -> Dict[str, Any]:
-    """Format a standardized error response
-
-    Args:
-        error_message: Main error message
-        suggestions: Optional list of suggestions for the user
-
-    Returns:
-        Formatted error response dictionary
-    """
-    response = {"error": error_message}
-    if suggestions:
-        response["suggestions"] = suggestions
-    return response

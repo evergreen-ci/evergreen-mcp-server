@@ -157,25 +157,21 @@ class EvergreenGraphQLClient:
                         )
                         return result
                     except TransportError as retry_e:
-                        logger.error(
+                        logger.warning(
                             "GraphQL transport error on retry after token refresh",
-                            exc_info=True,
                         )
                         raise Exception(
                             f"Failed to execute GraphQL query after token refresh: {retry_e}"
-                        ) from retry_e
-                    except Exception as retry_e:
-                        logger.error(
-                            "GraphQL query execution error on retry after token refresh",
-                            exc_info=True,
                         )
-                        raise Exception(
-                            f"Query failed after token refresh: {retry_e}"
-                        ) from retry_e
-            logger.error("GraphQL transport error", exc_info=True)
-            raise Exception(f"Failed to execute GraphQL query: {e}") from e
+                    except Exception as retry_e:
+                        logger.warning(
+                            "GraphQL query execution error on retry after token refresh",
+                        )
+                        raise Exception(f"Query failed after token refresh: {retry_e}")
+            logger.warning("GraphQL transport error")
+            raise Exception(f"Failed to execute GraphQL query: {e}")
         except Exception:
-            logger.error("GraphQL query execution error", exc_info=True)
+            logger.warning("GraphQL query execution error")
             raise
 
     async def _try_refresh_token(self) -> bool:
@@ -201,7 +197,7 @@ class EvergreenGraphQLClient:
                 logger.warning("Token refresh failed")
                 return False
         except Exception as e:
-            logger.error("Error refreshing token: %s", e)
+            logger.warning("Error refreshing token: %s", e)
             return False
 
     async def get_projects(self) -> List[Dict[str, Any]]:
