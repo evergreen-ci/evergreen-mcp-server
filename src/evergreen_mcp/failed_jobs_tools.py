@@ -578,15 +578,13 @@ async def infer_project_id_from_context(
         project_id=project_id,
         confidence="low",
         available_projects=available_projects,
-        message=(
-            f"""
+        message=(f"""
                 You are an ai assistant working with the user to help diagnose the recent patches. 
                 The patches are coming from the project_id {project_id}. 
                 However you should also verify with the user if that is the correct project_id,
                 as we have other project_ids that are also valid such as {others_msg}.
                 If this is incorrect, please specify project_id explicitly.
-            """
-        ),
+            """),
         source="most_recent_fallback",
     )
 
