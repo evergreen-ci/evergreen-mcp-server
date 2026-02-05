@@ -18,22 +18,18 @@ class ConfigParseError(Exception):
     pass
 
 
-def load_evergreen_config(
-    *, use_cache: bool = True, raise_on_error: bool = False
-) -> dict[str, Any]:
+def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
     """Load ~/.evergreen.yml config file.
 
     Args:
         use_cache: If True, return cached config if available. Set to False
                    to force a fresh read from disk.
-        raise_on_error: If True, raise ConfigParseError on parse failures.
-                        If False, silently return empty dict.
 
     Returns:
-        The parsed config dict, or empty dict if file doesn't exist or is invalid.
+        The parsed config dict, or empty dict if file doesn't exist.
 
     Raises:
-        ConfigParseError: If raise_on_error=True and the config file cannot be parsed.
+        ConfigParseError: If the config file exists but cannot be parsed.
     """
     global _cached_config
 
@@ -46,12 +42,9 @@ def load_evergreen_config(
             with open(EVERGREEN_CONFIG_FILE) as f:
                 config = yaml.safe_load(f) or {}
         except Exception as e:
-            if raise_on_error:
-                raise ConfigParseError(
-                    f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
-                ) from e
-            # Return empty config on parse errors
-            config = {}
+            raise ConfigParseError(
+                f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
+            ) from e
 
     if use_cache:
         _cached_config = config
@@ -63,7 +56,10 @@ def get_evergreen_user() -> str | None:
     """Get user ID from ~/.evergreen.yml config.
 
     Returns:
-        The user ID string, or None if not configured.
+        The user ID string, or None if not configured or config is invalid.
     """
-    config = load_evergreen_config()
-    return config.get("user")
+    try:
+        config = load_evergreen_config()
+        return config.get("user")
+    except ConfigParseError:
+        return None

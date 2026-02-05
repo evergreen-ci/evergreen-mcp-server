@@ -56,7 +56,7 @@ def _load_oauth_config_from_evergreen_yml() -> dict:
         )
 
     try:
-        config = load_evergreen_config(use_cache=False, raise_on_error=True)
+        config = load_evergreen_config(use_cache=False)
     except ConfigParseError as e:
         raise OIDCAuthenticationError(str(e)) from e
 
