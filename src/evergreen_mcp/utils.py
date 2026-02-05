@@ -12,15 +12,28 @@ EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
 _cached_config: dict[str, Any] | None = None
 
 
-def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
+class ConfigParseError(Exception):
+    """Raised when ~/.evergreen.yml cannot be parsed."""
+
+    pass
+
+
+def load_evergreen_config(
+    *, use_cache: bool = True, raise_on_error: bool = False
+) -> dict[str, Any]:
     """Load ~/.evergreen.yml config file.
 
     Args:
         use_cache: If True, return cached config if available. Set to False
                    to force a fresh read from disk.
+        raise_on_error: If True, raise ConfigParseError on parse failures.
+                        If False, silently return empty dict.
 
     Returns:
         The parsed config dict, or empty dict if file doesn't exist or is invalid.
+
+    Raises:
+        ConfigParseError: If raise_on_error=True and the config file cannot be parsed.
     """
     global _cached_config
 
@@ -32,7 +45,11 @@ def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
         try:
             with open(EVERGREEN_CONFIG_FILE) as f:
                 config = yaml.safe_load(f) or {}
-        except Exception:
+        except Exception as e:
+            if raise_on_error:
+                raise ConfigParseError(
+                    f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
+                ) from e
             # Return empty config on parse errors
             config = {}
 
