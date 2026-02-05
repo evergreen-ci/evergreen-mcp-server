@@ -17,8 +17,9 @@ from typing import Optional
 
 import httpx
 import jwt as pyjwt
-import yaml
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+
+from evergreen_mcp.utils import EVERGREEN_CONFIG_FILE, load_evergreen_config
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,6 @@ class OIDCAuthenticationError(Exception):
 
     pass
 
-
-# Evergreen config file location
-EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
 
 # HTTP timeout configurations (in seconds)
 HTTP_TIMEOUT = 30
@@ -53,13 +51,11 @@ def _load_oauth_config_from_evergreen_yml() -> dict:
             "Please create ~/.evergreen.yml with oauth configuration."
         )
 
-    try:
-        with open(EVERGREEN_CONFIG_FILE) as f:
-            config = yaml.safe_load(f) or {}
-    except Exception as e:
+    config = load_evergreen_config(use_cache=False)
+    if not config:
         raise OIDCAuthenticationError(
-            f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
-        ) from e
+            f"Failed to parse {EVERGREEN_CONFIG_FILE}"
+        )
 
     oauth_config = config.get("oauth")
     if not oauth_config:

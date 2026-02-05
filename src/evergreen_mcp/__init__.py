@@ -48,3 +48,11 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
         before_send=before_send,
     )
     sys.stderr.write("Sentry MCP observability enabled")
+
+    # Set user context early so all errors (including auth) have it
+    # Import here to avoid circular imports at module load time
+    from evergreen_mcp.utils import get_evergreen_user
+
+    user_id = get_evergreen_user()
+    if user_id:
+        sentry_sdk.set_user({"id": user_id, "username": user_id})
