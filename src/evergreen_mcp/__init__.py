@@ -12,7 +12,6 @@ import sentry_sdk
 from sentry_sdk.integrations.mcp import MCPIntegration
 from evergreen_mcp.utils import load_evergreen_config
 
-
 SENTRY_DSN = os.getenv(
     "SENTRY_DSN",
     "https://14073ac4115b2196bafcca18270a3a12@o4504991346720768.ingest.us.sentry.io/4510699515478016",
