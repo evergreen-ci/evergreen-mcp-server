@@ -10,6 +10,8 @@ import sys
 
 import sentry_sdk
 from sentry_sdk.integrations.mcp import MCPIntegration
+from evergreen_mcp.utils import load_evergreen_config
+
 
 SENTRY_DSN = os.getenv(
     "SENTRY_DSN",
@@ -49,10 +51,9 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
     )
     sys.stderr.write("Sentry MCP observability enabled")
 
-    # Set user context early so all errors (including auth) have it
-    # Import here to avoid circular imports at module load time
-    from evergreen_mcp.utils import get_evergreen_user
-
-    user_id = get_evergreen_user()
+    # Set user context for Sentry - let ConfigParseError propagate
+    # since a malformed config means the service can't work anyway
+    config = load_evergreen_config()
+    user_id = config.get("user")
     if user_id:
         sentry_sdk.set_user({"id": user_id, "username": user_id})

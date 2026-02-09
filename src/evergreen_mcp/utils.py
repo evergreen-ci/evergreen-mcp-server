@@ -51,15 +51,3 @@ def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
 
     return config
 
-
-def get_evergreen_user() -> str | None:
-    """Get user ID from ~/.evergreen.yml config.
-
-    Returns:
-        The user ID string, or None if not configured or config is invalid.
-    """
-    try:
-        config = load_evergreen_config()
-        return config.get("user")
-    except ConfigParseError:
-        return None
