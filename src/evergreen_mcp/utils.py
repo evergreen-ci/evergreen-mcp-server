@@ -50,4 +50,3 @@ def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
         _cached_config = config
 
     return config
-
