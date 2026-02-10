@@ -161,6 +161,11 @@ async def fetch_patch_failed_jobs(
             "execution": task.get("execution", 0),
             "finish_time": task.get("finishTime"),
             "duration_ms": task.get("timeTaken"),
+            # Host metadata
+            "ami": task.get("ami"),
+            "host_id": task.get("hostId"),
+            "distro_id": task.get("distroId"),
+            "image_id": task.get("imageId"),
         }
 
         # Add failure details if available
@@ -269,6 +274,11 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
         "total_lines": len(processed_logs),
         "logs": processed_logs,
         "truncated": len(processed_logs) >= max_lines,
+        # Host metadata
+        "ami": task_data.get("ami"),
+        "host_id": task_data.get("hostId"),
+        "distro_id": task_data.get("distroId"),
+        "image_id": task_data.get("imageId"),
     }
 
 
@@ -307,6 +317,11 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         "has_test_results": task_data.get("hasTestResults", False),
         "failed_test_count": task_data.get("failedTestCount", 0),
         "total_test_count": task_data.get("totalTestCount", 0),
+        # Host metadata
+        "ami": task_data.get("ami"),
+        "host_id": task_data.get("hostId"),
+        "distro_id": task_data.get("distroId"),
+        "image_id": task_data.get("imageId"),
     }
 
     # Process test results
