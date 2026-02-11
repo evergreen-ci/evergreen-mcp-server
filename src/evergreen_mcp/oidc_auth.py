@@ -401,7 +401,7 @@ class OIDCAuthManager:
                 # Display auth instructions
                 logger.info("=" * 70)
                 logger.info(
-                    "🔐 AUTHENTICATION REQUIRED - Please complete login in your browser"
+                    "AUTHENTICATION REQUIRED - Please complete login in your browser"
                 )
                 logger.info("=" * 70)
                 logger.info("URL: %s", verification_uri)

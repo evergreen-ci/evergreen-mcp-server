@@ -377,7 +377,7 @@ def register_tools(mcp: FastMCP) -> None:
 
             # Send notification with login URL
             await ctx.warning(
-                f"🔐 Authentication required! Please login at: {login_url}{code_msg}"
+                f"Authentication required! Please login at: {login_url}{code_msg}"
             )
 
             # Poll for completion (with timeout)
@@ -395,7 +395,7 @@ def register_tools(mcp: FastMCP) -> None:
 
                     # Send success notification
                     await ctx.info(
-                        f"✅ Authentication successful! Logged in as: {evg_ctx.auth_manager.user_id}"
+                        f"Authentication successful! Logged in as: {evg_ctx.auth_manager.user_id}"
                     )
 
                     return json.dumps(
@@ -410,11 +410,11 @@ def register_tools(mcp: FastMCP) -> None:
                 # Send periodic update every 30 seconds
                 if (attempt + 1) % 6 == 0:
                     await ctx.info(
-                        f"⏳ Still waiting for login... ({(attempt + 1) * interval}s elapsed)"
+                        f"Still waiting for login... ({(attempt + 1) * interval}s elapsed)"
                     )
 
             # Timeout
-            await ctx.error("❌ Authentication timed out - please try again")
+            await ctx.error("Authentication timed out - please try again")
             return json.dumps(
                 {
                     "status": "timeout",
@@ -424,7 +424,7 @@ def register_tools(mcp: FastMCP) -> None:
             )
 
         except OIDCAuthenticationError as e:
-            await ctx.error(f"❌ Authentication error: {e}")
+            await ctx.error(f"Authentication error: {e}")
             return json.dumps(
                 {
                     "status": "error",
