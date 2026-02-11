@@ -589,6 +589,114 @@ class OIDCAuthManager:
 
         return False
 
+    async def initiate_device_flow(self) -> dict:
+        """Start device authorization flow and return auth URL without blocking.
+
+        Returns:
+            Dict containing verification_url, user_code, device_code, interval, expires_in
+
+        Raises:
+            OIDCAuthenticationError: If device flow initiation fails
+        """
+        try:
+            await self._get_client()
+
+            logger.info("Initiating Device Authorization Flow...")
+
+            device_auth_endpoint = self._metadata["device_authorization_endpoint"]
+
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                response = await http_client.post(
+                    device_auth_endpoint,
+                    data={
+                        "client_id": self.client_id,
+                        "scope": "openid profile email groups offline_access",
+                    },
+                )
+                response.raise_for_status()
+                device_data = response.json()
+
+                verification_uri = device_data.get(
+                    "verification_uri_complete"
+                ) or device_data.get("verification_uri")
+
+                return {
+                    "verification_url": verification_uri,
+                    "user_code": device_data.get("user_code"),
+                    "device_code": device_data["device_code"],
+                    "interval": device_data.get("interval", 5),
+                    "expires_in": device_data.get("expires_in", 300),
+                }
+
+        except Exception as e:
+            raise OIDCAuthenticationError(f"Failed to initiate device flow: {e}") from e
+
+    async def poll_device_flow(self, device_code: str) -> Optional[dict]:
+        """Poll once to check if device flow authentication completed.
+
+        Args:
+            device_code: Device code from initiate_device_flow
+
+        Returns:
+            Token data dict if authentication completed, None if still pending
+
+        Raises:
+            OIDCAuthenticationError: If authentication failed (not pending)
+        """
+        try:
+            await self._get_client()
+            token_endpoint = self._metadata["token_endpoint"]
+
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                response = await http_client.post(
+                    token_endpoint,
+                    data={
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                        "device_code": device_code,
+                        "client_id": self.client_id,
+                    },
+                )
+
+                if response.status_code == 200:
+                    token_data = self._normalize_token_data(response.json())
+
+                    self._access_token = token_data["access_token"]
+                    self._refresh_token = token_data.get("refresh_token")
+                    self._user_id = self._extract_user_id(self._access_token)
+
+                    self._save_token(token_data)
+                    logger.info("Authentication successful!")
+                    return token_data
+
+                # Parse error
+                try:
+                    error_data = response.json()
+                    error = error_data.get("error", "unknown_error")
+                    error_description = error_data.get("error_description", "")
+                except Exception:
+                    error = "unknown_error"
+                    error_description = response.text or ""
+
+                if (
+                    error in ("authorization_pending", "slow_down")
+                    or response.status_code == 401
+                ):
+                    return None  # Still waiting
+
+                if error == "expired_token":
+                    raise OIDCAuthenticationError(
+                        "Device code expired - please restart authentication"
+                    )
+
+                raise OIDCAuthenticationError(
+                    f"Authentication failed: {error} - {error_description}"
+                )
+
+        except OIDCAuthenticationError:
+            raise
+        except Exception as e:
+            raise OIDCAuthenticationError(f"Poll error: {e}") from e
+
     @property
     def access_token(self) -> Optional[str]:
         """Get current access token."""
