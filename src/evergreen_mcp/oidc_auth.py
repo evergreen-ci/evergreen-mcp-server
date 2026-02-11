@@ -39,6 +39,16 @@ class OIDCAuthenticationError(Exception):
     pass
 
 
+class DeviceFlowSlowDown(Exception):
+    """Raised when the OAuth server requests slower polling (RFC 8628 Section 3.5).
+
+    Callers should increase their polling interval by at least 5 seconds
+    before the next request.
+    """
+
+    pass
+
+
 # HTTP timeout configurations (in seconds)
 HTTP_TIMEOUT = 30
 
@@ -404,9 +414,17 @@ class OIDCAuthManager:
         for attempt in range(max_attempts):
             await asyncio.sleep(interval)
 
-            token_data = await self.poll_device_flow(device_code)
-            if token_data:
-                return token_data
+            try:
+                token_data = await self.poll_device_flow(device_code)
+                if token_data:
+                    return token_data
+            except DeviceFlowSlowDown:
+                interval += 5  # RFC 8628 Section 3.5
+                logger.debug(
+                    "Server requested slow down, increased interval to %d seconds",
+                    interval,
+                )
+                continue
 
             logger.debug(
                 "Authorization pending, polling... (%d/%d)",
@@ -545,6 +563,8 @@ class OIDCAuthManager:
             Token data dict if authentication completed, None if still pending
 
         Raises:
+            DeviceFlowSlowDown: If server requests slower polling. Callers
+                should increase their interval by at least 5 seconds.
             OIDCAuthenticationError: If authentication failed (not pending)
         """
         try:
@@ -581,10 +601,10 @@ class OIDCAuthManager:
                     error = "unknown_error"
                     error_description = response.text or ""
 
-                if (
-                    error in ("authorization_pending", "slow_down")
-                    or response.status_code == 401
-                ):
+                if error == "slow_down":
+                    raise DeviceFlowSlowDown()
+
+                if error == "authorization_pending" or response.status_code == 401:
                     return None  # Still waiting
 
                 if error == "expired_token":
@@ -596,7 +616,7 @@ class OIDCAuthManager:
                     f"Authentication failed: {error} - {error_description}"
                 )
 
-        except OIDCAuthenticationError:
+        except (OIDCAuthenticationError, DeviceFlowSlowDown):
             raise
         except Exception as e:
             raise OIDCAuthenticationError(f"Poll error: {e}") from e
