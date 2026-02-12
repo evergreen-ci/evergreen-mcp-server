@@ -10,6 +10,7 @@ These tests validate the OIDCAuthManager class including:
 - Token file handling
 """
 
+import asyncio
 import base64
 import json
 import time
@@ -21,6 +22,7 @@ import pytest
 from evergreen_mcp.oidc_auth import (
     EVERGREEN_CONFIG_FILE,
     HTTP_TIMEOUT,
+    DeviceFlowSlowDown,
     OIDCAuthenticationError,
     OIDCAuthManager,
     _load_oauth_config_from_evergreen_yml,
@@ -636,6 +638,119 @@ class TestDeviceFlowAuth:
                     with pytest.raises(OIDCAuthenticationError) as exc_info:
                         await auth_manager_with_config.device_flow_auth()
                     assert "expired" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_device_flow_auth_slow_down_increases_interval(
+        self, auth_manager_with_config
+    ):
+        """Test that slow_down response increases polling interval per RFC 8628."""
+        auth_manager_with_config._metadata = {
+            "device_authorization_endpoint": "https://dex.example.com/device",
+            "token_endpoint": "https://dex.example.com/token",
+        }
+        auth_manager_with_config._client = Mock()
+
+        device_response = {
+            "device_code": "device123",
+            "user_code": "USER123",
+            "verification_uri": "https://dex.example.com/verify",
+            "interval": 5,
+            "expires_in": 300,
+        }
+
+        device_mock = Mock()
+        device_mock.json.return_value = device_response
+        device_mock.raise_for_status = Mock()
+
+        # First poll: slow_down
+        slow_mock = Mock()
+        slow_mock.status_code = 400
+        slow_mock.json.return_value = {"error": "slow_down"}
+
+        # Second poll: success
+        success_mock = Mock()
+        success_mock.status_code = 200
+        success_mock.json.return_value = {
+            "access_token": "new.token",
+            "refresh_token": "refresh.token",
+        }
+
+        sleep_intervals = []
+
+        async def tracking_sleep(seconds):
+            sleep_intervals.append(seconds)
+
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(
+                side_effect=[device_mock, slow_mock, success_mock]
+            )
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            with patch("webbrowser.open"):
+                with patch("asyncio.sleep", side_effect=tracking_sleep):
+                    with patch.object(auth_manager_with_config, "_save_token"):
+                        with patch.object(
+                            auth_manager_with_config,
+                            "_extract_user_id",
+                            return_value="testuser",
+                        ):
+                            result = await auth_manager_with_config.device_flow_auth()
+                            assert result is not None
+                            assert result["access_token"] == "new.token"
+
+                            # First sleep at original interval (5s),
+                            # second sleep at increased interval (5+5=10s)
+                            assert sleep_intervals[0] == 5
+                            assert sleep_intervals[1] == 10
+
+    @pytest.mark.asyncio
+    async def test_poll_device_flow_raises_slow_down(self, auth_manager_with_config):
+        """Test that poll_device_flow raises DeviceFlowSlowDown on slow_down error."""
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token",
+        }
+        auth_manager_with_config._client = Mock()
+
+        slow_mock = Mock()
+        slow_mock.status_code = 400
+        slow_mock.json.return_value = {"error": "slow_down"}
+
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=slow_mock)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            with pytest.raises(DeviceFlowSlowDown):
+                await auth_manager_with_config.poll_device_flow("device123")
+
+    @pytest.mark.asyncio
+    async def test_poll_device_flow_returns_none_on_pending(
+        self, auth_manager_with_config
+    ):
+        """Test that poll_device_flow returns None on authorization_pending."""
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token",
+        }
+        auth_manager_with_config._client = Mock()
+
+        pending_mock = Mock()
+        pending_mock.status_code = 400
+        pending_mock.json.return_value = {"error": "authorization_pending"}
+
+        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=pending_mock)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            result = await auth_manager_with_config.poll_device_flow("device123")
+            assert result is None
 
 
 class TestEnsureAuthenticated:
