@@ -195,5 +195,77 @@ class TestServerComponents(unittest.TestCase):
         self.assertIsNotNone(lifespan, "Lifespan function should be defined")
 
 
+class TestGraphQLQueriesHostMetadata(unittest.TestCase):
+    """Test that GraphQL queries include host metadata fields"""
+
+    def test_patch_failed_tasks_query_includes_host_metadata(self):
+        """Test that GET_PATCH_FAILED_TASKS includes host metadata fields"""
+        from evergreen_mcp.evergreen_queries import GET_PATCH_FAILED_TASKS
+
+        # Verify host metadata fields are in the query
+        self.assertIn("ami", GET_PATCH_FAILED_TASKS, "Query should include 'ami' field")
+        self.assertIn(
+            "hostId", GET_PATCH_FAILED_TASKS, "Query should include 'hostId' field"
+        )
+        self.assertIn(
+            "distroId", GET_PATCH_FAILED_TASKS, "Query should include 'distroId' field"
+        )
+        self.assertIn(
+            "imageId", GET_PATCH_FAILED_TASKS, "Query should include 'imageId' field"
+        )
+
+    def test_version_failed_tasks_query_includes_host_metadata(self):
+        """Test that GET_VERSION_WITH_FAILED_TASKS includes host metadata fields"""
+        from evergreen_mcp.evergreen_queries import GET_VERSION_WITH_FAILED_TASKS
+
+        # Verify host metadata fields are in the query
+        self.assertIn(
+            "ami", GET_VERSION_WITH_FAILED_TASKS, "Query should include 'ami' field"
+        )
+        self.assertIn(
+            "hostId",
+            GET_VERSION_WITH_FAILED_TASKS,
+            "Query should include 'hostId' field",
+        )
+        self.assertIn(
+            "distroId",
+            GET_VERSION_WITH_FAILED_TASKS,
+            "Query should include 'distroId' field",
+        )
+        self.assertIn(
+            "imageId",
+            GET_VERSION_WITH_FAILED_TASKS,
+            "Query should include 'imageId' field",
+        )
+
+    def test_task_logs_query_includes_host_metadata(self):
+        """Test that GET_TASK_LOGS includes host metadata fields"""
+        from evergreen_mcp.evergreen_queries import GET_TASK_LOGS
+
+        # Verify host metadata fields are in the query
+        self.assertIn("ami", GET_TASK_LOGS, "Query should include 'ami' field")
+        self.assertIn("hostId", GET_TASK_LOGS, "Query should include 'hostId' field")
+        self.assertIn(
+            "distroId", GET_TASK_LOGS, "Query should include 'distroId' field"
+        )
+        self.assertIn("imageId", GET_TASK_LOGS, "Query should include 'imageId' field")
+
+    def test_task_test_results_query_includes_host_metadata(self):
+        """Test that GET_TASK_TEST_RESULTS includes host metadata fields"""
+        from evergreen_mcp.evergreen_queries import GET_TASK_TEST_RESULTS
+
+        # Verify host metadata fields are in the query
+        self.assertIn("ami", GET_TASK_TEST_RESULTS, "Query should include 'ami' field")
+        self.assertIn(
+            "hostId", GET_TASK_TEST_RESULTS, "Query should include 'hostId' field"
+        )
+        self.assertIn(
+            "distroId", GET_TASK_TEST_RESULTS, "Query should include 'distroId' field"
+        )
+        self.assertIn(
+            "imageId", GET_TASK_TEST_RESULTS, "Query should include 'imageId' field"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
