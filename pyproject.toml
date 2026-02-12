@@ -46,7 +46,7 @@ dependencies = [
     "typing-extensions",
     "pyyaml",
     "mcp",
-    "fastmcp==2.14.4",
+    "fastmcp>=3.0.0b1",
     "gql[aiohttp]",
     "httpx>=0.24.0",
     "pyjwt>=2.0.0",
