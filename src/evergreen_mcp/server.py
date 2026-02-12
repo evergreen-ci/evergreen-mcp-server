@@ -11,10 +11,12 @@ import os
 import os.path
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import AsyncIterator
 
 import yaml
 from fastmcp import Context, FastMCP
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
 
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
@@ -232,11 +234,48 @@ mcp = FastMCP(
     "Evergreen MCP Server",
     version=__version__,
     lifespan=lifespan,
-    instructions="""
-    If connected to evergreen mcp server, you must first trigger the get inferred project_ids tool call on startup. If given multiple id's verify with the user and use that project_id in the rest of the tool calls when required.
+    instructions="""\
+# Evergreen MCP Server — AI Agent Instructions
+
+You are connected to the Evergreen CI/CD MCP server for MongoDB. This server \
+provides tools to inspect patches, diagnose CI failures, and retrieve logs.
+
+## On Startup
+1. Call `get_inferred_project_ids_evergreen` to discover the user's active projects.
+2. If multiple projects are returned, ask the user which one to use.
+3. Use the chosen `project_id` in all subsequent tool calls.
+
+## Available Skills (MCP Resources)
+This server exposes detailed skill guides as `skill://` resources. \
+Read these for in-depth tool documentation, debugging workflows, and Evergreen \
+domain knowledge:
+- `skill://tool-guide/SKILL.md` — Complete tool reference with parameters, \
+return shapes, and decision tree for which tool to use when.
+- `skill://debugging-workflow/SKILL.md` — Step-by-step workflows for \
+diagnosing CI failures from patch to root cause.
+- `skill://evergreen-concepts/SKILL.md` — Evergreen domain knowledge: \
+hierarchy, statuses, terminology, and how to interpret results.
+
+## Quick Tool Selection
+- **"Check my CI"** → `list_user_recent_patches_evergreen`
+- **"Why is it failing?"** → `get_patch_failed_jobs_evergreen` (needs patch_id)
+- **"Which tests failed?"** → `get_task_test_results_evergreen` (needs task_id)
+- **"Show me the logs"** → `get_task_logs_evergreen` (needs task_id)
+- **"What projects do I have?"** → `get_inferred_project_ids_evergreen`
+
+## Key Rule
+Always progress from broad to narrow: Project → Patch → Task → Tests/Logs. \
+Do not skip steps.
 """,
 )
 
+# Register skills as MCP resources using the SkillsDirectoryProvider.
+# Each subdirectory under skills/ with a SKILL.md becomes a discoverable
+# skill resource at skill://<name>/SKILL.md.
+_skills_dir = Path(__file__).parent / "skills"
+mcp.add_provider(
+    SkillsDirectoryProvider(roots=_skills_dir, supporting_files="resources")
+)
 
 register_tools(mcp)
 
@@ -271,12 +310,15 @@ async def intelligent_project_detection_prompt() -> str:
     """Prompt explaining intelligent project ID auto-detection."""
     return """# Intelligent Project ID Auto-Detection
 
-The Evergreen MCP tools automatically detect the correct project ID by analyzing the user's recent patch history.
+The Evergreen MCP tools automatically detect the correct project ID by analyzing \
+the user's recent patch history.
 
 ## How It Works (when project_id is NOT specified):
 
-1. **Single project** - If user only has patches in one project, use it automatically (High confidence).
-2. **Multiple projects** - Selects the project with the **most recent activity** (Medium confidence).
+1. **Single project** - If user only has patches in one project, use it \
+automatically (High confidence).
+2. **Multiple projects** - Selects the project with the **most recent activity** \
+(Medium confidence).
    - Returns patches for that project.
    - Includes a list of other available projects in the response message.
 
@@ -290,7 +332,8 @@ list_user_recent_patches_evergreen(limit=10)
 **Step 2: Check the response**
 - If patches are returned: **Success!**
 - If the response mentions "Other active projects", inform the user:
-  > "Showing patches for 'mms' (most recent). Also found activity in: mongodb-mongo-master, server."
+  > "Showing patches for 'mms' (most recent). Also found activity in: \
+mongodb-mongo-master, server."
 
 **Step 3: If User Asks for Another Project**
 - Call the tool again with the specific `project_id`:
@@ -301,6 +344,89 @@ list_user_recent_patches_evergreen(project_id="mongodb-mongo-master", limit=10)
 ## Tools with Auto-Detection:
 - `list_user_recent_patches_evergreen`
 - `get_patch_failed_jobs_evergreen`
+"""
+
+
+@mcp.prompt(
+    name="debug-failed-patch",
+    description=(
+        "Step-by-step guide to investigate a failing CI patch. "
+        "Use when the user says 'why is my patch failing?' or 'debug my CI'."
+    ),
+)
+async def debug_failed_patch_prompt() -> str:
+    """Prompt providing a step-by-step debugging workflow."""
+    return """\
+# Debug a Failed Patch — Step-by-Step
+
+Follow these steps in order to investigate a CI failure:
+
+## Step 1: Identify the project
+```
+get_inferred_project_ids_evergreen(max_patches=50)
+```
+If multiple projects, ask the user which one.
+
+## Step 2: Find the failing patch
+```
+list_user_recent_patches_evergreen(project_id="<project>", limit=5)
+```
+Look for patches with status "failed". Note the patch_id.
+
+## Step 3: Get failed tasks
+```
+get_patch_failed_jobs_evergreen(patch_id="<patch_id>")
+```
+Classify each failed task:
+- failed_test_count > 0 → test failure → go to Step 4a
+- timed_out == true → timeout → go to Step 4b
+- No tests, no timeout → setup/infra → go to Step 4b
+
+## Step 4a: Get test failures
+```
+get_task_test_results_evergreen(task_id="<task_id>", failed_only=True)
+```
+Report the failing test names and look for patterns.
+
+## Step 4b: Get error logs
+```
+get_task_logs_evergreen(task_id="<task_id>", filter_errors=True)
+```
+Find the root cause error message.
+If too few results, retry with filter_errors=False.
+
+## Step 5: Synthesize
+Present a clear diagnosis: what failed, why, and what the user should do.
+"""
+
+
+@mcp.prompt(
+    name="check-ci-status",
+    description=(
+        "Quick CI health check. Use when the user asks "
+        "'how is my CI?' or 'check my builds'."
+    ),
+)
+async def check_ci_status_prompt() -> str:
+    """Prompt for a quick CI status overview."""
+    return """\
+# Quick CI Status Check
+
+## Step 1: Discover projects
+```
+get_inferred_project_ids_evergreen()
+```
+
+## Step 2: Get recent patches
+```
+list_user_recent_patches_evergreen(project_id="<project>", limit=5)
+```
+
+## Step 3: Summarize
+Report a concise summary like:
+> "Your last 5 patches: 3 succeeded, 1 failed (SERVER-12345), 1 running."
+
+Only drill deeper if the user asks or if there are failures worth flagging.
 """
 
 
