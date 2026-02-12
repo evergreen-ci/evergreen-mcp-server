@@ -167,7 +167,12 @@ class TestFetchTaskLogs(unittest.IsolatedAsyncioTestCase):
 
         result = await fetch_task_logs(
             mock_client,
-            {"task_id": "task123", "execution": 0, "max_lines": 100, "filter_errors": False},
+            {
+                "task_id": "task123",
+                "execution": 0,
+                "max_lines": 100,
+                "filter_errors": False,
+            },
         )
 
         # Verify host metadata fields are present
@@ -193,7 +198,12 @@ class TestFetchTaskLogs(unittest.IsolatedAsyncioTestCase):
 
         result = await fetch_task_logs(
             mock_client,
-            {"task_id": "task123", "execution": 0, "max_lines": 100, "filter_errors": False},
+            {
+                "task_id": "task123",
+                "execution": 0,
+                "max_lines": 100,
+                "filter_errors": False,
+            },
         )
 
         # Verify host metadata fields are None when not provided

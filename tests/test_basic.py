@@ -245,7 +245,9 @@ class TestGraphQLQueriesHostMetadata(unittest.TestCase):
         # Verify host metadata fields are in the query
         self.assertIn("ami", GET_TASK_LOGS, "Query should include 'ami' field")
         self.assertIn("hostId", GET_TASK_LOGS, "Query should include 'hostId' field")
-        self.assertIn("distroId", GET_TASK_LOGS, "Query should include 'distroId' field")
+        self.assertIn(
+            "distroId", GET_TASK_LOGS, "Query should include 'distroId' field"
+        )
         self.assertIn("imageId", GET_TASK_LOGS, "Query should include 'imageId' field")
 
     def test_task_test_results_query_includes_host_metadata(self):
