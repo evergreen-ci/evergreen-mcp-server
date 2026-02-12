@@ -17,7 +17,7 @@ A Model Context Protocol (MCP) server that provides access to the Evergreen CI/C
 - **Unit Test Failure Analysis**: Detailed analysis of individual unit test failures with test-specific logs and metadata
 - **Task Log Retrieval**: Get detailed logs for failed tasks with error filtering
 - **Stepback Analysis**: Find failed mainline tasks that have undergone stepback bisection
-- **Authentication**: Secure OIDC-based authentication via `evergreen login`
+- **Authentication**: Secure OIDC-based authentication via `evergreen login`, with in-tool re-authentication when tokens expire (no server restart needed)
 - **Async Operations**: Built on asyncio for efficient concurrent operations
 - **GraphQL Integration**: Uses Evergreen's GraphQL API for efficient data retrieval
 
@@ -25,22 +25,34 @@ A Model Context Protocol (MCP) server that provides access to the Evergreen CI/C
 
 ### Step 1: Authenticate with Evergreen
 
-First, authenticate with Evergreen using the CLI. This creates the necessary credentials that the MCP server will use:
+Run `evergreen login` to generate your credentials. This creates `~/.evergreen.yml` with your OAuth configuration and `~/.kanopy/token-oidclogin.json` with your OIDC token:
 
 ```bash
 evergreen login
 ```
 
-This will:
-- Open your browser for OIDC authentication
-- Create `~/.evergreen.yml` with your credentials
-- Create `~/.kanopy/token-oidclogin.json` with your OIDC token
-
 > **Note**: If you don't have the Evergreen CLI installed, see [Evergreen CLI Installation](https://github.com/evergreen-ci/evergreen/wiki/Using-the-Command-Line-Tool#installation).
 
-### Step 2: Configure Your MCP Client
+### Step 2: Run the Server
 
-Add the Evergreen MCP server to your AI assistant's MCP configuration.
+Start the Evergreen MCP server using Docker:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e EVERGREEN_MCP_TRANSPORT=sse \
+  -e EVERGREEN_MCP_HOST=0.0.0.0 \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
+  ghcr.io/evergreen-ci/evergreen-mcp-server:latest
+```
+
+The server will start on `http://localhost:8000`. On startup it checks your mounted token file — if the token is valid, you're connected immediately. If the token is expired or missing, the server will initiate an OIDC device flow and prompt you to log in via your browser before it finishes starting up.
+
+> **Tip**: If your token expires while the server is running, you don't need to restart — just ask your AI assistant to re-authenticate and it will trigger the `initiate_auth_evergreen` tool.
+
+### Step 3: Connect Your MCP Client
+
+Point your AI assistant at the running server. The configuration is the same for any MCP client that supports HTTP:
 
 #### Cursor IDE
 
@@ -50,14 +62,7 @@ Add to your Cursor MCP settings (`.cursor/mcp.json` or Settings → MCP):
 {
   "mcpServers": {
     "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-        "-e", "SENTRY_ENABLED=true",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-      ]
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
@@ -71,49 +76,37 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 {
   "mcpServers": {
     "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-      ]
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
 ```
 
-#### VS Code with MCP Extension
+#### VS Code / Augment / GitHub Copilot
 
-Add to your VS Code settings (`settings.json`):
+Add to your editor's MCP settings:
 
 ```json
 {
-  "mcp.servers": {
+  "mcpServers": {
     "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-        "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-      ]
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
 ```
 
-### Step 3: Start Using It
+### Step 4: Start Using It
 
-Once configured, you can ask your AI assistant questions like:
+Once connected, you can ask your AI assistant questions like:
 - "Show me my recent Evergreen patches"
 - "What failed in my last patch?"
 - "Get the logs for this failing task"
 - "Find stepback failures in the mms project"
 
-That's it! The server will use your `evergreen login` credentials automatically.
+If your token expires, just ask your assistant to re-authenticate — it will call `initiate_auth_evergreen` and walk you through the login flow without restarting the server.
 
-> **Note:** Telemetry is enabled by default to help improve reliability. To disable it, change the arg SENTRY_ENABLED from true to false i.e. `-e SENTRY_ENABLED=false`. See [Telemetry](#telemetry) for details.
+> **Note:** Telemetry is enabled by default to help improve reliability. To disable it, add `-e SENTRY_ENABLED=false` to the Docker run command. See [Telemetry](#telemetry) for details.
 
 ---
 
@@ -337,8 +330,8 @@ For scenarios where stdio isn't practical, run the server as a standalone HTTP s
 docker run --rm -p 8000:8000 \
   -e EVERGREEN_MCP_TRANSPORT=sse \
   -e EVERGREEN_MCP_HOST=0.0.0.0 \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 
 # Using local installation
@@ -787,6 +780,46 @@ Discovers which Evergreen projects you've been working on based on recent patche
 **Parameters:**
 - `max_patches` (optional): Patches to scan (default: 50)
 
+### `initiate_auth_evergreen`
+
+Initiates OIDC authentication when auth errors occur. Sends a notification with the login URL and automatically polls for completion. Useful for re-authenticating expired tokens without restarting the server.
+
+**Parameters:**
+- None required
+
+**Example Usage:**
+```json
+{
+  "tool": "initiate_auth_evergreen",
+  "arguments": {}
+}
+```
+
+**Response Format (success):**
+```json
+{
+  "status": "authenticated",
+  "message": "Authentication successful! You can now use Evergreen tools.",
+  "user_id": "developer"
+}
+```
+
+**Response Format (timeout):**
+```json
+{
+  "status": "timeout",
+  "message": "Authentication timed out. Please call this tool again to retry."
+}
+```
+
+**How it works:**
+1. Starts an OIDC device authorization flow
+2. Sends a notification to the AI assistant with the login URL and user code
+3. Polls the OIDC provider until the user completes login in their browser
+4. Updates the server's authentication token automatically — no restart needed
+
+> **Note**: This tool is only available when the server is using OIDC authentication (not API key auth).
+
 ---
 
 ## Complete Workflow Examples
@@ -927,7 +960,32 @@ The assistant:
 3. For failed patches, calls `get_patch_failed_jobs_evergreen`
 4. Summarizes failures with severity and urgency
 
-### Workflow 4: Comparative Analysis
+### Workflow 4: Re-authenticating Expired Tokens
+
+**Scenario**: Your OIDC token has expired and tool calls start returning authentication errors.
+
+Ask: *"I'm getting auth errors, can you re-authenticate?"*
+
+The assistant calls:
+```json
+{
+  "tool": "initiate_auth_evergreen",
+  "arguments": {}
+}
+```
+
+**What happens:**
+1. The server initiates an OIDC device authorization flow
+2. The assistant receives a notification with the login URL and code:
+   > "Authentication required! Please login at: https://auth.example.com/device?code=ABCD-1234 | Code: ABCD-1234"
+3. You open the URL in your browser and complete the login
+4. The server detects the completed login and updates its token automatically
+5. The assistant confirms:
+   > "Authentication successful! Logged in as: your.username"
+
+You can now continue using all Evergreen tools without restarting the server.
+
+### Workflow 5: Comparative Analysis
 
 **Scenario**: Your test is flaky, and you want to compare multiple failures.
 
@@ -1072,8 +1130,8 @@ docker network create mcp-network
 
 docker run --rm -i \
   --network mcp-network \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
@@ -1084,8 +1142,8 @@ Limit CPU and memory:
 docker run --rm -i \
   --cpus="1.0" \
   --memory="512m" \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
@@ -1137,8 +1195,8 @@ mcp-inspector <command>
 
 ```bash
 npx @modelcontextprotocol/inspector docker run --rm -i \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
@@ -1576,8 +1634,8 @@ First, start the server:
 docker run --rm -p 8000:8000 \
   -e EVERGREEN_MCP_TRANSPORT=sse \
   -e EVERGREEN_MCP_HOST=0.0.0.0 \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
 
@@ -1742,8 +1800,8 @@ Local installation:
 ```bash
 # Docker method
 docker run --rm -it \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
-  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
+  -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
   --help
 
@@ -1787,7 +1845,10 @@ chmod 600 ~/.evergreen.yml ~/.kanopy/token-oidclogin.json
 
 ### Token refresh issues
 
-OIDC tokens expire. Re-run `evergreen login` if you see authentication errors after some time.
+OIDC tokens expire periodically. You have two options to re-authenticate:
+
+1. **In-tool re-auth (recommended)**: Ask your AI assistant to call `initiate_auth_evergreen` — this triggers a device flow login without restarting the server
+2. **Manual re-auth**: Re-run `evergreen login` in your terminal and restart the MCP server
 
 ### MCP Server won't connect
 
@@ -1815,8 +1876,12 @@ OIDC tokens expire. Re-run `evergreen login` if you see authentication errors af
 ```
 evergreen-mcp-server/
 ├── src/evergreen_mcp/
-│   ├── server.py                    # Main MCP server
-│   ├── mcp_tools.py                 # Tool definitions
+│   ├── __init__.py                  # Package init and version
+│   ├── server.py                    # Main MCP server and lifespan
+│   ├── mcp_tools.py                 # Tool definitions and registration
+│   ├── failed_jobs_tools.py         # Failed jobs, patches, and project inference logic
+│   ├── oidc_auth.py                 # OIDC/OAuth device flow authentication
+│   ├── utils.py                     # Config loading utilities
 │   ├── evergreen_graphql_client.py  # GraphQL client
 │   └── evergreen_queries.py         # GraphQL queries
 ├── tests/
