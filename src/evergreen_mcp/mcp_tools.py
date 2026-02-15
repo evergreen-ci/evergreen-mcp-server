@@ -19,6 +19,7 @@ from .failed_jobs_tools import (
     fetch_user_recent_patches,
     infer_project_id_from_context,
 )
+from .oidc_auth import OIDCAuthenticationError
 
 logger = logging.getLogger(__name__)
 
@@ -336,4 +337,100 @@ def register_tools(mcp: FastMCP) -> None:
         )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 5)
+    @mcp.tool(
+        description=(
+            "Initiate OIDC authentication when auth errors occur. Sends a notification "
+            "with the login URL and automatically polls for completion. Use this when "
+            "you encounter authentication errors from other Evergreen tools."
+        )
+    )
+    async def initiate_auth_evergreen(ctx: Context) -> str:
+        """Initiate OIDC authentication and poll until complete."""
+        import asyncio
+
+        evg_ctx = ctx.request_context.lifespan_context
+
+        if not evg_ctx.auth_manager:
+            await ctx.warning(
+                "OIDC authentication not available - server is using API key auth"
+            )
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": "OIDC authentication not available - server is using API key auth",
+                },
+                indent=2,
+            )
+
+        try:
+            # Start device flow
+            logger.info("Starting device authorization flow...")
+            device_data = await evg_ctx.auth_manager.initiate_device_flow()
+
+            login_url = device_data["verification_url"]
+            user_code = device_data.get("user_code", "")
+            device_code = device_data["device_code"]
+            interval = device_data.get("interval", 5)
+            expires_in = device_data.get("expires_in", 300)
+
+            code_msg = f" | Code: {user_code}" if user_code else ""
+
+            # Send notification with login URL
+            await ctx.warning(
+                f"Authentication required! Please login at: {login_url}{code_msg}"
+            )
+
+            # Poll for completion (with timeout)
+            max_attempts = expires_in // interval
+            for attempt in range(max_attempts):
+                await asyncio.sleep(interval)
+
+                token_data = await evg_ctx.auth_manager.poll_device_flow(device_code)
+
+                if token_data:
+                    # Update the GraphQL client with new token
+                    evg_ctx.client.bearer_token = token_data["access_token"]
+                    await evg_ctx.client.close()
+                    await evg_ctx.client.connect()
+
+                    # Send success notification
+                    await ctx.info(
+                        f"Authentication successful! Logged in as: {evg_ctx.auth_manager.user_id}"
+                    )
+
+                    return json.dumps(
+                        {
+                            "status": "authenticated",
+                            "message": "Authentication successful! You can now use Evergreen tools.",
+                            "user_id": evg_ctx.auth_manager.user_id,
+                        },
+                        indent=2,
+                    )
+
+                # Send periodic update every 30 seconds
+                if (attempt + 1) % 6 == 0:
+                    await ctx.info(
+                        f"Still waiting for login... ({(attempt + 1) * interval}s elapsed)"
+                    )
+
+            # Timeout
+            await ctx.error("Authentication timed out - please try again")
+            return json.dumps(
+                {
+                    "status": "timeout",
+                    "message": "Authentication timed out. Please call this tool again to retry.",
+                },
+                indent=2,
+            )
+
+        except OIDCAuthenticationError as e:
+            await ctx.error(f"Authentication error: {e}")
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": str(e),
+                },
+                indent=2,
+            )
+
+    logger.info("Registered %d tools with FastMCP server", 6)

@@ -35,6 +35,7 @@ class EvergreenContext:
     default_project_id: str | None = None
     workspace_dir: str | None = None
     projects_for_directory: dict = field(default_factory=dict)
+    auth_manager: OIDCAuthManager | None = None
 
 
 def detect_project_from_workspace(
@@ -222,6 +223,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
             default_project_id=default_project_id,
             workspace_dir=workspace_dir,
             projects_for_directory=projects_for_directory,
+            auth_manager=auth_manager,
         )
 
     logger.info("Evergreen GraphQL client closed")
@@ -334,7 +336,7 @@ def main() -> None:
         logger.info("Using explicit project ID: %s", args.project_id)
 
     logger.info("Starting FastMCP server...")
-    mcp.run()
+    mcp.run(transport="http", host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":
