@@ -56,5 +56,6 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
     # since a malformed config means the service can't work anyway
     config = load_evergreen_config()
     user_id = config.get("user")
+    USER_AGENT += f"/user_id={user_id}"
     if user_id:
         sentry_sdk.set_user({"id": user_id, "username": user_id})
