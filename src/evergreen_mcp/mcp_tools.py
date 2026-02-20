@@ -401,11 +401,13 @@ def register_tools(mcp: FastMCP) -> None:
             user_code,
         )
 
-        # Step 3: Poll for completion
-        max_attempts = expires_in // interval
-        last_update_time = asyncio.get_event_loop().time()
+        # Step 3: Poll for completion using wall-clock time
+        loop = asyncio.get_event_loop()
+        start_time = loop.time()
+        deadline = start_time + expires_in
+        last_update_time = start_time
 
-        for attempt in range(max_attempts):
+        while loop.time() < deadline:
             await asyncio.sleep(interval)
 
             try:
@@ -445,19 +447,20 @@ def register_tools(mcp: FastMCP) -> None:
                 )
 
             # Send periodic "still waiting" updates every 30 seconds
-            now = asyncio.get_event_loop().time()
+            now = loop.time()
             if now - last_update_time >= 30:
-                remaining = expires_in - (attempt + 1) * interval
+                remaining = max(0, int(deadline - now))
                 await ctx.info(
                     f"Still waiting for authentication... "
-                    f"({int(remaining)}s remaining)"
+                    f"({remaining}s remaining)"
                 )
                 last_update_time = now
 
+            elapsed = int(now - start_time)
             logger.debug(
-                "Authorization pending, polling... (%d/%d)",
-                attempt + 1,
-                max_attempts,
+                "Authorization pending, polling... (%ds / %ds)",
+                elapsed,
+                expires_in,
             )
 
         # Timed out
