@@ -10,6 +10,7 @@ import logging
 from typing import Annotated, Any, Dict, Optional
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools.tool import Tool
 
 from .failed_jobs_tools import (
     ProjectInferenceResult,
@@ -473,4 +474,7 @@ def register_tools(mcp: FastMCP) -> None:
             indent=2,
         )
 
-    logger.info("Registered %d tools with FastMCP server", 6)
+    tool_count = len(
+        [v for v in mcp._local_provider._components.values() if isinstance(v, Tool)]
+    )
+    logger.info("Registered %d tools with FastMCP server", tool_count)
