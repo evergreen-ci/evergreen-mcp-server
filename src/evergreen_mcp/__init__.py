@@ -4,6 +4,7 @@ This is the upgraded version of the Evergreen MCP Server using FastMCP.
 """
 
 __version__ = "0.4.0"
+USER_AGENT = f"evergreen-mcp-server/{__version__}"
 
 import os
 import sys
@@ -55,5 +56,6 @@ if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
     # since a malformed config means the service can't work anyway
     config = load_evergreen_config()
     user_id = config.get("user")
+    USER_AGENT += f"/user_id={user_id}"
     if user_id:
         sentry_sdk.set_user({"id": user_id, "username": user_id})
