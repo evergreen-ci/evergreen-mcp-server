@@ -4,11 +4,14 @@ This module contains all MCP tool definitions using FastMCP decorators.
 Tools are registered with the FastMCP server instance.
 """
 
+import asyncio
 import json
 import logging
 from typing import Annotated, Any, Dict, Optional
 
 from fastmcp import Context, FastMCP
+
+from .oidc_auth import DeviceFlowSlowDown, OIDCAuthenticationError
 
 from .failed_jobs_tools import (
     ProjectInferenceResult,
@@ -336,4 +339,137 @@ def register_tools(mcp: FastMCP) -> None:
         )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 5)
+    @mcp.tool(
+        description=(
+            "Initiate re-authentication with Evergreen when your OIDC token has "
+            "expired. This starts a device authorization flow: you will receive a "
+            "URL and code to complete login in your browser. The tool polls until "
+            "authentication succeeds, then reconnects the Evergreen client with "
+            "the new token. Only works when the server is using OIDC authentication "
+            "(not API key auth)."
+        )
+    )
+    async def initiate_auth_evergreen(ctx: Context) -> str:
+        """Initiate OIDC device flow re-authentication for Evergreen."""
+        evg_ctx = ctx.request_context.lifespan_context
+
+        # Check that we have an auth_manager (OIDC mode)
+        if not evg_ctx.auth_manager:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": (
+                        "Re-authentication is not available when using API key "
+                        "authentication. Please update your EVERGREEN_API_KEY "
+                        "environment variable and restart the server."
+                    ),
+                },
+                indent=2,
+            )
+
+        auth_manager = evg_ctx.auth_manager
+
+        # Step 1: Initiate device flow
+        try:
+            device_data = await auth_manager.initiate_device_flow()
+        except OIDCAuthenticationError as e:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Failed to initiate device flow: {e}",
+                },
+                indent=2,
+            )
+
+        verification_url = device_data["verification_url"]
+        user_code = device_data.get("user_code")
+        device_code = device_data["device_code"]
+        interval = device_data.get("interval", 5)
+        expires_in = device_data.get("expires_in", 300)
+
+        # Step 2: Notify the user with the login URL and code
+        login_message = (
+            f"Please authenticate by visiting: {verification_url}"
+        )
+        if user_code:
+            login_message += f"\nEnter code: {user_code}"
+
+        await ctx.warning(login_message)
+        logger.info(
+            "Device flow initiated - URL: %s, Code: %s",
+            verification_url,
+            user_code,
+        )
+
+        # Step 3: Poll for completion
+        max_attempts = expires_in // interval
+        last_update_time = asyncio.get_event_loop().time()
+
+        for attempt in range(max_attempts):
+            await asyncio.sleep(interval)
+
+            try:
+                token_data = await auth_manager.poll_device_flow(device_code)
+                if token_data:
+                    # Success - update the client's bearer token and reconnect
+                    evg_ctx.client.bearer_token = token_data["access_token"]
+                    await evg_ctx.client.close()
+                    await evg_ctx.client.connect()
+
+                    await ctx.info("Authentication successful! Evergreen client reconnected.")
+                    logger.info("Re-authentication completed successfully")
+
+                    return json.dumps(
+                        {
+                            "status": "success",
+                            "message": "Authentication successful. The Evergreen client has been reconnected with a new token.",
+                            "user_id": auth_manager.user_id,
+                        },
+                        indent=2,
+                    )
+            except DeviceFlowSlowDown:
+                interval += 5  # RFC 8628 Section 3.5
+                logger.debug(
+                    "Server requested slow down, increased interval to %d seconds",
+                    interval,
+                )
+                continue
+            except OIDCAuthenticationError as e:
+                logger.error("Authentication failed during polling: %s", e)
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": f"Authentication failed: {e}",
+                    },
+                    indent=2,
+                )
+
+            # Send periodic "still waiting" updates every 30 seconds
+            now = asyncio.get_event_loop().time()
+            if now - last_update_time >= 30:
+                remaining = expires_in - (attempt + 1) * interval
+                await ctx.info(
+                    f"Still waiting for authentication... "
+                    f"({int(remaining)}s remaining)"
+                )
+                last_update_time = now
+
+            logger.debug(
+                "Authorization pending, polling... (%d/%d)",
+                attempt + 1,
+                max_attempts,
+            )
+
+        # Timed out
+        return json.dumps(
+            {
+                "status": "timeout",
+                "message": (
+                    f"Authentication timed out after {expires_in} seconds. "
+                    "Please try again."
+                ),
+            },
+            indent=2,
+        )
+
+    logger.info("Registered %d tools with FastMCP server", 6)
