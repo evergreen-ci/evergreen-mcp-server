@@ -11,8 +11,6 @@ from typing import Annotated, Any, Dict, Optional
 
 from fastmcp import Context, FastMCP
 
-from .oidc_auth import DeviceFlowSlowDown, OIDCAuthenticationError
-
 from .failed_jobs_tools import (
     ProjectInferenceResult,
     fetch_inferred_project_ids,
@@ -22,6 +20,7 @@ from .failed_jobs_tools import (
     fetch_user_recent_patches,
     infer_project_id_from_context,
 )
+from .oidc_auth import DeviceFlowSlowDown, OIDCAuthenticationError
 
 logger = logging.getLogger(__name__)
 
