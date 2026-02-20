@@ -133,7 +133,9 @@ class OIDCAuthManager:
 
             # Fetch OIDC metadata manually
             try:
-                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as http_client:
+                async with httpx.AsyncClient(
+                    timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+                ) as http_client:
                     response = await http_client.get(
                         f"{self.issuer}/.well-known/openid-configuration"
                     )
@@ -290,7 +292,9 @@ class OIDCAuthManager:
         try:
             await self._get_client()
 
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as http_client:
+            async with httpx.AsyncClient(
+                timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+            ) as http_client:
                 response = await http_client.post(
                     self._metadata["token_endpoint"],
                     data={
@@ -528,7 +532,9 @@ class OIDCAuthManager:
 
             device_auth_endpoint = self._metadata["device_authorization_endpoint"]
 
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as http_client:
+            async with httpx.AsyncClient(
+                timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+            ) as http_client:
                 response = await http_client.post(
                     device_auth_endpoint,
                     data={
@@ -572,7 +578,9 @@ class OIDCAuthManager:
             await self._get_client()
             token_endpoint = self._metadata["token_endpoint"]
 
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as http_client:
+            async with httpx.AsyncClient(
+                timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+            ) as http_client:
                 response = await http_client.post(
                     token_endpoint,
                     data={

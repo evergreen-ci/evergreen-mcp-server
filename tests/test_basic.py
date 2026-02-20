@@ -208,8 +208,7 @@ class TestUserAgentConstant(unittest.TestCase):
 
     def test_graphql_client_uses_shared_constant(self):
         """Test that the GraphQL client imports USER_AGENT from the package"""
-        from evergreen_mcp import USER_AGENT
-        from evergreen_mcp import evergreen_graphql_client
+        from evergreen_mcp import USER_AGENT, evergreen_graphql_client
 
         # The module should reference the shared constant
         self.assertTrue(
@@ -220,8 +219,7 @@ class TestUserAgentConstant(unittest.TestCase):
 
     def test_oidc_auth_uses_shared_constant(self):
         """Test that the OIDC auth module imports USER_AGENT from the package"""
-        from evergreen_mcp import USER_AGENT
-        from evergreen_mcp import oidc_auth
+        from evergreen_mcp import USER_AGENT, oidc_auth
 
         self.assertTrue(
             hasattr(oidc_auth, "USER_AGENT"),
