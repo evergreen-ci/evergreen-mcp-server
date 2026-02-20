@@ -388,9 +388,7 @@ def register_tools(mcp: FastMCP) -> None:
         expires_in = device_data.get("expires_in", 300)
 
         # Step 2: Notify the user with the login URL and code
-        login_message = (
-            f"Please authenticate by visiting: {verification_url}"
-        )
+        login_message = f"Please authenticate by visiting: {verification_url}"
         if user_code:
             login_message += f"\nEnter code: {user_code}"
 
@@ -418,7 +416,9 @@ def register_tools(mcp: FastMCP) -> None:
                     await evg_ctx.client.close()
                     await evg_ctx.client.connect()
 
-                    await ctx.info("Authentication successful! Evergreen client reconnected.")
+                    await ctx.info(
+                        "Authentication successful! Evergreen client reconnected."
+                    )
                     logger.info("Re-authentication completed successfully")
 
                     return json.dumps(
@@ -451,8 +451,7 @@ def register_tools(mcp: FastMCP) -> None:
             if now - last_update_time >= 30:
                 remaining = max(0, int(deadline - now))
                 await ctx.info(
-                    f"Still waiting for authentication... "
-                    f"({remaining}s remaining)"
+                    f"Still waiting for authentication... " f"({remaining}s remaining)"
                 )
                 last_update_time = now
 
