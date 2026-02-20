@@ -14,7 +14,7 @@ from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
-from . import __version__
+from . import USER_AGENT
 from .evergreen_queries import (
     GET_INFERRED_PROJECT_IDS,
     GET_PATCH_FAILED_TASKS,
@@ -81,7 +81,7 @@ class EvergreenGraphQLClient:
             headers = {
                 "Authorization": f"Bearer {self.bearer_token}",
                 "Content-Type": "application/json",
-                "User-Agent": f"evergreen-mcp-server/{__version__}",
+                "User-Agent": USER_AGENT,
             }
             logger.debug("Using Bearer token authentication")
         else:
@@ -90,7 +90,7 @@ class EvergreenGraphQLClient:
                 "Api-User": self.user,
                 "Api-Key": self.api_key,
                 "Content-Type": "application/json",
-                "User-Agent": f"evergreen-mcp-server/{__version__}",
+                "User-Agent": USER_AGENT,
             }
             logger.debug("Using API key authentication")
 
