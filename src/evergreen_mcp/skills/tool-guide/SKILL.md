@@ -26,9 +26,12 @@ User wants to...
 ├─ Know which Evergreen projects they work on
 │   └─ get_inferred_project_ids_evergreen
 │
-└─ Don't know their project_id
-    └─ get_inferred_project_ids_evergreen FIRST
-        then use the project_id in subsequent calls
+├─ Don't know their project_id
+│   └─ get_inferred_project_ids_evergreen FIRST
+│       then use the project_id in subsequent calls
+│
+└─ Re-authenticate after token expiry / fix auth errors
+    └─ initiate_auth_evergreen
 ```
 
 ---
@@ -289,6 +292,57 @@ User wants to...
 
 ---
 
+## Tool 6: initiate_auth_evergreen
+
+**Purpose**: Re-authenticate with Evergreen when your OIDC token has expired. Starts a device authorization flow — the user visits a URL and enters a code in their browser, then the tool automatically reconnects the client with the new token.
+
+**When to Use**:
+- Any tool call returns a 401 Unauthorized or authentication error
+- The user says their session expired or asks to re-authenticate
+- You detect auth failures during a multi-step workflow
+
+**Parameters**: None
+
+**Return shape (success)**:
+```json
+{
+  "status": "success",
+  "message": "Authentication successful. The Evergreen client has been reconnected with a new token.",
+  "user_id": "user@mongodb.com"
+}
+```
+
+**Return shape (API key auth — not supported)**:
+```json
+{
+  "status": "error",
+  "message": "Re-authentication is not available when using API key authentication. Please update your EVERGREEN_API_KEY environment variable and restart the server."
+}
+```
+
+**Return shape (timeout)**:
+```json
+{
+  "status": "timeout",
+  "message": "Authentication timed out after 300 seconds. Please try again."
+}
+```
+
+**What happens during the call**:
+1. The tool sends a notification with a verification URL and user code
+2. The user opens the URL in their browser and enters the code
+3. The tool polls in the background until login completes (or times out)
+4. On success, the Evergreen client is reconnected — all subsequent tool calls use the new token
+
+**What to do with results**:
+- **success** → Resume the workflow that was interrupted by the auth error
+- **error (API key)** → Tell the user they need to update their API key and restart the server
+- **timeout** → Ask the user if they want to try again
+
+**Important**: This tool only works with OIDC authentication. If the server is configured with API keys, it returns an error directing the user to update their key manually.
+
+---
+
 ## Common Tool Chains
 
 ### "Check my CI status" (Quick Overview)
@@ -323,4 +377,12 @@ get_patch_failed_jobs_evergreen(patch_id=...)
 get_task_logs_evergreen(task_id=..., filter_errors=True)
 → If not enough context: retry with filter_errors=False
 → Present error summary
+```
+
+### Auth Error Recovery
+```
+Any tool returns 401/auth error
+→ initiate_auth_evergreen()
+→ Wait for user to complete browser login
+→ On success: retry the original tool call
 ```

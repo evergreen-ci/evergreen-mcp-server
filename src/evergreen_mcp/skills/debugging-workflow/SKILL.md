@@ -164,6 +164,21 @@ Use this to categorize failures and advise the user:
 
 ---
 
+## Workflow: Recovering from Authentication Errors
+
+If any tool call fails with a 401 Unauthorized or authentication error, the OIDC token has likely expired.
+
+```
+1. initiate_auth_evergreen()
+2. The tool sends a URL and code — tell the user to open it in their browser
+3. Wait for success response
+4. Retry the tool call that originally failed
+```
+
+This avoids restarting the server. It only works with OIDC auth — if the server uses API keys, the user must update their key and restart.
+
+---
+
 ## Tips for Effective Diagnosis
 
 1. **Start broad, narrow down**: Patch → Tasks → Tests → Logs. Don't jump to logs first.
@@ -172,3 +187,4 @@ Use this to categorize failures and advise the user:
 4. **Use the right tool for the failure type**: Test results for test failures, logs for everything else.
 5. **When retrying log fetches**: Start with `filter_errors=True` (fast, focused). Fall back to `filter_errors=False` if needed.
 6. **Execution numbers**: If a task was retried, `execution=0` is the first run, `execution=1` is the retry. Check both if the failure is intermittent.
+7. **Auth errors mid-workflow**: If you hit a 401 during investigation, call `initiate_auth_evergreen()` to re-authenticate, then resume where you left off.

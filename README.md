@@ -62,7 +62,10 @@ Then add the server to your MCP client config:
       "args": [
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -77,7 +80,10 @@ Then add the server to your MCP client config:
       "args": [
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -92,7 +98,10 @@ Then add the server to your MCP client config:
       "args": [
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -111,7 +120,7 @@ Then add the server to your MCP client config:
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "-e", "SENTRY_ENABLED=true",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
@@ -130,7 +139,7 @@ Then add the server to your MCP client config:
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -148,7 +157,7 @@ Then add the server to your MCP client config:
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -258,7 +267,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
       "args": [
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -280,7 +292,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server",
         "--project-id", "mongodb-mongo-master"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -304,7 +319,7 @@ This is the most secure and easiest approach for most users.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -321,7 +336,7 @@ This is the most secure and easiest approach for most users.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "-e", "EVERGREEN_PROJECT=mongodb-mongo-master",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
@@ -442,7 +457,7 @@ For scenarios where stdio isn't practical, run the server as a standalone HTTP s
 docker run --rm -p 8000:8000 \
   -e EVERGREEN_MCP_TRANSPORT=sse \
   -e EVERGREEN_MCP_HOST=0.0.0.0 \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
   -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 
@@ -492,7 +507,7 @@ docker run --rm -it \
   "command": "docker",
   "args": [
     "run", "--rm", "-i",
-    "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
     "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
     "evergreen-mcp-server:custom"
   ]
@@ -517,7 +532,7 @@ Comprehensive setup guides for various MCP clients and AI assistants.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -534,7 +549,7 @@ Comprehensive setup guides for various MCP clients and AI assistants.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ],
@@ -580,7 +595,7 @@ Comprehensive setup guides for various MCP clients and AI assistants.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -618,7 +633,7 @@ Comprehensive setup guides for various MCP clients and AI assistants.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ],
@@ -656,7 +671,7 @@ Create `.vscode/settings.json` in your workspace:
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ],
@@ -675,7 +690,7 @@ Add to Augment plugin settings:
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -706,7 +721,7 @@ Add to Augment plugin settings:
         "command": "docker",
         "args": [
           "run", "--rm", "-i",
-          "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+          "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
         ]
@@ -727,7 +742,10 @@ For any MCP-compatible client, follow this pattern:
   "args": [
     "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
     "evergreen-mcp-server"
-  ]
+  ],
+  "env": {
+    "SENTRY_ENABLED": "true"
+  }
 }
 ```
 
@@ -737,7 +755,7 @@ For any MCP-compatible client, follow this pattern:
   "command": "docker",
   "args": [
     "run", "--rm", "-i",
-    "-v", "<path-to-token>:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "<path-to-token>:/home/evergreen/.kanopy/token-oidclogin.json",
     "-v", "<path-to-config>:/home/evergreen/.evergreen.yml:ro",
     "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
   ]
@@ -903,6 +921,42 @@ Discovers which Evergreen projects you've been working on based on recent patche
 **Parameters:**
 - `max_patches` (optional): Patches to scan (default: 50)
 
+### `initiate_auth_evergreen`
+
+Initiates OIDC device flow re-authentication when your token has expired. This allows you to re-authenticate without restarting the MCP server. Only available when the server is using OIDC authentication (not API key auth).
+
+**Parameters:** None
+
+**Example Usage:**
+```json
+{
+  "tool": "initiate_auth_evergreen",
+  "arguments": {}
+}
+```
+
+**Response Format (success):**
+```json
+{
+  "status": "success",
+  "message": "Authentication successful. The Evergreen client has been reconnected with a new token.",
+  "user_id": "your.username"
+}
+```
+
+**Response Format (API key auth):**
+```json
+{
+  "status": "error",
+  "message": "Re-authentication is not available when using API key authentication. Please update your EVERGREEN_API_KEY environment variable and restart the server."
+}
+```
+
+**Notes:**
+- The tool sends a notification with a URL and code for browser-based authentication
+- Polls automatically until authentication completes or times out
+- On success, the Evergreen client is automatically reconnected with the new token
+
 ---
 
 ## Complete Workflow Examples
@@ -1043,7 +1097,37 @@ The assistant:
 3. For failed patches, calls `get_patch_failed_jobs_evergreen`
 4. Summarizes failures with severity and urgency
 
-### Workflow 4: Comparative Analysis
+### Workflow 4: Re-authenticating Expired Tokens
+
+**Scenario**: Your OIDC token expired while using the MCP server, and tool calls are returning authentication errors.
+
+#### Step 1: Trigger Re-authentication
+
+Ask your AI assistant: *"My Evergreen authentication expired, please re-authenticate"*
+
+The assistant calls:
+```json
+{
+  "tool": "initiate_auth_evergreen",
+  "arguments": {}
+}
+```
+
+#### Step 2: Complete Browser Login
+
+The tool sends a notification with a URL and a user code. Open the URL in your browser and enter the code to authenticate.
+
+#### Step 3: Automatic Reconnection
+
+Once you complete the browser login, the tool automatically:
+1. Retrieves the new OIDC token
+2. Updates the Evergreen client with the new token
+3. Reconnects to the Evergreen API
+4. Saves the token to disk for future sessions
+
+You can immediately resume using all other Evergreen tools without restarting the server.
+
+### Workflow 5: Comparative Analysis
 
 **Scenario**: Your test is flaky, and you want to compare multiple failures.
 
@@ -1188,7 +1272,7 @@ docker network create mcp-network
 
 docker run --rm -i \
   --network mcp-network \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
   -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
@@ -1200,7 +1284,7 @@ Limit CPU and memory:
 docker run --rm -i \
   --cpus="1.0" \
   --memory="512m" \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
   -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
@@ -1215,7 +1299,7 @@ services:
     image: ghcr.io/evergreen-ci/evergreen-mcp-server:latest
     stdin_open: true
     volumes:
-      - ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro
+      - ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json
       - ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro
     environment:
       - EVERGREEN_PROJECT=mongodb-mongo-master
@@ -1253,7 +1337,7 @@ mcp-inspector <command>
 
 ```bash
 npx @modelcontextprotocol/inspector docker run --rm -i \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
   -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
@@ -1481,7 +1565,10 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
       "args": [
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -1495,7 +1582,7 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -1512,7 +1599,7 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "-v", "${workspaceFolder}:${workspaceFolder}:ro",
         "-e", "WORKSPACE_PATH=${workspaceFolder}",
@@ -1564,7 +1651,10 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
       "args": [
         "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
         "evergreen-mcp-server"
-      ]
+      ],
+      "env": {
+        "SENTRY_ENABLED": "true"
+      }
     }
   }
 }
@@ -1578,7 +1668,7 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ],
@@ -1653,7 +1743,7 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${userHome}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${userHome}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ],
@@ -1705,7 +1795,7 @@ Augment is an AI coding assistant available for VS Code and JetBrains IDEs.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ],
@@ -1722,7 +1812,7 @@ First, start the server:
 docker run --rm -p 8000:8000 \
   -e EVERGREEN_MCP_TRANSPORT=sse \
   -e EVERGREEN_MCP_HOST=0.0.0.0 \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
   -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest
 ```
@@ -1751,7 +1841,7 @@ Then configure Augment:
     "command": "docker",
     "args": [
       "run", "--rm", "-i",
-      "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+      "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
       "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
       "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
     ]
@@ -1778,7 +1868,7 @@ Then configure Augment:
         "command": "docker",
         "args": [
           "run", "--rm", "-i",
-          "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+          "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
           "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
           "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
         ]
@@ -1819,7 +1909,7 @@ Windsurf is Codeium's agentic IDE.
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
         "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
@@ -1844,7 +1934,7 @@ Docker-based (most portable):
   "command": "docker",
   "args": [
     "run", "--rm", "-i",
-    "-v", "<home>/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+    "-v", "<home>/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json",
     "-v", "<home>/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
     "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
   ]
@@ -1888,7 +1978,7 @@ Local installation:
 ```bash
 # Docker method
 docker run --rm -it \
-  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro \
+  -v ~/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json \
   -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
   ghcr.io/evergreen-ci/evergreen-mcp-server:latest \
   --help
@@ -1933,7 +2023,10 @@ chmod 600 ~/.evergreen.yml ~/.kanopy/token-oidclogin.json
 
 ### Token refresh issues
 
-OIDC tokens expire. Re-run `evergreen login` if you see authentication errors after some time.
+OIDC tokens expire periodically. If you see authentication errors:
+
+1. **Recommended**: Use the `initiate_auth_evergreen` tool to re-authenticate without restarting the server. Ask your AI assistant: *"Re-authenticate with Evergreen"*
+2. **Alternative**: Re-run `evergreen login` in your terminal and restart the MCP server
 
 ### MCP Server won't connect
 
