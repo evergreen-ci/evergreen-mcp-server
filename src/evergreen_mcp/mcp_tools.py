@@ -386,6 +386,11 @@ def register_tools(mcp: FastMCP) -> None:
     )
     async def get_test_results_detailed(
         ctx: Context,
+        job_name: Annotated[
+            str,
+            "The name of the job to get the test results for. This is the "
+            "'job_name' field of the failed_tasks array. i.e. Job0, Job1, etc.",
+        ],
         task_id: Annotated[
             str,
             "Task identifier from get_patch_failures response. Found in the "
@@ -396,11 +401,6 @@ def register_tools(mcp: FastMCP) -> None:
             "Task execution number if task was retried. Usually 0 for first "
             "execution, 1+ for retries.",
         ] = 0,
-        job_name: Annotated[
-            str,
-            "The name of the job to get the test results for. This is the "
-            "'job_name' field of the failed_tasks array. i.e. Job0, Job1, etc.",
-        ],
         tail_limit: Annotated[
             int,
             "The number of lines to return from the end of the test results. "
