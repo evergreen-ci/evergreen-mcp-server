@@ -227,10 +227,12 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get a quick summary of task logs via GraphQL. Returns basic log info "
-            "and filtered error messages. For full detailed logs with error pattern "
-            "analysis, use get_task_log_detailed instead. Use task_id from "
-            "get_patch_failures results."
+            "Get a truncated view of task logs via GraphQL. Returns log metadata "
+            "and filtered error/failure messages, but only captures a limited "
+            "portion of the full log (mostly test log ingestion messages). "
+            "For complete raw task logs including timeout output, process dumps, "
+            "and full execution logs, use get_task_log_detailed instead. "
+            "Use task_id from get_patch_failures results."
         )
     )
     async def get_task_log_summary(
@@ -271,9 +273,10 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get a quick summary of test results via GraphQL. Returns basic test "
-            "info including pass/fail status and test names. For full detailed "
-            "logs with actual error messages, use get_test_results_detailed instead. "
+            "Get test result metadata via GraphQL. Returns test names, pass/fail "
+            "statuses, durations, and Parsley log viewer URLs — but not the actual "
+            "error messages from test output. For the raw test log content with "
+            "error pattern analysis, use get_test_results_detailed instead. "
             "Use task_id from get_patch_failures results."
         )
     )
@@ -341,10 +344,12 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get full detailed task logs via REST API with error pattern analysis. "
-            "Scans logs for error patterns (panic, fatal, exception, etc.) and "
-            "provides categorized error counts with examples. Best for debugging "
-            "root cause of failures. Use task_id from get_patch_failures results."
+            "Get the complete raw task logs via REST API. Returns the full "
+            "untruncated task execution log including timeout handler output, "
+            "process dumps, and stdout/stderr — content that the GraphQL "
+            "get_task_log_summary tool cannot access. Best for debugging "
+            "non-test failures (setup errors, timeouts, compilation failures). "
+            "Use task_id from get_patch_failures results."
         )
     )
     async def get_task_log_detailed(
@@ -371,10 +376,12 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get full detailed test results via REST API with actual error messages. "
-            "Fetches raw test logs and scans for error patterns to identify root "
-            "cause of test failures. Best for debugging specific test failures. "
-            "Use task_id from get_patch_failures results."
+            "Get raw test log content via REST API with error pattern analysis. "
+            "Fetches actual test output (stored in S3, not accessible via GraphQL) "
+            "and scans for error patterns (panic, fatal, exception, stack traces, "
+            "etc.), returning categorized error counts with example lines. "
+            "Use this to understand WHY a test failed, not just that it failed. "
+            "Requires task_id and job_name from get_patch_failures results."
         )
     )
     async def get_test_results_detailed(

@@ -27,7 +27,7 @@ Call: get_inferred_project_ids_evergreen(max_patches=50)
 ### Step 2: Find the Failing Patch
 
 ```
-Call: list_user_recent_patches_evergreen(project_id="...", limit=10)
+Call: list_recent_patches(project_id="...", limit=10)
 ```
 
 Present a summary to the user:
@@ -40,7 +40,7 @@ Present a summary to the user:
 ### Step 3: Get Failed Tasks
 
 ```
-Call: get_patch_failed_jobs_evergreen(patch_id="...")
+Call: get_patch_failures(patch_id="...")
 ```
 
 This returns all failed tasks for the patch. Classify each failed task:
@@ -55,8 +55,9 @@ This returns all failed tasks for the patch. Classify each failed task:
 
 ### Step 4a: Investigate Test Failures
 
+**Quick triage** — see which tests failed:
 ```
-Call: get_task_test_results_evergreen(task_id="...", failed_only=True)
+Call: get_test_results_summary(task_id="...", failed_only=True)
 ```
 
 This gives you the exact test names that failed. Present them to the user:
@@ -64,23 +65,31 @@ This gives you the exact test names that failed. Present them to the user:
 - Look for patterns in test names (all auth-related? all in the same directory?)
 - Share Parsley links (`url_parsley`) for the user to explore logs visually
 
-If you need to understand *why* a test failed (not just *which*), proceed to Step 4b with the same task_id.
-
-### Step 4b: Investigate Logs
-
+**Root cause** — get actual error messages from test output:
 ```
-Call: get_task_logs_evergreen(task_id="...", filter_errors=True)
+Call: get_test_results_detailed(task_id="...", job_name="Job0")
 ```
 
-Scan the returned error logs for root cause:
-- The first `error` or `fatal` severity message is usually the trigger
-- Look for stack traces, assertion failures, or error codes
+The actual test log content is stored in S3 and is NOT accessible through the GraphQL API. This tool fetches the raw test output via the REST API and scans for error patterns (panic, fatal, exception, stack traces, etc.). Returns categorized error counts with example lines so you can pinpoint the failure.
 
-If `filter_errors=True` returns too few or no results (the actual error might not contain "error" in its text), retry:
+### Step 4b: Investigate Task Logs
 
+**Note**: The GraphQL task log summary is truncated and mostly shows test log ingestion messages. For most debugging, go directly to the full logs.
+
+**Quick check** (optional) — see if GraphQL has useful error messages:
 ```
-Call: get_task_logs_evergreen(task_id="...", filter_errors=False, max_lines=500)
+Call: get_task_log_summary(task_id="...", filter_errors=True)
 ```
+
+**Full raw logs** — get the complete, untruncated task execution log:
+```
+Call: get_task_log_detailed(task_id="...", execution_retries=0)
+```
+
+This fetches the full task log via REST API, including timeout handler output, process dumps, and complete stdout/stderr that the GraphQL summary cannot access. Scan the output for:
+- The first `error` or `fatal` message — subsequent errors often cascade from it
+- Stack traces, assertion failures, or error codes
+- Timeout indicators, OOM messages, or infrastructure errors
 
 ### Step 5: Synthesize and Report
 
@@ -107,7 +116,7 @@ For a fast "is everything green?" check:
 
 ```
 1. get_inferred_project_ids_evergreen()
-2. list_user_recent_patches_evergreen(project_id="...", limit=3)
+2. list_recent_patches(project_id="...", limit=3)
 3. Report: "Your last 3 patches: ✓ SERVER-111, ✓ SERVER-222, ✗ SERVER-333"
 ```
 
@@ -120,11 +129,15 @@ Only drill deeper if the user asks.
 When the user already has a task_id (e.g., from a Spruce/Parsley URL):
 
 ```
-1. get_task_test_results_evergreen(task_id="...", failed_only=True)
-   → If tests failed, report them
-2. get_task_logs_evergreen(task_id="...", filter_errors=True)
-   → Report error messages
+1. get_test_results_summary(task_id="...", failed_only=True)
+   → See which tests failed (names, statuses, Parsley URLs)
+2. get_test_results_detailed(task_id="...", job_name="Job0")
+   → Get actual error messages from raw test output (stored in S3)
+3. get_task_log_detailed(task_id="...")
+   → Get full raw task execution log (for non-test failures)
 ```
+
+Note: `get_task_log_summary` is optional — it returns truncated content. For most debugging, skip directly to `get_task_log_detailed`.
 
 ---
 
@@ -170,5 +183,5 @@ Use this to categorize failures and advise the user:
 2. **Look for patterns across variants**: Same failure everywhere = code bug. One variant only = platform issue.
 3. **Check the failure count**: 1-3 failed tests is usually a focused bug. 50+ failures often means a build/setup issue that cascaded.
 4. **Use the right tool for the failure type**: Test results for test failures, logs for everything else.
-5. **When retrying log fetches**: Start with `filter_errors=True` (fast, focused). Fall back to `filter_errors=False` if needed.
+5. **Summary for triage, detailed for root cause**: Use `get_test_results_summary` to see which tests failed (names, statuses). Use `get_test_results_detailed` to see WHY they failed (actual error messages from S3 logs). For task logs, prefer `get_task_log_detailed` directly — the GraphQL summary is truncated and often insufficient.
 6. **Execution numbers**: If a task was retried, `execution=0` is the first run, `execution=1` is the retry. Check both if the failure is intermittent.

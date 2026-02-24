@@ -12,16 +12,18 @@ Use this to pick the right tool:
 User wants to...
 │
 ├─ See their recent CI patches/commits
-│   └─ list_user_recent_patches_evergreen
+│   └─ list_recent_patches
 │
 ├─ Understand why a patch is failing
-│   └─ get_patch_failed_jobs_evergreen (needs patch_id)
+│   └─ get_patch_failures (needs patch_id)
 │
 ├─ See which specific tests failed in a task
-│   └─ get_task_test_results_evergreen (needs task_id)
+│   ├─ Quick overview → get_test_results_summary (needs task_id)
+│   └─ Actual error messages → get_test_results_detailed (needs task_id + job_name)
 │
 ├─ Read error logs from a failed task
-│   └─ get_task_logs_evergreen (needs task_id)
+│   ├─ Quick overview → get_task_log_summary (needs task_id)
+│   └─ Full error analysis → get_task_log_detailed (needs task_id)
 │
 ├─ Know which Evergreen projects they work on
 │   └─ get_inferred_project_ids_evergreen
@@ -30,6 +32,17 @@ User wants to...
     └─ get_inferred_project_ids_evergreen FIRST
         then use the project_id in subsequent calls
 ```
+
+### Summary vs Detailed Tools
+
+The log and test result tools come in two tiers:
+
+| Tier | Tools | Source | Best For |
+|------|-------|--------|----------|
+| **Summary** | `get_task_log_summary`, `get_test_results_summary` | GraphQL API | Quick triage — see what failed, get test names and statuses. Note: GraphQL returns truncated/metadata-only views. |
+| **Detailed** | `get_task_log_detailed`, `get_test_results_detailed` | REST API | Root cause analysis — full raw logs from S3. Test results include automatic error pattern scanning. |
+
+**Why two tiers?** The GraphQL API returns test metadata (names, statuses, Parsley URLs) and truncated task logs, but cannot access the actual test log content stored in S3. The REST API fetches the full raw logs. Start with summary tools to identify which tasks/tests failed, then use detailed tools on the specific failures that need root cause analysis.
 
 ---
 
@@ -67,7 +80,7 @@ User wants to...
 
 ---
 
-## Tool 2: list_user_recent_patches_evergreen
+## Tool 2: list_recent_patches
 
 **Purpose**: List the authenticated user's recent patches with their CI/CD status. This is the starting point for most workflows.
 
@@ -106,12 +119,12 @@ User wants to...
 **Key fields**:
 - `status` — Overall patch status: created, started, succeeded, failed
 - `version_status` — CI version status (may differ from patch status)
-- `patch_id` — Use this to drill into failures with get_patch_failed_jobs_evergreen
+- `patch_id` — Use this to drill into failures with get_patch_failures
 
 **What to do with results**:
 1. Summarize: "You have 5 recent patches. 3 succeeded, 1 failed, 1 is running."
 2. If any patch has status "failed", offer to investigate: "Your patch SERVER-12345 is failing. Want me to check what's wrong?"
-3. Use the patch_id from failed patches to call get_patch_failed_jobs_evergreen
+3. Use the patch_id from failed patches to call get_patch_failures
 
 **Auto-detection behavior** (when project_id omitted):
 - High confidence (1 project): Uses it automatically
@@ -120,12 +133,12 @@ User wants to...
 
 ---
 
-## Tool 3: get_patch_failed_jobs_evergreen
+## Tool 3: get_patch_failures
 
 **Purpose**: Analyze why a patch is failing. Returns all failed tasks with failure details, build variants, timeout info, log links, and test failure counts.
 
 **When to Use**:
-- After finding a failed patch via list_user_recent_patches_evergreen
+- After finding a failed patch via list_recent_patches
 - User asks "why is my patch failing?" or "what's broken?"
 - You need task_id values to dig deeper
 
@@ -133,7 +146,7 @@ User wants to...
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| patch_id | str | **required** | Patch ID from list_user_recent_patches results |
+| patch_id | str | **required** | Patch ID from list_recent_patches results |
 | project_id | str or None | auto-detect | Optional project identifier for validation |
 | max_results | int | 50 | Max failed tasks. 10-20 focused, 50+ comprehensive. |
 
@@ -182,26 +195,26 @@ User wants to...
    - `failed_test_count > 0` → Test failures (most common, most actionable)
    - `timed_out: true` → Timeout issues
    - `failed_test_count == 0` and no timeout → Infrastructure/setup failure
-3. For test failures → call get_task_test_results_evergreen(task_id)
-4. For other failures → call get_task_logs_evergreen(task_id)
+3. For test failures → call get_test_results_summary(task_id) for overview, then get_test_results_detailed(task_id, job_name) for root cause
+4. For other failures → call get_task_log_summary(task_id) for overview, then get_task_log_detailed(task_id) for root cause
 5. Look for patterns: same task failing across multiple variants = likely real code issue. Fails on one variant only = possibly platform-specific.
 
 ---
 
-## Tool 4: get_task_test_results_evergreen
+## Tool 4: get_test_results_summary
 
-**Purpose**: Get the specific test cases that failed within a task. Shows individual test names, statuses, durations, and links to test-specific logs.
+**Purpose**: Get test result metadata via GraphQL. Shows individual test names, pass/fail statuses, durations, and Parsley log viewer URLs — but NOT the actual error messages from test output. Use this for triage — to see *which* tests failed.
 
 **When to Use**:
-- After get_patch_failed_jobs_evergreen shows a task with failed_test_count > 0
+- After get_patch_failures shows a task with failed_test_count > 0
 - User asks "which tests are failing?"
-- You need specific test names to help the user fix their code
+- You need specific test names before drilling deeper
 
 **Parameters**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| task_id | str | **required** | Task ID from get_patch_failed_jobs results |
+| task_id | str | **required** | Task ID from get_patch_failures results |
 | execution | int | 0 | Execution number (0 = first run, 1+ = retries) |
 | failed_only | bool | True | Only show failed tests (recommended) |
 | limit | int | 100 | Max test results to return |
@@ -235,25 +248,59 @@ User wants to...
 1. List the failing tests: "3 tests failed: test_login_expired_token, test_session_refresh, test_oauth_callback"
 2. If test names suggest a pattern, point it out: "All 3 failures are auth-related — likely connected to your changes."
 3. Share Parsley links if available for deeper analysis
-4. If you need more detail, call get_task_logs_evergreen on the same task_id
+4. If you need the actual error messages, call get_test_results_detailed with the same task_id and job_name
 
 ---
 
-## Tool 5: get_task_logs_evergreen
+## Tool 5: get_test_results_detailed
 
-**Purpose**: Fetch raw log output from a task execution. By default filters for error/failure messages to surface what went wrong.
+**Purpose**: Fetch raw test log content via REST API with error pattern analysis. The actual test output is stored in S3 and is NOT accessible through the GraphQL API — this tool fetches it directly. Scans the raw output for error patterns (panic, fatal, exception, stack traces, etc.) and returns categorized error counts with example lines. Use this to understand *why* tests failed.
 
 **When to Use**:
-- Tasks without test results (setup failures, timeouts, compilation errors)
-- When test results don't explain why a test failed
-- User asks "show me the error logs"
-- Investigating timeout or infrastructure failures
+- After get_test_results_summary identifies failing tests and you need root cause
+- User asks "why is this test failing?" or "what's the actual error?"
+- You need the error messages, not just test names
 
 **Parameters**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| task_id | str | **required** | Task ID from get_patch_failed_jobs results |
+| task_id | str | **required** | Task ID from get_patch_failures results |
+| execution_retries | int | 0 | Execution number (0 = first run, 1+ = retries) |
+| job_name | str | **required** | Job name from the failed_tasks array (e.g., "Job0", "Job1") |
+| tail_limit | int | 1000 | Lines from end of log. 100-500 for quick scan, 1000+ for comprehensive. |
+
+**Return shape**:
+```json
+{
+  "logs": "Log scan: 42/1000 lines matched error patterns.\n\nTop hits:\n  - error: 15\n  - fatal: 3\n  - panic: 2\n\nExamples (first few per term):\n\n[error]\n  2025-01-15T10:35:00Z  error: token validation failed: expired\n  ..."
+}
+```
+
+When no error patterns are found, returns the raw log tail instead.
+
+**What to do with results**:
+1. The response contains a pre-scanned summary with top error terms and example lines
+2. Focus on the "Top hits" section to understand the dominant failure mode
+3. Use the "Examples" section to find the actual root cause error messages
+4. Present a clear diagnosis: "Test failed due to token validation — 'expired token' errors appear 15 times"
+
+---
+
+## Tool 6: get_task_log_summary
+
+**Purpose**: Get a truncated view of task logs via GraphQL. Returns log metadata and filtered error/failure messages, but only captures a limited portion of the full log (mostly test log ingestion messages). Does NOT include timeout handler output, process dumps, or the complete execution log.
+
+**When to Use**:
+- Quick initial check before fetching full logs
+- When you only need to see if there are error-severity messages
+- Note: For most debugging, you'll want get_task_log_detailed instead since this only returns truncated content
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| task_id | str | **required** | Task ID from get_patch_failures results |
 | execution | int | 0 | Execution number (0 = first run, 1+ = retries) |
 | max_lines | int | 1000 | Max log lines. 100-500 for quick scan, 1000+ for comprehensive. |
 | filter_errors | bool | True | Only error/failure lines. Set False for full output. |
@@ -279,13 +326,47 @@ User wants to...
 **What to do with results**:
 1. Find the root cause: usually the first error/fatal message
 2. Summarize: "Compilation failed — header file 'auth.h' not found."
+3. If filter_errors=True gives too few results, retry with filter_errors=False
+4. For deeper analysis with error pattern scanning, use get_task_log_detailed
+
+---
+
+## Tool 7: get_task_log_detailed
+
+**Purpose**: Fetch the complete, untruncated raw task logs via REST API. Returns the full task execution log including timeout handler output, process dumps, and stdout/stderr — content that the GraphQL `get_task_log_summary` cannot access. Best for debugging non-test failures (setup errors, timeouts, compilation failures).
+
+**When to Use**:
+- Tasks without test results (setup failures, timeouts, compilation errors)
+- After get_task_log_summary returns truncated/insufficient content
+- Investigating compilation errors, setup failures, timeouts, infrastructure issues
+- User asks "show me the full error logs" or "what's the root cause?"
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| task_id | str | **required** | Task ID from get_patch_failures results |
+| execution_retries | int | 0 | Execution number (0 = first run, 1+ = retries) |
+
+**Return shape**:
+```json
+{
+  "logs": "<full raw task log text from Evergreen REST API>"
+}
+```
+
+Note: Unlike `get_test_results_detailed`, this tool does NOT perform automatic error pattern scanning. You'll need to analyze the raw log output yourself.
+
+**What to do with results**:
+1. Scan the returned log text for error patterns, stack traces, and failure messages
+2. Look for the first error/fatal message — subsequent errors often cascade from it
 3. Categorize:
    - Compilation errors → missing files, syntax, dependencies
    - "OOM" / memory → resource constraints
    - Network/connection → infrastructure, retry may help
    - "timeout" / "heartbeat" → task took too long
    - Setup/install → environment configuration
-4. If filter_errors=True gives too few results, retry with filter_errors=False
+4. Present the root cause clearly to the user
 
 ---
 
@@ -294,33 +375,36 @@ User wants to...
 ### "Check my CI status" (Quick Overview)
 ```
 get_inferred_project_ids_evergreen
-→ list_user_recent_patches_evergreen(project_id=..., limit=5)
+→ list_recent_patches(project_id=..., limit=5)
 → Present summary
 ```
 
 ### "Why is my patch failing?" (Full Investigation)
 ```
-list_user_recent_patches_evergreen(project_id=..., limit=5)
+list_recent_patches(project_id=..., limit=5)
 → Find failed patch → get patch_id
-→ get_patch_failed_jobs_evergreen(patch_id=...)
+→ get_patch_failures(patch_id=...)
 → For tasks with failed_test_count > 0:
-    → get_task_test_results_evergreen(task_id=...)
+    → get_test_results_summary(task_id=...)        # which tests failed
+    → get_test_results_detailed(task_id=..., job_name=...)  # why they failed
 → For tasks without test results:
-    → get_task_logs_evergreen(task_id=...)
+    → get_task_log_summary(task_id=...)             # quick error overview
+    → get_task_log_detailed(task_id=...)            # full error analysis
 → Synthesize findings and present root cause
 ```
 
 ### "Which tests are failing?" (Test Focus)
 ```
-get_patch_failed_jobs_evergreen(patch_id=...)
+get_patch_failures(patch_id=...)
 → Find tasks with failed_test_count > 0
-→ get_task_test_results_evergreen(task_id=...)
+→ get_test_results_summary(task_id=...)
 → List failing test names and patterns
+→ For root cause: get_test_results_detailed(task_id=..., job_name=...)
 ```
 
 ### "Show me the error logs" (Direct Log Access)
 ```
-get_task_logs_evergreen(task_id=..., filter_errors=True)
-→ If not enough context: retry with filter_errors=False
+get_task_log_summary(task_id=..., filter_errors=True)
+→ If not enough context: get_task_log_detailed(task_id=...)
 → Present error summary
 ```

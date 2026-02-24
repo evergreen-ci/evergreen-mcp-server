@@ -123,7 +123,11 @@ Evergreen has several types of logs:
 **Viewing logs**:
 - **Spruce** (spruce.mongodb.com) — Shows log tail (~100 lines) in the task view
 - **Parsley** — Full log viewer with search, filtering, and AI-powered analysis
-- **API / MCP tools** — get_task_logs_evergreen fetches logs programmatically
+- **API / MCP tools**:
+  - `get_task_log_summary` (GraphQL) — Truncated task log view, mostly test ingestion messages
+  - `get_task_log_detailed` (REST API) — Full raw task logs including timeout output and process dumps
+  - `get_test_results_summary` (GraphQL) — Test metadata: names, statuses, Parsley URLs
+  - `get_test_results_detailed` (REST API) — Raw test log content from S3 with error pattern analysis
 
 ---
 
@@ -132,7 +136,7 @@ Evergreen has several types of logs:
 - **Spruce** (spruce.mongodb.com) — Main CI/CD dashboard. View patches, tasks, test results, waterfall.
 - **Parsley** — Dedicated log viewer with AI chat. Can ask "why did this test fail?" in natural language.
 
-Log links returned by get_patch_failed_jobs_evergreen point to these UIs.
+Log links returned by get_patch_failures point to these UIs.
 
 ---
 
