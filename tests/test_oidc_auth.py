@@ -314,13 +314,12 @@ class TestTokenFileCheck:
             "refresh_token": "valid.refresh.token",
         }
 
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager_with_config.check_token_file()
+        with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+            result = auth_manager_with_config.check_token_file()
 
-                assert result is not None
-                assert result["access_token"] == token
-                assert result["refresh_token"] == "valid.refresh.token"
+            assert result is not None
+            assert result["access_token"] == token
+            assert result["refresh_token"] == "valid.refresh.token"
 
     def test_check_token_file_no_path_configured(self, auth_manager):
         """Test token file check when no path is configured."""
@@ -330,7 +329,7 @@ class TestTokenFileCheck:
 
     def test_check_token_file_not_found(self, auth_manager_with_config):
         """Test token file check when file doesn't exist."""
-        with patch.object(Path, "exists", return_value=False):
+        with patch("builtins.open", side_effect=FileNotFoundError("No such file")):
             result = auth_manager_with_config.check_token_file()
             assert result is None
 
@@ -344,17 +343,15 @@ class TestTokenFileCheck:
             "refresh_token": "valid.refresh.token",
         }
 
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager_with_config.check_token_file()
-                assert result is None
+        with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+            result = auth_manager_with_config.check_token_file()
+            assert result is None
 
     def test_check_token_file_invalid_json(self, auth_manager_with_config):
         """Test token file check with invalid JSON."""
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data="invalid json{")):
-                result = auth_manager_with_config.check_token_file()
-                assert result is None
+        with patch("builtins.open", mock_open(read_data="invalid json{")):
+            result = auth_manager_with_config.check_token_file()
+            assert result is None
 
 
 class TestTokenRefresh:
@@ -443,19 +440,22 @@ class TestSaveToken:
             "refresh_token": "test.refresh.token",
         }
 
+        mock_tmp = MagicMock()
+        mock_tmp.name = "/tmp/.tmp_token_abc123.json"
+        mock_tmp.__enter__ = Mock(return_value=mock_tmp)
+        mock_tmp.__exit__ = Mock(return_value=False)
+
         with patch.object(Path, "mkdir"):
-            with patch("builtins.open", mock_open()) as m:
+            with patch(
+                "evergreen_mcp.oidc_auth.tempfile.NamedTemporaryFile",
+                return_value=mock_tmp,
+            ):
                 with patch("os.fsync"):
                     with patch.object(Path, "replace"):
-                        with patch.object(Path, "with_suffix") as mock_suffix:
-                            temp_path = Mock(spec=Path)
-                            temp_path.exists.return_value = False
-                            mock_suffix.return_value = temp_path
+                        auth_manager_with_config._save_token(token_data)
 
-                            auth_manager_with_config._save_token(token_data)
-
-                            # Verify file was written
-                            m.assert_called()
+                        # Verify temp file was written to
+                        mock_tmp.flush.assert_called_once()
 
     def test_save_token_no_path_configured(self, auth_manager):
         """Test that save does nothing when no token file path configured."""
@@ -471,19 +471,24 @@ class TestSaveToken:
         """Test that temp file is cleaned up on error."""
         token_data = {"access_token": "test.token"}
 
+        mock_tmp = MagicMock()
+        mock_tmp.name = "/tmp/.tmp_token_abc123.json"
+
         with patch.object(Path, "mkdir"):
-            with patch("builtins.open", side_effect=OSError("Write error")):
-                with patch.object(Path, "with_suffix") as mock_suffix:
-                    temp_path = Mock(spec=Path)
-                    temp_path.exists.return_value = True
-                    temp_path.unlink = Mock()
-                    mock_suffix.return_value = temp_path
+            with patch(
+                "evergreen_mcp.oidc_auth.tempfile.NamedTemporaryFile",
+                return_value=mock_tmp,
+            ):
+                # Simulate write error during json.dump
+                mock_tmp.flush.side_effect = OSError("Write error")
 
-                    # Should not raise, but should clean up temp file
-                    auth_manager_with_config._save_token(token_data)
+                with patch.object(Path, "exists", return_value=True):
+                    with patch.object(Path, "unlink") as mock_unlink:
+                        # Should not raise, but should clean up temp file
+                        auth_manager_with_config._save_token(token_data)
 
-                    # Verify temp file cleanup was attempted
-                    temp_path.unlink.assert_called_once()
+                        # Verify temp file cleanup was attempted
+                        mock_unlink.assert_called_once()
 
 
 class TestDeviceFlowAuth:
