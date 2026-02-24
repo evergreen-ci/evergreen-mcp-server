@@ -602,9 +602,7 @@ class OIDCAuthManager:
                         )
                         return True
                     except OIDCAuthenticationError as e:
-                        logger.warning(
-                            "Token file malformed after lock: %s", e
-                        )
+                        logger.warning("Token file malformed after lock: %s", e)
                         self._access_token = None
 
                 return await self._do_authentication()

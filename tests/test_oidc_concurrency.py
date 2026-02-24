@@ -33,9 +33,7 @@ def create_mock_jwt(claims: dict) -> str:
     header = (
         base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').decode().rstrip("=")
     )
-    payload = (
-        base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
-    )
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
     signature = base64.urlsafe_b64encode(b"mock_signature").decode().rstrip("=")
     return f"{header}.{payload}.{signature}"
 
@@ -196,9 +194,7 @@ class TestCrossProcessCoordination:
                     mock_lock_class.return_value = mock_lock_instance
 
                     async_cm = AsyncMock()
-                    async_cm.__aenter__ = AsyncMock(
-                        return_value=mock_lock_instance
-                    )
+                    async_cm.__aenter__ = AsyncMock(return_value=mock_lock_instance)
                     async_cm.__aexit__ = AsyncMock(return_value=False)
                     mock_lock_instance.async_acquire.return_value = async_cm
 
@@ -246,9 +242,7 @@ class TestInProcessCoordination:
         """Multiple concurrent refresh_token() calls make only 1 HTTP request."""
         token = create_mock_jwt(valid_jwt_claims)
         auth_manager._refresh_token = "valid.refresh.token"
-        auth_manager._metadata = {
-            "token_endpoint": "https://dex.example.com/token"
-        }
+        auth_manager._metadata = {"token_endpoint": "https://dex.example.com/token"}
         auth_manager._client = Mock()
 
         new_token_data = {
@@ -375,9 +369,7 @@ class TestStateFileConsistency:
         """In _do_refresh_token, _save_token is called before updating memory."""
         token = create_mock_jwt(valid_jwt_claims)
         auth_manager._refresh_token = "old.refresh.token"
-        auth_manager._metadata = {
-            "token_endpoint": "https://dex.example.com/token"
-        }
+        auth_manager._metadata = {"token_endpoint": "https://dex.example.com/token"}
         auth_manager._client = Mock()
 
         new_token_data = {
@@ -423,9 +415,7 @@ class TestStateFileConsistency:
     ):
         """In poll_device_flow, _save_token is called before updating memory."""
         token = create_mock_jwt(valid_jwt_claims)
-        auth_manager._metadata = {
-            "token_endpoint": "https://dex.example.com/token"
-        }
+        auth_manager._metadata = {"token_endpoint": "https://dex.example.com/token"}
         auth_manager._client = Mock()
 
         token_response = {
