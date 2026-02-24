@@ -179,6 +179,55 @@ class TestUserAgent(unittest.TestCase):
         )
 
 
+class TestUserAgentConstant(unittest.TestCase):
+    """Test the shared USER_AGENT constant"""
+
+    def test_user_agent_constant_exists(self):
+        """Test that USER_AGENT constant is exported from the package"""
+        from evergreen_mcp import USER_AGENT
+
+        self.assertIsNotNone(USER_AGENT, "USER_AGENT should be defined")
+        self.assertIsInstance(USER_AGENT, str, "USER_AGENT should be a string")
+
+    def test_user_agent_constant_value(self):
+        """Test that USER_AGENT matches expected format with current version"""
+        from evergreen_mcp import USER_AGENT, __version__
+
+        expected = f"evergreen-mcp-server/{__version__}"
+        self.assertEqual(USER_AGENT, expected)
+
+    def test_user_agent_constant_format(self):
+        """Test that USER_AGENT follows the pattern evergreen-mcp-server/x.y.z"""
+        from evergreen_mcp import USER_AGENT
+
+        self.assertRegex(
+            USER_AGENT,
+            r"^evergreen-mcp-server/\d+\.\d+\.\d+$",
+            "USER_AGENT should be in format 'evergreen-mcp-server/x.y.z'",
+        )
+
+    def test_graphql_client_uses_shared_constant(self):
+        """Test that the GraphQL client imports USER_AGENT from the package"""
+        from evergreen_mcp import USER_AGENT, evergreen_graphql_client
+
+        # The module should reference the shared constant
+        self.assertTrue(
+            hasattr(evergreen_graphql_client, "USER_AGENT"),
+            "evergreen_graphql_client should import USER_AGENT",
+        )
+        self.assertEqual(evergreen_graphql_client.USER_AGENT, USER_AGENT)
+
+    def test_oidc_auth_uses_shared_constant(self):
+        """Test that the OIDC auth module imports USER_AGENT from the package"""
+        from evergreen_mcp import USER_AGENT, oidc_auth
+
+        self.assertTrue(
+            hasattr(oidc_auth, "USER_AGENT"),
+            "oidc_auth should import USER_AGENT",
+        )
+        self.assertEqual(oidc_auth.USER_AGENT, USER_AGENT)
+
+
 class TestServerComponents(unittest.TestCase):
     """Test server components are properly configured"""
 
