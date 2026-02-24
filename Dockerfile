@@ -17,26 +17,6 @@ RUN pip install --no-cache-dir -e .
 # Switch to non-root user
 USER evergreen
 
-# OIDC Authentication (recommended):
-#   Mount token files to standard locations inside container:
-#     -v ~/.kanopy:/home/evergreen/.kanopy:ro
-#     -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro
-# 
-# API Key Authentication (legacy):
-#   Pass credentials via environment variables:
-#     -e EVERGREEN_USER=your_username
-#     -e EVERGREEN_API_KEY=your_api_key
-#
-# Optional configuration:
-#   -e EVERGREEN_PROJECT=mongodb-mongo-master  # Default project identifier
-#   -e WORKSPACE_PATH=/workspace               # Workspace path for project detection
-#
-# Example usage:
-#   docker run --rm -i \
-#     -v ~/.kanopy:/home/evergreen/.kanopy:ro \
-#     -v ~/.evergreen.yml:/home/evergreen/.evergreen.yml:ro \
-#     ghcr.io/evergreen-ci/evergreen-mcp-server:latest
-
 # Set default token file path for Docker
 # This overrides the path in ~/.evergreen.yml which has host paths
 ENV EVERGREEN_TOKEN_FILE=/home/evergreen/.kanopy/token-oidclogin.json

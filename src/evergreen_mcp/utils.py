@@ -1,9 +1,67 @@
+"""Shared utilities for Evergreen MCP Server."""
 
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
+
+# ---------------------------------------------------------------------------
+# Evergreen config file loading
+# ---------------------------------------------------------------------------
+
+# Evergreen config file location
+EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
+
+# Cached config to avoid repeated file reads
+_cached_config: dict[str, Any] | None = None
+
+
+class ConfigParseError(Exception):
+    """Raised when ~/.evergreen.yml cannot be parsed."""
+
+    pass
+
+
+def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
+    """Load ~/.evergreen.yml config file.
+
+    Args:
+        use_cache: If True, return cached config if available. Set to False
+                   to force a fresh read from disk.
+
+    Returns:
+        The parsed config dict, or empty dict if file doesn't exist.
+
+    Raises:
+        ConfigParseError: If the config file exists but cannot be parsed.
+    """
+    global _cached_config
+
+    if use_cache and _cached_config is not None:
+        return _cached_config
+
+    config: dict[str, Any] = {}
+    if EVERGREEN_CONFIG_FILE.exists():
+        try:
+            with open(EVERGREEN_CONFIG_FILE) as f:
+                config = yaml.safe_load(f) or {}
+        except Exception as e:
+            raise ConfigParseError(
+                f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
+            ) from e
+
+    if use_cache:
+        _cached_config = config
+
+    return config
+
+
+# ---------------------------------------------------------------------------
+# Log error scanning
+# ---------------------------------------------------------------------------
 
 ERROR_KEYWORDS = [
     # Universal - high signal error indicators
@@ -77,7 +135,7 @@ ERROR_KEYWORDS = [
     "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
     "FailedScheduling", "NodeNotReady", "Readiness probe failed",
     "Liveness probe failed", "Pod evicted", "Back-off restarting",
-    
+
     "fassert",
     "invariant failure",
     "tripwire",
@@ -90,10 +148,10 @@ def _build_error_regex(keywords: List[str]) -> re.Pattern:
       - exact phrases (case-insensitive)
       - 'ERR_*' patterns
       - common level prefixes
-    
-    NOTE: We explicitly EXCLUDE generic 4xx/5xx HTTP status code patterns 
-    because they produce too many false positives (matching timestamps, 
-    port numbers, document IDs, etc.). Specific status codes like 401, 404, 
+
+    NOTE: We explicitly EXCLUDE generic 4xx/5xx HTTP status code patterns
+    because they produce too many false positives (matching timestamps,
+    port numbers, document IDs, etc.). Specific status codes like 401, 404,
     500 should be in the keyword list if needed.
     """
     # Escape keywords, but keep some patterns flexible

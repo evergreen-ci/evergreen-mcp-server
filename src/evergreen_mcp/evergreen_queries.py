@@ -168,6 +168,10 @@ query GetPatchFailedTasks($patchId: String!) {
           hasTestResults
           failedTestCount
           totalTestCount
+          ami
+          hostId
+          distroId
+          imageId
           details {
             description
             status
@@ -213,6 +217,10 @@ query GetVersionWithFailedTasks($versionId: String!) {
         hasTestResults
         failedTestCount
         totalTestCount
+        ami
+        hostId
+        distroId
+        imageId
         details {
           description
           status
@@ -239,6 +247,10 @@ query GetTaskLogs($taskId: String!, $execution: Int!) {
     id
     displayName
     execution
+    ami
+    hostId
+    distroId
+    imageId
     taskLogs {
       taskId
       execution
@@ -269,6 +281,10 @@ query GetTaskTestResults(
     hasTestResults
     failedTestCount
     totalTestCount
+    ami
+    hostId
+    distroId
+    imageId
     tests(opts: $testFilterOptions) {
       totalTestCount
       filteredTestCount

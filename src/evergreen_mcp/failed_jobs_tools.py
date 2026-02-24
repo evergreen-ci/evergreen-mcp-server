@@ -103,7 +103,8 @@ async def fetch_patch_failed_jobs(
         project_id: Optional project identifier to validate patch ownership
 
     Returns:
-        Dictionary containing patch info and failed jobs data
+        Dictionary containing patch info and failed jobs data,
+        or an error response if the patch is not found/invalid
     """
     logger.info("Fetching failed jobs for patch %s", patch_id)
     if project_id:
@@ -111,6 +112,7 @@ async def fetch_patch_failed_jobs(
 
     # Get patch with failed tasks
     patch = await client.get_patch_failed_tasks(patch_id)
+
     if project_id and patch.get("projectIdentifier") != project_id:
         raise ValueError("Patch does not belong to the specified project")
 
@@ -160,6 +162,11 @@ async def fetch_patch_failed_jobs(
             "execution": task.get("execution", 0),
             "finish_time": task.get("finishTime"),
             "duration_ms": task.get("timeTaken"),
+            # Host metadata
+            "ami": task.get("ami"),
+            "host_id": task.get("hostId"),
+            "distro_id": task.get("distroId"),
+            "image_id": task.get("imageId"),
         }
 
         # Add failure details if available
@@ -235,7 +242,8 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
                    filter_errors
 
     Returns:
-        Dictionary containing task logs
+        Dictionary containing task logs,
+        or an error response if the task is not found/invalid
     """
     # Extract and validate arguments
     task_id = arguments.get("task_id")
@@ -267,6 +275,11 @@ async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
         "total_lines": len(processed_logs),
         "logs": processed_logs,
         "truncated": len(processed_logs) >= max_lines,
+        # Host metadata
+        "ami": task_data.get("ami"),
+        "host_id": task_data.get("hostId"),
+        "distro_id": task_data.get("distroId"),
+        "image_id": task_data.get("imageId"),
     }
 
 
@@ -278,7 +291,8 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         arguments: Tool arguments containing task_id, execution, failed_only, limit
 
     Returns:
-        Dictionary containing detailed test results
+        Dictionary containing detailed test results,
+        or an error response if the task is not found/invalid
     """
     # Extract and validate arguments
     task_id = arguments.get("task_id")
@@ -304,6 +318,11 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         "has_test_results": task_data.get("hasTestResults", False),
         "failed_test_count": task_data.get("failedTestCount", 0),
         "total_test_count": task_data.get("totalTestCount", 0),
+        # Host metadata
+        "ami": task_data.get("ami"),
+        "host_id": task_data.get("hostId"),
+        "distro_id": task_data.get("distroId"),
+        "image_id": task_data.get("imageId"),
     }
 
     # Process test results
@@ -418,7 +437,8 @@ async def fetch_inferred_project_ids(
         max_patches: Maximum number of patches to scan (default: 50)
 
     Returns:
-        Dictionary containing unique project identifiers with patch counts
+        Dictionary containing unique project identifiers with patch counts,
+        or an error response if fetching fails
     """
     logger.info(
         "Fetching inferred project IDs for user %s (max %s patches)",
@@ -579,17 +599,16 @@ async def infer_project_id_from_context(
         project_id=project_id,
         confidence="low",
         available_projects=available_projects,
-        message=(
-            f"""
+        message=(f"""
                 You are an ai assistant working with the user to help diagnose the recent patches. 
                 The patches are coming from the project_id {project_id}. 
                 However you should also verify with the user if that is the correct project_id,
                 as we have other project_ids that are also valid such as {others_msg}.
                 If this is incorrect, please specify project_id explicitly.
-            """
-        ),
+            """),
         source="most_recent_fallback",
     )
+
 
 
 def format_error_response(
@@ -626,12 +645,13 @@ async def fetch_evergreen_task_logs(
     logger.info("fetch_task_logs_and_test_results called with arguments: %s", arguments)
     task_id = arguments.get("task_id")
     execution_retries = arguments.get("execution_retries", 0)
-    
+
     logger.info("Calling client.get_task_logs for task %s", task_id)
     response = await client.get_task_logs(task_id, execution_retries)
     logger.info("client.get_task_logs returned type: %s", type(response))
-    
+
     return {"logs": response}
+
 
 async def fetch_evergreen_task_test_results(
     client: EvergreenRestClient,

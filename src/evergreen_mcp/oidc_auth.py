@@ -17,8 +17,14 @@ from typing import Optional
 
 import httpx
 import jwt as pyjwt
-import yaml
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+
+from evergreen_mcp import USER_AGENT
+from evergreen_mcp.utils import (
+    EVERGREEN_CONFIG_FILE,
+    ConfigParseError,
+    load_evergreen_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +40,15 @@ class OIDCAuthenticationError(Exception):
     pass
 
 
-# Evergreen config file location
-EVERGREEN_CONFIG_FILE = Path.home() / ".evergreen.yml"
+class DeviceFlowSlowDown(Exception):
+    """Raised when the OAuth server requests slower polling (RFC 8628 Section 3.5).
+
+    Callers should increase their polling interval by at least 5 seconds
+    before the next request.
+    """
+
+    pass
+
 
 # HTTP timeout configurations (in seconds)
 HTTP_TIMEOUT = 30
@@ -54,12 +67,9 @@ def _load_oauth_config_from_evergreen_yml() -> dict:
         )
 
     try:
-        with open(EVERGREEN_CONFIG_FILE) as f:
-            config = yaml.safe_load(f) or {}
-    except Exception as e:
-        raise OIDCAuthenticationError(
-            f"Failed to parse {EVERGREEN_CONFIG_FILE}: {e}"
-        ) from e
+        config = load_evergreen_config(use_cache=False)
+    except ConfigParseError as e:
+        raise OIDCAuthenticationError(str(e)) from e
 
     oauth_config = config.get("oauth")
     if not oauth_config:
@@ -123,7 +133,9 @@ class OIDCAuthManager:
 
             # Fetch OIDC metadata manually
             try:
-                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+                async with httpx.AsyncClient(
+                    timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+                ) as http_client:
                     response = await http_client.get(
                         f"{self.issuer}/.well-known/openid-configuration"
                     )
@@ -280,7 +292,9 @@ class OIDCAuthManager:
         try:
             await self._get_client()
 
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
+            async with httpx.AsyncClient(
+                timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+            ) as http_client:
                 response = await http_client.post(
                     self._metadata["token_endpoint"],
                     data={
@@ -363,7 +377,10 @@ class OIDCAuthManager:
                     pass
 
     async def device_flow_auth(self) -> dict:
-        """Perform device authorization flow manually using httpx.
+        """Perform device authorization flow with browser prompt and blocking poll.
+
+        This is the startup authentication flow. It composes initiate_device_flow()
+        and poll_device_flow() with browser opening and logging.
 
         Returns:
             Token data dict containing access_token and refresh_token
@@ -371,149 +388,58 @@ class OIDCAuthManager:
         Raises:
             OIDCAuthenticationError: If authentication fails or times out
         """
+        device_data = await self.initiate_device_flow()
+
+        verification_uri = device_data["verification_url"]
+        user_code = device_data.get("user_code")
+        device_code = device_data["device_code"]
+        interval = device_data.get("interval", 5)
+        expires_in = device_data.get("expires_in", 300)
+
+        # Display auth instructions
+        logger.info("=" * 70)
+        logger.info("AUTHENTICATION REQUIRED - Please complete login in your browser")
+        logger.info("=" * 70)
+        logger.info("URL: %s", verification_uri)
+        if user_code:
+            logger.info("Code: %s", user_code)
+        logger.info("=" * 70)
+
+        # Try to open browser
         try:
-            await self._get_client()
+            webbrowser.open(verification_uri)
+            logger.info("Browser opened automatically")
+        except Exception:
+            logger.info("Please open the URL manually")
 
-            logger.info("Starting Device Authorization Flow...")
+        logger.info("Waiting for authentication...")
 
-            # Step 1: Request device code
+        # Poll for token with maximum timeout
+        max_attempts = expires_in // interval
+        for attempt in range(max_attempts):
+            await asyncio.sleep(interval)
 
-            device_auth_endpoint = self._metadata["device_authorization_endpoint"]
-
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as http_client:
-                response = await http_client.post(
-                    device_auth_endpoint,
-                    data={
-                        "client_id": self.client_id,
-                        "scope": "openid profile email groups offline_access",
-                    },
+            try:
+                token_data = await self.poll_device_flow(device_code)
+                if token_data:
+                    return token_data
+            except DeviceFlowSlowDown:
+                interval += 5  # RFC 8628 Section 3.5
+                logger.debug(
+                    "Server requested slow down, increased interval to %d seconds",
+                    interval,
                 )
-                response.raise_for_status()
-                device_data = response.json()
+                continue
 
-                # Parse device authorization response
-                verification_uri = device_data.get(
-                    "verification_uri_complete"
-                ) or device_data.get("verification_uri")
-                user_code = device_data.get("user_code")
-                device_code = device_data["device_code"]
-                interval = device_data.get("interval", 5)
+            logger.debug(
+                "Authorization pending, polling... (%d/%d)",
+                attempt + 1,
+                max_attempts,
+            )
 
-                # Display auth instructions
-                logger.info("=" * 70)
-                logger.info(
-                    "🔐 AUTHENTICATION REQUIRED - Please complete login in your browser"
-                )
-                logger.info("=" * 70)
-                logger.info("URL: %s", verification_uri)
-                if user_code:
-                    logger.info("Code: %s", user_code)
-                logger.info("=" * 70)
-
-                # Try to open browser
-                try:
-                    webbrowser.open(verification_uri)
-                    logger.info("Browser opened automatically")
-                except Exception:
-                    logger.info("Please open the URL manually")
-
-                logger.info("Waiting for authentication...")
-
-                # Step 2: Poll for token with maximum timeout
-                token_endpoint = self._metadata["token_endpoint"]
-                max_wait_time = 300  # 5 minutes
-                start_time = time.time()
-
-                while True:
-                    if time.time() - start_time > max_wait_time:
-                        raise OIDCAuthenticationError(
-                            f"Device flow timed out after {max_wait_time} seconds"
-                        )
-
-                    await asyncio.sleep(interval)
-
-                    # Poll token endpoint with device code
-                    response = await http_client.post(
-                        token_endpoint,
-                        data={
-                            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                            "device_code": device_code,
-                            "client_id": self.client_id,
-                        },
-                    )
-
-                    # Check response
-                    if response.status_code == 200:
-                        token_data = self._normalize_token_data(response.json())
-
-                        # Validate token BEFORE updating state to ensure atomic updates
-                        new_access_token = token_data["access_token"]
-                        new_refresh_token = token_data.get("refresh_token")
-                        new_user_id = self._extract_user_id(new_access_token)
-
-                        # Token is valid - now update internal state atomically
-                        self._access_token = new_access_token
-                        self._refresh_token = new_refresh_token
-                        self._user_id = new_user_id
-
-                        # Save token to file
-                        self._save_token(token_data)
-                        logger.info("Authentication successful!")
-                        return token_data
-
-                    # Parse error response - handle both 400 and 401
-                    # Some OAuth servers return 401 for authorization_pending
-                    try:
-                        error_data = response.json()
-                        error = error_data.get("error", "unknown_error")
-                        error_description = error_data.get("error_description", "")
-                    except Exception:
-                        # Response might not be JSON
-                        logger.warning(
-                            "Token poll returned %d: %s",
-                            response.status_code,
-                            response.text[:200] if response.text else "empty",
-                        )
-                        error = "unknown_error"
-                        error_description = response.text or ""
-
-                    logger.debug(
-                        "Token poll response: status=%d, error=%s, desc=%s",
-                        response.status_code,
-                        error,
-                        error_description,
-                    )
-
-                    if error == "authorization_pending":
-                        logger.debug("Authorization pending, polling...")
-                        continue
-                    elif error == "slow_down":
-                        interval += 2
-                        logger.debug(
-                            "Slowing down polling interval to %d seconds",
-                            interval,
-                        )
-                        continue
-                    elif error == "expired_token":
-                        raise OIDCAuthenticationError(
-                            "Device code expired - please restart authentication"
-                        )
-                    elif response.status_code == 401:
-                        # 401 during polling often means still waiting
-                        # for user to complete authentication
-                        logger.debug("Got 401, treating as authorization pending...")
-                        continue
-                    else:
-                        raise OIDCAuthenticationError(
-                            f"Authentication failed: {error} - {error_description}"
-                        )
-
-        except OIDCAuthenticationError:
-            raise
-        except Exception as e:
-            raise OIDCAuthenticationError(
-                f"Device flow authentication error: {e}"
-            ) from e
+        raise OIDCAuthenticationError(
+            f"Device flow timed out after {expires_in} seconds"
+        )
 
     async def ensure_authenticated(self) -> bool:
         """
@@ -589,6 +515,120 @@ class OIDCAuthManager:
             return True
 
         return False
+
+    async def initiate_device_flow(self) -> dict:
+        """Start device authorization flow and return auth URL without blocking.
+
+        Returns:
+            Dict containing verification_url, user_code, device_code, interval, expires_in
+
+        Raises:
+            OIDCAuthenticationError: If device flow initiation fails
+        """
+        try:
+            await self._get_client()
+
+            logger.info("Initiating Device Authorization Flow...")
+
+            device_auth_endpoint = self._metadata["device_authorization_endpoint"]
+
+            async with httpx.AsyncClient(
+                timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+            ) as http_client:
+                response = await http_client.post(
+                    device_auth_endpoint,
+                    data={
+                        "client_id": self.client_id,
+                        "scope": "openid profile email groups offline_access",
+                    },
+                )
+                response.raise_for_status()
+                device_data = response.json()
+
+                verification_uri = device_data.get(
+                    "verification_uri_complete"
+                ) or device_data.get("verification_uri")
+
+                return {
+                    "verification_url": verification_uri,
+                    "user_code": device_data.get("user_code"),
+                    "device_code": device_data["device_code"],
+                    "interval": device_data.get("interval", 5),
+                    "expires_in": device_data.get("expires_in", 300),
+                }
+
+        except Exception as e:
+            raise OIDCAuthenticationError(f"Failed to initiate device flow: {e}") from e
+
+    async def poll_device_flow(self, device_code: str) -> Optional[dict]:
+        """Poll once to check if device flow authentication completed.
+
+        Args:
+            device_code: Device code from initiate_device_flow
+
+        Returns:
+            Token data dict if authentication completed, None if still pending
+
+        Raises:
+            DeviceFlowSlowDown: If server requests slower polling. Callers
+                should increase their interval by at least 5 seconds.
+            OIDCAuthenticationError: If authentication failed (not pending)
+        """
+        try:
+            await self._get_client()
+            token_endpoint = self._metadata["token_endpoint"]
+
+            async with httpx.AsyncClient(
+                timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}
+            ) as http_client:
+                response = await http_client.post(
+                    token_endpoint,
+                    data={
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                        "device_code": device_code,
+                        "client_id": self.client_id,
+                    },
+                )
+
+                if response.status_code == 200:
+                    token_data = self._normalize_token_data(response.json())
+
+                    self._access_token = token_data["access_token"]
+                    self._refresh_token = token_data.get("refresh_token")
+                    self._user_id = self._extract_user_id(self._access_token)
+
+                    self._save_token(token_data)
+                    logger.info("Authentication successful!")
+                    return token_data
+
+                # Parse error
+                try:
+                    error_data = response.json()
+                    error = error_data.get("error", "unknown_error")
+                    error_description = error_data.get("error_description", "")
+                except Exception:
+                    error = "unknown_error"
+                    error_description = response.text or ""
+
+                if error == "slow_down":
+                    raise DeviceFlowSlowDown()
+
+                if error == "authorization_pending" or response.status_code == 401:
+                    return None  # Still waiting
+
+                if error == "expired_token":
+                    raise OIDCAuthenticationError(
+                        "Device code expired - please restart authentication"
+                    )
+
+                raise OIDCAuthenticationError(
+                    f"Authentication failed: {error} - {error_description}"
+                )
+
+        except (OIDCAuthenticationError, DeviceFlowSlowDown):
+            raise
+        except Exception as e:
+            raise OIDCAuthenticationError(f"Poll error: {e}") from e
 
     @property
     def access_token(self) -> Optional[str]:

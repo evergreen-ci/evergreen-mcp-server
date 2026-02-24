@@ -40,11 +40,88 @@ This will:
 
 ### Step 2: Configure Your MCP Client
 
-Add the Evergreen MCP server to your AI assistant's MCP configuration.
+Add the Evergreen MCP server to your AI assistant's MCP configuration. You can use either **uv** (lightweight, no Docker needed) or **Docker**.
 
-#### Cursor IDE
+#### Option A: Using uv (Recommended)
 
-Add to your Cursor MCP settings (`.cursor/mcp.json` or Settings → MCP):
+[uv](https://docs.astral.sh/uv/) is a fast Python package manager that can run the MCP server directly — no cloning, no virtual environments, no Docker required.
+
+**Install uv** (if you don't have it):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then add the server to your MCP client config:
+
+**Cursor IDE** (`.cursor/mcp.json` or Settings → MCP):
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+**VS Code with MCP Extension** (`settings.json`):
+```json
+{
+  "mcp.servers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+> **Note**: `uvx` automatically downloads, caches, and runs the server in an isolated environment. No manual setup needed.
+
+#### Option B: Using Docker
+
+**Cursor IDE** (`.cursor/mcp.json` or Settings → MCP):
+
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
+        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
+        "-e", "SENTRY_ENABLED=true",
+        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
@@ -62,29 +139,7 @@ Add to your Cursor MCP settings (`.cursor/mcp.json` or Settings → MCP):
 }
 ```
 
-#### Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "evergreen": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-        "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-        "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-      ]
-    }
-  }
-}
-```
-
-#### VS Code with MCP Extension
-
-Add to your VS Code settings (`settings.json`):
+**VS Code with MCP Extension** (`settings.json`):
 
 ```json
 {
@@ -112,6 +167,8 @@ Once configured, you can ask your AI assistant questions like:
 
 That's it! The server will use your `evergreen login` credentials automatically.
 
+> **Note:** Telemetry is enabled by default to help improve reliability. To disable it, change the arg SENTRY_ENABLED from true to false i.e. `-e SENTRY_ENABLED=false`. See [Telemetry](#telemetry) for details.
+
 ---
 
 ## Alternative Setup Methods
@@ -132,6 +189,7 @@ If you can't use OIDC authentication, you can use API keys instead:
         "run", "--rm", "-i",
         "-e", "EVERGREEN_USER=your_username",
         "-e", "EVERGREEN_API_KEY=your_api_key",
+        "-e", "SENTRY_ENABLED=true",
         "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
       ]
     }
@@ -179,7 +237,58 @@ The MCP server operates as a **subprocess** spawned by your AI assistant (like C
 - **HTTP transports**: Alternative transports (SSE, streamable-http) for when stdio isn't available
 - **Lifespan management**: The client (your AI assistant) manages starting/stopping the server
 
-### Method 1: Docker with OIDC (Recommended)
+### Method 1: uv (Recommended)
+
+The fastest way to get started — no Docker, no cloning, no virtual environments. [uv](https://docs.astral.sh/uv/) downloads and runs the server in an isolated environment automatically.
+
+**Prerequisites:**
+- Evergreen CLI installed (`evergreen login` completed)
+
+**Install uv** (if you don't have it):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+**How it works:**
+- `uvx` fetches the package from GitHub, installs it in an isolated cache, and runs the `evergreen-mcp-server` entry point
+- Subsequent runs use the cached version (fast startup)
+- The server reads credentials from `~/.evergreen.yml` and `~/.kanopy/token-oidclogin.json` directly (no volume mounts needed)
+- To force a refresh: `uv cache clean`
+
+**With project configuration:**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server",
+        "--project-id", "mongodb-mongo-master"
+      ]
+    }
+  }
+}
+```
+
+> **Tip**: If your IDE can't find `uvx`, use the full path (e.g., `~/.local/bin/uvx` on macOS/Linux). Run `which uvx` to find it.
+
+### Method 2: Docker with OIDC
 
 This is the most secure and easiest approach for most users.
 
@@ -222,7 +331,7 @@ This is the most secure and easiest approach for most users.
 }
 ```
 
-### Method 2: Docker with API Keys
+### Method 3: Docker with API Keys
 
 For environments where OIDC isn't available or when using service accounts.
 
@@ -255,7 +364,7 @@ For environments where OIDC isn't available or when using service accounts.
 - Consider using credential management systems in production
 - Rotate API keys regularly
 
-### Method 3: Local Installation (Development)
+### Method 4: Local Installation (Development)
 
 Running the server directly from source code for development or customization.
 
@@ -317,7 +426,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 # Changes are immediately available due to editable install (pip install -e .)
 ```
 
-### Method 4: HTTP/SSE Transport
+### Method 5: HTTP/SSE Transport
 
 For scenarios where stdio isn't practical, run the server as a standalone HTTP service.
 
@@ -610,6 +719,17 @@ Add to Augment plugin settings:
 ### Universal Configuration Pattern
 
 For any MCP-compatible client, follow this pattern:
+
+**uv (simplest):**
+```json
+{
+  "command": "uvx",
+  "args": [
+    "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+    "evergreen-mcp-server"
+  ]
+}
+```
 
 **Docker with OIDC:**
 ```json
@@ -998,6 +1118,7 @@ projects_for_directory:
 | `EVERGREEN_MCP_HOST` | string | HTTP host binding | `0.0.0.0`, `127.0.0.1` |
 | `EVERGREEN_MCP_PORT` | integer | HTTP port | `8000` |
 | `WORKSPACE_PATH` | string | Workspace directory | `/path/to/project` |
+| `SENTRY_ENABLED` | boolean | Enable/disable telemetry (default: true) | `true`, `false` |
 
 ### Command-Line Arguments
 
@@ -1351,7 +1472,22 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
 1. **Workspace-specific**: `.cursor/mcp.json` in your project root
 2. **Global**: Settings → Features → MCP
 
-**Basic configuration:**
+**Using uv (recommended):**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+**Using Docker:**
 ```json
 {
   "mcpServers": {
@@ -1368,7 +1504,7 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
 }
 ```
 
-**With automatic project detection:**
+**With automatic project detection (Docker):**
 ```json
 {
   "mcpServers": {
@@ -1419,7 +1555,22 @@ Comprehensive guides for integrating the Evergreen MCP server with various IDEs 
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-**Full configuration:**
+**Using uv (recommended):**
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+**Using Docker:**
 ```json
 {
   "mcpServers": {
