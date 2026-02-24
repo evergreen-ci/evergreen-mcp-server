@@ -468,7 +468,7 @@ class TestSaveToken:
             m.assert_not_called()
 
     def test_save_token_cleanup_on_error(self, auth_manager_with_config):
-        """Test that temp file is cleaned up on error."""
+        """Test that temp file is cleaned up and exception re-raised on error."""
         token_data = {"access_token": "test.token"}
 
         mock_tmp = MagicMock()
@@ -484,8 +484,9 @@ class TestSaveToken:
 
                 with patch.object(Path, "exists", return_value=True):
                     with patch.object(Path, "unlink") as mock_unlink:
-                        # Should not raise, but should clean up temp file
-                        auth_manager_with_config._save_token(token_data)
+                        # Should raise so callers skip in-memory state update
+                        with pytest.raises(OSError, match="Write error"):
+                            auth_manager_with_config._save_token(token_data)
 
                         # Verify temp file cleanup was attempted
                         mock_unlink.assert_called_once()

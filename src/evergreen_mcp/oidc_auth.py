@@ -440,7 +440,13 @@ class OIDCAuthManager:
         """Save token to configured token file atomically.
 
         The token file path must be configured in ~/.evergreen.yml under
-        oauth.token_file_path. If not configured, tokens will not be persisted.
+        oauth.token_file_path. If not configured, tokens will not be persisted
+        and this method returns without error (memory-only operation is fine).
+
+        Raises:
+            OSError: If token file is configured but the write fails. Callers
+                must not update in-memory state when this happens, to keep
+                memory and disk consistent.
         """
         if not self.token_file:
             logger.warning(
@@ -449,14 +455,8 @@ class OIDCAuthManager:
             )
             return
 
-        # Create parent directory if needed
-        try:
-            self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            logger.error(
-                "Cannot create token directory %s: %s", self.token_file.parent, e
-            )
-            return
+        # Create parent directory if needed (raises on failure)
+        self.token_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Write to random temporary file first (avoids cross-process collisions)
         temp_fd = None
@@ -479,8 +479,7 @@ class OIDCAuthManager:
             # Atomic rename
             temp_path.replace(self.token_file)
             logger.info("Token saved to %s", self.token_file)
-        except Exception as e:
-            logger.error("Failed to save token: %s", e)
+        except Exception:
             if temp_fd is not None:
                 temp_fd.close()
             if temp_path is not None and temp_path.exists():
@@ -488,6 +487,7 @@ class OIDCAuthManager:
                     temp_path.unlink()
                 except OSError:
                     pass
+            raise
 
     async def device_flow_auth(self) -> dict:
         """Perform device authorization flow with browser prompt and blocking poll.
