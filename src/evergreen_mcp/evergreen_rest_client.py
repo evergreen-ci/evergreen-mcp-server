@@ -83,7 +83,6 @@ class EvergreenRestClient:
             headers["Api-Key"] = self.api_key
         else:
             raise Exception("No authentication method provided")
-        print(headers)
         return headers
 
     def _get_session(self) -> aiohttp.ClientSession:
@@ -106,7 +105,6 @@ class EvergreenRestClient:
         """Attempt to refresh the bearer token and recreate session."""
         if not self._auth_manager or not self.bearer_token:
             return False
-        print("Attempting token refresh...")
         logger.info("Attempting token refresh...")
         try:
             token_data = await self._auth_manager.refresh_token()
@@ -114,7 +112,6 @@ class EvergreenRestClient:
                 self.bearer_token = token_data["access_token"]
                 self.headers = self._get_headers()
                 await self._close_session()  # Force new session with new headers
-                print("Token refreshed successfully")
                 logger.info("Token refreshed successfully")
                 return True
         except Exception as e:
@@ -136,7 +133,7 @@ class EvergreenRestClient:
                 # Handle 401 - try token refresh
                 if response.status == 401 and _retry and await self._try_refresh_token():
                     return await self._request(method, url, _retry=False, **kwargs)
-                print("Response status: ", response.status)
+                logger.debug("Response status: %s", response.status)
                 response.raise_for_status()
                 content_type = response.headers.get("Content-Type", "")
                 if "application/json" in content_type:

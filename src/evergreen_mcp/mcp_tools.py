@@ -394,7 +394,8 @@ def register_tools(mcp: FastMCP) -> None:
         execution_retries: Annotated[
             int,
             "Task execution number if task was retried. Usually 0 for first "
-        ],
+            "execution, 1+ for retries.",
+        ] = 0,
         job_name: Annotated[
             str,
             "The name of the job to get the test results for. This is the "

@@ -230,14 +230,18 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
                 "tools will use intelligent auto-detection"
             )
 
-        yield EvergreenContext(
-            api_client=api_client,
-            client=client, # TODO: rename to gql_client throughout the codebase
-            user_id=evergreen_config["user"],
-            default_project_id=default_project_id,
-            workspace_dir=workspace_dir,
-            projects_for_directory=projects_for_directory,
-        )
+        try:
+            yield EvergreenContext(
+                api_client=api_client,
+                client=client, # TODO: rename to gql_client throughout the codebase
+                user_id=evergreen_config["user"],
+                default_project_id=default_project_id,
+                workspace_dir=workspace_dir,
+                projects_for_directory=projects_for_directory,
+            )
+        finally:
+            await api_client._close_session()
+            logger.info("Evergreen REST client session closed")
 
     logger.info("Evergreen GraphQL client closed")
 
