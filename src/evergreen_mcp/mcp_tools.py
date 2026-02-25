@@ -6,6 +6,7 @@ Tools are registered with the FastMCP server instance.
 
 import json
 import logging
+from pathlib import Path
 from typing import Annotated, Any, Dict, Optional
 
 from fastmcp import Context, FastMCP
@@ -22,9 +23,46 @@ from .failed_jobs_tools import (
 
 logger = logging.getLogger(__name__)
 
+_SKILLS_DIR = Path(__file__).parent / "skills"
+_VALID_SKILLS = sorted(
+    d.name for d in _SKILLS_DIR.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+)
+
 
 def register_tools(mcp: FastMCP) -> None:
     """Register all tools with the FastMCP server."""
+
+    @mcp.tool(
+        description=(
+            "Retrieve an Evergreen skill guide. CALL THIS BEFORE using other "
+            "Evergreen tools — it provides detailed documentation, workflows, "
+            "and domain knowledge needed to use this server effectively.\n\n"
+            f"Available skills: {', '.join(_VALID_SKILLS)}\n\n"
+            "- tool-guide: Complete tool reference with parameters, return "
+            "values, and decision tree for which tool to use when.\n"
+            "- debugging-workflow: Step-by-step workflows for diagnosing "
+            "CI failures from patch to root cause.\n"
+            "- evergreen-concepts: Evergreen domain knowledge — hierarchy, "
+            "statuses, terminology, and how to interpret results."
+        )
+    )
+    async def get_evergreen_skill(
+        skill_name: Annotated[
+            str,
+            f"Name of the skill to retrieve. Must be one of: {', '.join(_VALID_SKILLS)}",
+        ],
+    ) -> str:
+        """Return the content of an Evergreen skill guide."""
+        if skill_name not in _VALID_SKILLS:
+            return json.dumps(
+                {
+                    "error": f"Unknown skill: {skill_name!r}",
+                    "available_skills": _VALID_SKILLS,
+                },
+                indent=2,
+            )
+        skill_file = _SKILLS_DIR / skill_name / "SKILL.md"
+        return skill_file.read_text()
 
     @mcp.tool(
         description=(
@@ -336,4 +374,4 @@ def register_tools(mcp: FastMCP) -> None:
         )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 5)
+    logger.info("Registered %d tools with FastMCP server", 6)
