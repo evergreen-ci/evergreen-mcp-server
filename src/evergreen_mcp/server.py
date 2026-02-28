@@ -20,6 +20,7 @@ from fastmcp.server.providers.skills import SkillsDirectoryProvider
 
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
+from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 from evergreen_mcp.mcp_tools import register_tools
 from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 
@@ -33,6 +34,7 @@ class EvergreenContext:
     """Context object holding the Evergreen client and configuration."""
 
     client: EvergreenGraphQLClient
+    api_client: EvergreenRestClient
     user_id: str
     default_project_id: str | None = None
     workspace_dir: str | None = None
@@ -194,11 +196,21 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
             endpoint="https://evergreen.corp.mongodb.com/graphql/query",
             auth_manager=auth_manager,
         )
+        api_client = EvergreenRestClient(
+            bearer_token=evergreen_config["bearer_token"],
+            base_url="https://evergreen.corp.mongodb.com/rest/v2/",
+            auth_manager=auth_manager,
+        )
     else:
         logger.info("Initializing GraphQL client with API key")
         # These fields were validated during config loading
         client = EvergreenGraphQLClient(
             user=evergreen_config["user"], api_key=evergreen_config["api_key"]
+        )
+        api_client = EvergreenRestClient(
+            user=evergreen_config["user"],
+            api_key=evergreen_config["api_key"],
+            base_url="https://evergreen.corp.mongodb.com/rest/v2/",
         )
 
     async with client:
@@ -218,13 +230,18 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
                 "tools will use intelligent auto-detection"
             )
 
-        yield EvergreenContext(
-            client=client,
-            user_id=evergreen_config["user"],
-            default_project_id=default_project_id,
-            workspace_dir=workspace_dir,
-            projects_for_directory=projects_for_directory,
-        )
+        try:
+            yield EvergreenContext(
+                api_client=api_client,
+                client=client,
+                user_id=evergreen_config["user"],
+                default_project_id=default_project_id,
+                workspace_dir=workspace_dir,
+                projects_for_directory=projects_for_directory,
+            )
+        finally:
+            await api_client._close_session()
+            logger.info("Evergreen REST client session closed")
 
     logger.info("Evergreen GraphQL client closed")
 
