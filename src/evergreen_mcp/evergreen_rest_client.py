@@ -19,7 +19,6 @@ __version__ = "0.1.0"
 logger = logging.getLogger(__name__)
 
 
-
 class EvergreenRestClient:
     """
     REST API client for the Evergreen API.
@@ -117,7 +116,9 @@ class EvergreenRestClient:
             logger.error("Token refresh failed: %s", e)
         return False
 
-    async def _request(self, method: str, url: str, _retry: bool = True, **kwargs) -> Any:
+    async def _request(
+        self, method: str, url: str, _retry: bool = True, **kwargs
+    ) -> Any:
         """
         Make a request to the API.
         """
@@ -130,21 +131,19 @@ class EvergreenRestClient:
         try:
             async with session.request(method, full_url, **kwargs) as response:
                 # Handle 401 - try token refresh
-                if response.status == 401 and _retry and await self._try_refresh_token():
+                if (
+                    response.status == 401
+                    and _retry
+                    and await self._try_refresh_token()
+                ):
                     return await self._request(method, url, _retry=False, **kwargs)
                 logger.debug("Response status: %s", response.status)
                 response.raise_for_status()
                 content_type = response.headers.get("Content-Type", "")
                 if "application/json" in content_type:
-                    return {
-                        "status": "success",
-                        "data": await response.json()
-                    }
+                    return {"status": "success", "data": await response.json()}
                 else:
-                    return {
-                        "status": "success",
-                        "data": await response.text()
-                    }
+                    return {"status": "success", "data": await response.text()}
         except aiohttp.ClientResponseError as e:
             if e.status == 401 and _retry and await self._try_refresh_token():
                 return await self._request(method, url, _retry=False, **kwargs)
