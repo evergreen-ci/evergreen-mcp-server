@@ -17,7 +17,6 @@ import pytest
 
 from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 
-
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
@@ -190,8 +189,9 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
             base_url="https://api.example.com/v2/",
         )
 
-    def _mock_response(self, status=200, json_data=None, text_data="",
-                       content_type="application/json"):
+    def _mock_response(
+        self, status=200, json_data=None, text_data="", content_type="application/json"
+    ):
         resp = AsyncMock()
         resp.status = status
         resp.headers = {"Content-Type": content_type}
@@ -205,10 +205,12 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         resp = self._mock_response(json_data={"key": "val"})
 
         mock_session = MagicMock()
-        mock_session.request = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=resp),
-            __aexit__=AsyncMock(return_value=False),
-        ))
+        mock_session.request = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=resp),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
         client.session = mock_session
 
         result = await client._request("GET", "tasks/123")
@@ -222,10 +224,12 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         resp = self._mock_response(json_data={"key": "val"})
 
         mock_session = MagicMock()
-        mock_session.request = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=resp),
-            __aexit__=AsyncMock(return_value=False),
-        ))
+        mock_session.request = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=resp),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
         client.session = mock_session
 
         await client._request("GET", "https://other.api/endpoint")
@@ -241,10 +245,12 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_session = MagicMock()
-        mock_session.request = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=resp),
-            __aexit__=AsyncMock(return_value=False),
-        ))
+        mock_session.request = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=resp),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
         client.session = mock_session
 
         result = await client._request("GET", "logs/abc")
@@ -267,7 +273,9 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         call_count = 0
         original_request = client._request
 
-        with patch.object(client, "_try_refresh_token", new_callable=AsyncMock, return_value=True):
+        with patch.object(
+            client, "_try_refresh_token", new_callable=AsyncMock, return_value=True
+        ):
             # Mock session to return 401 then 200
             mock_ctx_401 = AsyncMock(
                 __aenter__=AsyncMock(return_value=resp_401),
@@ -306,6 +314,8 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         mock_session.request = MagicMock(return_value=mock_ctx)
         client.session = mock_session
 
-        with patch.object(client, "_try_refresh_token", new_callable=AsyncMock, return_value=True):
+        with patch.object(
+            client, "_try_refresh_token", new_callable=AsyncMock, return_value=True
+        ):
             with pytest.raises(aiohttp.ClientResponseError):
                 await client._request("GET", "tasks/1", _retry=False)
