@@ -2,6 +2,12 @@ src/evergreen/**
 src/evergreen_README.md
 src/.openapi-generator*
 
+.claude/
+.claude-flow/
+.mcp.json
+CLAUDE.md
+.SECURITY.md
+
 # Python build artifacts and cache
 **/__pycache__/
 *.py[cod]
