@@ -7,7 +7,6 @@ This module manages DEX authentication using authlib with:
 """
 
 import asyncio
-import fcntl
 import json
 import logging
 import os
@@ -21,6 +20,7 @@ from typing import Optional
 import httpx
 import jwt as pyjwt
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+from filelock import FileLock
 
 from evergreen_mcp import USER_AGENT
 from evergreen_mcp.utils import (
@@ -92,66 +92,18 @@ def _load_oauth_config_from_evergreen_yml() -> dict:
     return oauth_config
 
 
-class FileLock:
-    """POSIX advisory file lock using fcntl.flock().
+@asynccontextmanager
+async def _async_filelock(lock_path: Path):
+    """Async context manager that acquires a file lock in a thread.
 
-    Provides both synchronous and async context manager interfaces for
-    cross-process coordination. The async interface runs the blocking
-    flock() call in an executor to avoid stalling the event loop.
+    Wraps filelock.FileLock so the blocking acquire runs off the event loop.
     """
-
-    def __init__(self, lock_path: Path):
-        self.lock_path = lock_path
-        self._fd: Optional[int] = None
-
-    def acquire(self, blocking: bool = True) -> bool:
-        """Acquire the file lock.
-
-        Args:
-            blocking: If True, block until lock is acquired. If False,
-                      return immediately with False if lock is held.
-
-        Returns:
-            True if lock was acquired, False if non-blocking and lock is held.
-        """
-        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
-        try:
-            flags = fcntl.LOCK_EX
-            if not blocking:
-                flags |= fcntl.LOCK_NB
-            fcntl.flock(self._fd, flags)
-            return True
-        except OSError:
-            if not blocking:
-                os.close(self._fd)
-                self._fd = None
-                return False
-            raise
-
-    def release(self):
-        """Release the file lock."""
-        if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-            os.close(self._fd)
-            self._fd = None
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, *exc):
-        self.release()
-        return False
-
-    @asynccontextmanager
-    async def async_acquire(self):
-        """Async context manager that acquires the lock in an executor."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.acquire)
-        try:
-            yield self
-        finally:
-            self.release()
+    lock = FileLock(lock_path)
+    await asyncio.to_thread(lock.acquire)
+    try:
+        yield lock
+    finally:
+        lock.release()
 
 
 class OIDCAuthManager:
@@ -176,7 +128,12 @@ class OIDCAuthManager:
         token_file_path = os.getenv("EVERGREEN_TOKEN_FILE") or oauth_config.get(
             "token_file_path"
         )
-        self.token_file = Path(token_file_path) if token_file_path else None
+        if not token_file_path:
+            raise OIDCAuthenticationError(
+                f"Missing 'token_file_path' in oauth section of {EVERGREEN_CONFIG_FILE}\n"
+                "Set oauth.token_file_path in ~/.evergreen.yml to enable token caching."
+            )
+        self.token_file: Path = Path(token_file_path)
 
         logger.debug(
             "Initialized OIDC auth manager: issuer=%s, client_id=%s, token_file=%s",
@@ -186,9 +143,7 @@ class OIDCAuthManager:
         )
 
         # Cross-process file lock (sibling of token file)
-        self.lock_file = (
-            self.token_file.with_suffix(".lock") if self.token_file else None
-        )
+        self.lock_file: Path = self.token_file.with_suffix(".lock")
         # In-process lock for token refresh coordination
         self._refresh_lock = asyncio.Lock()
 
@@ -307,11 +262,8 @@ class OIDCAuthManager:
             token_data["expires_at"] = time.time() + token_data["expires_in"]
         return token_data
 
-    def check_token_file(self) -> Optional[dict]:
-        """Check configured token file for valid token.
-
-        The token file path must be configured in ~/.evergreen.yml under
-        oauth.token_file_path.
+    def _check_token_file(self) -> Optional[dict]:
+        """Check configured token file for valid token (caller must hold file lock).
 
         If the access token is expired but a refresh token exists, this method
         will store the refresh token internally so it can be used for refresh.
@@ -319,10 +271,6 @@ class OIDCAuthManager:
         Returns:
             Token data dict if valid token found, None otherwise
         """
-        if not self.token_file:
-            logger.debug("No token file path configured in ~/.evergreen.yml")
-            return None
-
         try:
             with open(self.token_file) as f:
                 token_data = json.load(f)
@@ -349,14 +297,23 @@ class OIDCAuthManager:
 
         return None
 
+    def check_token_file(self) -> Optional[dict]:
+        """Check configured token file for valid token (acquires file lock).
+
+        Returns:
+            Token data dict if valid token found, None otherwise
+        """
+        with FileLock(self.lock_file):
+            return self._check_token_file()
+
     async def refresh_token(self) -> Optional[dict]:
         """
         Attempt to refresh the token using authlib.
 
-        Uses an in-process asyncio.Lock to prevent concurrent refresh
-        requests from racing with rotating refresh tokens. After acquiring
-        the lock, re-checks if the token is already valid (another
-        coroutine may have refreshed while we waited).
+        Acquires the cross-process file lock and the in-process asyncio.Lock
+        to prevent concurrent refresh requests from racing with rotating
+        refresh tokens. After acquiring locks, re-checks if the token is
+        already valid (another caller may have refreshed while we waited).
 
         Returns:
             Token data dict if successful, None otherwise
@@ -365,22 +322,23 @@ class OIDCAuthManager:
             logger.warning("No refresh token available")
             return None
 
-        async with self._refresh_lock:
-            # Re-check after acquiring lock — another coroutine may have
-            # already refreshed the token while we were waiting
-            if self._access_token:
-                token_data = {
-                    "access_token": self._access_token,
-                    "refresh_token": self._refresh_token,
-                }
-                is_valid, _ = self._check_token_expiry(token_data)
-                if is_valid:
-                    logger.debug(
-                        "Token already refreshed by another coroutine, skipping"
-                    )
-                    return token_data
+        async with _async_filelock(self.lock_file):
+            async with self._refresh_lock:
+                # Re-check after acquiring locks — another caller may have
+                # already refreshed the token while we were waiting
+                if self._access_token:
+                    token_data = {
+                        "access_token": self._access_token,
+                        "refresh_token": self._refresh_token,
+                    }
+                    is_valid, _ = self._check_token_expiry(token_data)
+                    if is_valid:
+                        logger.debug(
+                            "Token already refreshed by another caller, skipping"
+                        )
+                        return token_data
 
-            return await self._do_refresh_token()
+                return await self._do_refresh_token()
 
     async def _do_refresh_token(self) -> Optional[dict]:
         """Execute the HTTP token refresh.
@@ -439,22 +397,10 @@ class OIDCAuthManager:
     def _save_token(self, token_data: dict):
         """Save token to configured token file atomically.
 
-        The token file path must be configured in ~/.evergreen.yml under
-        oauth.token_file_path. If not configured, tokens will not be persisted
-        and this method returns without error (memory-only operation is fine).
-
         Raises:
-            OSError: If token file is configured but the write fails. Callers
-                must not update in-memory state when this happens, to keep
-                memory and disk consistent.
+            OSError: If the write fails. Callers must not update in-memory
+                state when this happens, to keep memory and disk consistent.
         """
-        if not self.token_file:
-            logger.warning(
-                "No token file path configured - token will not be persisted. "
-                "Set oauth.token_file_path in ~/.evergreen.yml to enable token caching."
-            )
-            return
-
         # Create parent directory if needed (raises on failure)
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -585,42 +531,37 @@ class OIDCAuthManager:
                 return True
 
         # Acquire cross-process file lock before doing authentication
-        if self.lock_file:
-            file_lock = FileLock(self.lock_file)
-            async with file_lock.async_acquire():
-                # Re-check token file after acquiring lock — another process
-                # may have completed auth while we were waiting
-                token_data = self.check_token_file()
-                if token_data:
-                    self._access_token = token_data["access_token"]
-                    self._refresh_token = token_data.get("refresh_token")
-                    try:
-                        self._user_id = self._extract_user_id(self._access_token)
-                        logger.info(
-                            "Token file valid after lock acquisition, "
-                            "skipping authentication"
-                        )
-                        return True
-                    except OIDCAuthenticationError as e:
-                        logger.warning("Token file malformed after lock: %s", e)
-                        self._access_token = None
+        async with _async_filelock(self.lock_file):
+            # Re-check token file after acquiring lock — another process
+            # may have completed auth while we were waiting
+            token_data = self._check_token_file()
+            if token_data:
+                self._access_token = token_data["access_token"]
+                self._refresh_token = token_data.get("refresh_token")
+                try:
+                    self._user_id = self._extract_user_id(self._access_token)
+                    logger.info(
+                        "Token file valid after lock acquisition, "
+                        "skipping authentication"
+                    )
+                    return True
+                except OIDCAuthenticationError as e:
+                    logger.warning("Token file malformed after lock: %s", e)
+                    self._access_token = None
 
-                return await self._do_authentication()
-        else:
             return await self._do_authentication()
 
     async def _do_authentication(self) -> bool:
         """Execute the authentication flow (token file -> refresh -> device flow).
 
-        Must be called either under the cross-process file lock or when no
-        lock file is configured.
+        Must be called under the cross-process file lock.
         """
         # Initialize client
         await self._get_client()
 
-        # Check configured token file
+        # Check configured token file (already under file lock)
         logger.info("Checking for existing token...")
-        token_data = self.check_token_file()
+        token_data = self._check_token_file()
         if token_data:
             self._access_token = token_data["access_token"]
             self._refresh_token = token_data.get("refresh_token")
@@ -632,24 +573,25 @@ class OIDCAuthManager:
                 logger.warning("Token file is malformed: %s. Trying refresh...", e)
                 self._access_token = None
 
-        # Try refresh if we have a refresh token
+        # Try refresh if we have a refresh token (already under file lock)
         if self._refresh_token:
-            logger.info("Attempting token refresh...")
-            token_data = await self.refresh_token()
-            if token_data:
-                self._access_token = token_data["access_token"]
-                self._refresh_token = token_data.get(
-                    "refresh_token", self._refresh_token
-                )
-                try:
-                    self._user_id = self._extract_user_id(self._access_token)
-                    return True
-                except OIDCAuthenticationError as e:
-                    # Refresh returned malformed token - try device flow
-                    logger.warning(
-                        "Refreshed token is malformed: %s. Trying device flow...", e
+            async with self._refresh_lock:
+                logger.info("Attempting token refresh...")
+                token_data = await self._do_refresh_token()
+                if token_data:
+                    self._access_token = token_data["access_token"]
+                    self._refresh_token = token_data.get(
+                        "refresh_token", self._refresh_token
                     )
-                    self._access_token = None
+                    try:
+                        self._user_id = self._extract_user_id(self._access_token)
+                        return True
+                    except OIDCAuthenticationError as e:
+                        # Refresh returned malformed token - try device flow
+                        logger.warning(
+                            "Refreshed token is malformed: %s. Trying device flow...", e
+                        )
+                        self._access_token = None
 
         # Need to authenticate
         logger.warning("No valid token found - authentication required")

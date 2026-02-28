@@ -3,7 +3,6 @@
 Concurrency and atomicity tests for OIDC authentication module.
 
 Tests validate:
-- FileLock helper (acquire/release, context manager, non-blocking)
 - Cross-process coordination (re-check-after-lock pattern)
 - In-process asyncio.Lock coordination on token refresh
 - Atomic file writes with random temp file names
@@ -14,18 +13,13 @@ Tests validate:
 import asyncio
 import base64
 import json
-import os
-import tempfile
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 import pytest
 
-from evergreen_mcp.oidc_auth import (
-    FileLock,
-    OIDCAuthManager,
-)
+from evergreen_mcp.oidc_auth import OIDCAuthManager
 
 
 def create_mock_jwt(claims: dict) -> str:
@@ -68,74 +62,6 @@ def auth_manager():
                 return OIDCAuthManager()
 
 
-class TestFileLock:
-    """Test the FileLock helper class."""
-
-    def test_acquire_and_release(self, tmp_path):
-        """Test basic acquire and release."""
-        lock_file = tmp_path / "test.lock"
-        lock = FileLock(lock_file)
-
-        result = lock.acquire()
-        assert result is True
-        assert lock._fd is not None
-
-        lock.release()
-        assert lock._fd is None
-
-    def test_context_manager(self, tmp_path):
-        """Test synchronous context manager."""
-        lock_file = tmp_path / "test.lock"
-        lock = FileLock(lock_file)
-
-        with lock:
-            assert lock._fd is not None
-
-        assert lock._fd is None
-
-    def test_non_blocking_acquire_fails_when_held(self, tmp_path):
-        """Test non-blocking acquire returns False when lock is held."""
-        lock_file = tmp_path / "test.lock"
-        lock1 = FileLock(lock_file)
-        lock2 = FileLock(lock_file)
-
-        lock1.acquire()
-        try:
-            result = lock2.acquire(blocking=False)
-            assert result is False
-            assert lock2._fd is None
-        finally:
-            lock1.release()
-
-    @pytest.mark.asyncio
-    async def test_async_context_manager(self, tmp_path):
-        """Test async context manager acquires and releases lock."""
-        lock_file = tmp_path / "test.lock"
-        lock = FileLock(lock_file)
-
-        async with lock.async_acquire():
-            assert lock._fd is not None
-
-        assert lock._fd is None
-
-    def test_release_idempotent(self, tmp_path):
-        """Test that release is safe to call when not acquired."""
-        lock_file = tmp_path / "test.lock"
-        lock = FileLock(lock_file)
-
-        # Should not raise
-        lock.release()
-        assert lock._fd is None
-
-    def test_lock_creates_file(self, tmp_path):
-        """Test that acquiring a lock creates the lock file."""
-        lock_file = tmp_path / "test.lock"
-        assert not lock_file.exists()
-
-        with FileLock(lock_file):
-            assert lock_file.exists()
-
-
 class TestCrossProcessCoordination:
     """Test ensure_authenticated re-checks token file after acquiring lock."""
 
@@ -157,23 +83,19 @@ class TestCrossProcessCoordination:
             return token_data
 
         with patch.object(
-            auth_manager, "check_token_file", side_effect=check_token_side_effect
+            auth_manager, "_check_token_file", side_effect=check_token_side_effect
         ):
-            with patch("evergreen_mcp.oidc_auth.FileLock") as mock_lock_class:
-                mock_lock_instance = MagicMock()
-                mock_lock_class.return_value = mock_lock_instance
-
-                # Make async_acquire work as an async context manager
+            with patch("evergreen_mcp.oidc_auth._async_filelock") as mock_afl:
                 async_cm = AsyncMock()
-                async_cm.__aenter__ = AsyncMock(return_value=mock_lock_instance)
+                async_cm.__aenter__ = AsyncMock(return_value=None)
                 async_cm.__aexit__ = AsyncMock(return_value=False)
-                mock_lock_instance.async_acquire.return_value = async_cm
+                mock_afl.return_value = async_cm
 
                 result = await auth_manager.ensure_authenticated()
 
                 assert result is True
                 assert auth_manager._access_token == token
-                # check_token_file called once for the re-check under lock
+                # _check_token_file called once for the re-check under lock
                 assert call_count == 1
 
     @pytest.mark.asyncio
@@ -184,52 +106,21 @@ class TestCrossProcessCoordination:
         token = create_mock_jwt(valid_jwt_claims)
         device_token = {"access_token": token, "refresh_token": "refresh"}
 
-        with patch.object(auth_manager, "check_token_file", return_value=None):
+        with patch.object(auth_manager, "_check_token_file", return_value=None):
             with patch.object(
                 auth_manager, "_do_authentication", new_callable=AsyncMock
             ) as mock_auth:
                 mock_auth.return_value = True
-                with patch("evergreen_mcp.oidc_auth.FileLock") as mock_lock_class:
-                    mock_lock_instance = MagicMock()
-                    mock_lock_class.return_value = mock_lock_instance
-
+                with patch("evergreen_mcp.oidc_auth._async_filelock") as mock_afl:
                     async_cm = AsyncMock()
-                    async_cm.__aenter__ = AsyncMock(return_value=mock_lock_instance)
+                    async_cm.__aenter__ = AsyncMock(return_value=None)
                     async_cm.__aexit__ = AsyncMock(return_value=False)
-                    mock_lock_instance.async_acquire.return_value = async_cm
+                    mock_afl.return_value = async_cm
 
                     result = await auth_manager.ensure_authenticated()
 
                     assert result is True
                     mock_auth.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_no_lock_file_when_no_token_file(self, valid_jwt_claims):
-        """When no token file configured, no lock is used."""
-        mock_config = {
-            "oauth": {
-                "issuer": "https://dex.example.com",
-                "client_id": "test-client-id",
-            }
-        }
-        with patch("builtins.open", mock_open(read_data=json.dumps(mock_config))):
-            with patch.object(Path, "exists", return_value=True):
-                with patch("yaml.safe_load", return_value=mock_config):
-                    mgr = OIDCAuthManager()
-
-        assert mgr.lock_file is None
-
-        token = create_mock_jwt(valid_jwt_claims)
-        device_token = {"access_token": token, "refresh_token": "refresh"}
-
-        with patch.object(
-            mgr, "_do_authentication", new_callable=AsyncMock
-        ) as mock_auth:
-            mock_auth.return_value = True
-            result = await mgr.ensure_authenticated()
-
-            assert result is True
-            mock_auth.assert_called_once()
 
 
 class TestInProcessCoordination:
@@ -264,12 +155,18 @@ class TestInProcessCoordination:
         with patch.object(
             auth_manager, "_do_refresh_token", side_effect=mock_do_refresh
         ):
-            # Launch 3 concurrent refresh calls
-            results = await asyncio.gather(
-                auth_manager.refresh_token(),
-                auth_manager.refresh_token(),
-                auth_manager.refresh_token(),
-            )
+            with patch("evergreen_mcp.oidc_auth._async_filelock") as mock_afl:
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=None)
+                async_cm.__aexit__ = AsyncMock(return_value=False)
+                mock_afl.return_value = async_cm
+
+                # Launch 3 concurrent refresh calls
+                results = await asyncio.gather(
+                    auth_manager.refresh_token(),
+                    auth_manager.refresh_token(),
+                    auth_manager.refresh_token(),
+                )
 
         # Only 1 actual HTTP refresh should have been made
         assert http_call_count == 1
@@ -288,12 +185,18 @@ class TestInProcessCoordination:
         with patch.object(
             auth_manager, "_do_refresh_token", new_callable=AsyncMock
         ) as mock_do_refresh:
-            result = await auth_manager.refresh_token()
+            with patch("evergreen_mcp.oidc_auth._async_filelock") as mock_afl:
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=None)
+                async_cm.__aexit__ = AsyncMock(return_value=False)
+                mock_afl.return_value = async_cm
 
-            # Should not call _do_refresh_token since token is valid
-            mock_do_refresh.assert_not_called()
-            assert result is not None
-            assert result["access_token"] == token
+                result = await auth_manager.refresh_token()
+
+                # Should not call _do_refresh_token since token is valid
+                mock_do_refresh.assert_not_called()
+                assert result is not None
+                assert result["access_token"] == token
 
     @pytest.mark.asyncio
     async def test_no_refresh_token_early_return(self, auth_manager):
@@ -455,33 +358,33 @@ class TestStateFileConsistency:
 
 
 class TestTOCTOUFix:
-    """Test that check_token_file handles FileNotFoundError without exists()."""
+    """Test that _check_token_file handles FileNotFoundError without exists()."""
 
     def test_handles_file_not_found(self, auth_manager):
-        """check_token_file catches FileNotFoundError from open()."""
+        """_check_token_file catches FileNotFoundError from open()."""
         with patch("builtins.open", side_effect=FileNotFoundError("No such file")):
-            result = auth_manager.check_token_file()
+            result = auth_manager._check_token_file()
             assert result is None
 
     def test_does_not_call_exists(self, auth_manager, valid_jwt_claims):
-        """check_token_file does not call self.token_file.exists()."""
+        """_check_token_file does not call self.token_file.exists()."""
         token = create_mock_jwt(valid_jwt_claims)
         token_data = {"access_token": token, "refresh_token": "refresh"}
 
         with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
             with patch.object(Path, "exists") as mock_exists:
-                auth_manager.check_token_file()
+                auth_manager._check_token_file()
                 # exists() should never be called on the token file path
                 mock_exists.assert_not_called()
 
     def test_handles_other_exceptions(self, auth_manager):
-        """check_token_file catches generic exceptions from open()."""
+        """_check_token_file catches generic exceptions from open()."""
         with patch("builtins.open", side_effect=PermissionError("Permission denied")):
-            result = auth_manager.check_token_file()
+            result = auth_manager._check_token_file()
             assert result is None
 
     def test_handles_json_decode_error(self, auth_manager):
-        """check_token_file catches JSON decode errors."""
+        """_check_token_file catches JSON decode errors."""
         with patch("builtins.open", mock_open(read_data="not json{")):
-            result = auth_manager.check_token_file()
+            result = auth_manager._check_token_file()
             assert result is None
