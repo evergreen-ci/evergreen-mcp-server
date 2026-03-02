@@ -447,9 +447,9 @@ class OIDCAuthManager:
 
         Steps:
         1. Check if already authenticated
-        2. Check token file (no network required)
-        3. Try refresh if expired (needs OIDC client)
-        4. Do device flow if needed (needs OIDC client)
+        2. Check token file
+        3. Try refresh if expired
+        4. Do device flow if needed
         """
         logger.info("Checking authentication status...")
 
@@ -483,9 +483,6 @@ class OIDCAuthManager:
                 logger.warning("Token file is malformed: %s. Trying refresh...", e)
                 self._access_token = None
 
-        # Only initialize the OIDC client when we actually need network
-        # access (refresh or device flow). This fetches the OIDC discovery
-        # metadata which requires connectivity to the issuer.
         await self._get_client()
 
         # Try refresh if we have a refresh token
