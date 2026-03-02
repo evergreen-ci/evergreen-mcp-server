@@ -1,6 +1,6 @@
 FROM python:3.13-alpine
 
-ARG VERSION=0.4.0
+ARG VERSION=0.4.2
 
 # Create non-root user
 RUN addgroup -S evergreen && adduser -S evergreen -G evergreen

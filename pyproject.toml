@@ -32,7 +32,7 @@ known_first_party = ["evergreen_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
-version = "0.4.0"
+version = "0.4.2"
 description = "A server for interacting with the Evergreen API."
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
