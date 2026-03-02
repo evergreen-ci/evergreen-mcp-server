@@ -149,7 +149,9 @@ class EvergreenRestClient:
                 return await self._request(method, url, _retry=False, **kwargs)
             raise
 
-    async def get_task_logs(self, task_id: str, execution_retries: int) -> Optional[str]:
+    async def get_task_logs(
+        self, task_id: str, execution_retries: int
+    ) -> Optional[str]:
         """
         Get the logs for a task.
 

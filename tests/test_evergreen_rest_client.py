@@ -356,9 +356,7 @@ class TestGetTaskLogs(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_task_logs_failure(self):
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(
-            return_value={"status": "error", "data": None}
-        )
+        client._request = AsyncMock(return_value={"status": "error", "data": None})
 
         result = await client.get_task_logs("task-abc", 0)
         assert result is None
@@ -370,7 +368,10 @@ class TestGetTaskTestResults(unittest.IsolatedAsyncioTestCase):
     async def test_get_test_results_success(self):
         client = EvergreenRestClient(bearer_token="tok")
         client._request = AsyncMock(
-            return_value={"status": "success", "data": "FAIL: TestSomething\npanic: oops"}
+            return_value={
+                "status": "success",
+                "data": "FAIL: TestSomething\npanic: oops",
+            }
         )
 
         result = await client.get_task_test_results("task-abc", 0, "Job0")
@@ -399,18 +400,14 @@ class TestGetTaskTestResults(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_test_results_failure(self):
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(
-            return_value={"status": "error", "data": None}
-        )
+        client._request = AsyncMock(return_value={"status": "error", "data": None})
 
         result = await client.get_task_test_results("task-abc", 0, "Job0")
         assert result is None
 
     async def test_get_test_results_empty_data(self):
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(
-            return_value={"status": "success", "data": ""}
-        )
+        client._request = AsyncMock(return_value={"status": "success", "data": ""})
 
         result = await client.get_task_test_results("task-abc", 0, "Job0")
         assert result == ""
@@ -457,7 +454,12 @@ class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
 
         result = await fetch_evergreen_task_test_results(
             mock_client,
-            {"task_id": "t1", "execution_retries": 0, "job_name": "Job0", "tail_limit": 500},
+            {
+                "task_id": "t1",
+                "execution_retries": 0,
+                "job_name": "Job0",
+                "tail_limit": 500,
+            },
         )
         assert result == {"logs": "test output"}
         mock_client.get_task_test_results.assert_called_once_with(

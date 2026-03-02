@@ -649,7 +649,9 @@ async def fetch_evergreen_task_test_results(
     Returns:
         Dictionary containing raw test log content
     """
-    logger.info("fetch_evergreen_task_test_results called with arguments: %s", arguments)
+    logger.info(
+        "fetch_evergreen_task_test_results called with arguments: %s", arguments
+    )
     task_id = arguments.get("task_id")
     execution_retries = arguments.get("execution_retries", 0)
     job_name = arguments.get("job_name")
