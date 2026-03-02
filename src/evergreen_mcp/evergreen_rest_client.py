@@ -148,3 +148,57 @@ class EvergreenRestClient:
             if e.status == 401 and _retry and await self._try_refresh_token():
                 return await self._request(method, url, _retry=False, **kwargs)
             raise
+
+    async def get_task_logs(self, task_id: str, execution_retries: int) -> Optional[str]:
+        """
+        Get the logs for a task.
+
+        Args:
+            task_id: The task identifier.
+            execution_retries: The execution number (0 for first run, 1+ for retries).
+
+        Returns:
+            The raw log text, or None if the request failed.
+        """
+        endpoint = f"tasks/{task_id}/build/TaskLogs?type=task_log&execution={execution_retries}"
+        response = await self._request("GET", endpoint)
+        if response.get("status") == "success":
+            return response.get("data")
+        else:
+            return None
+
+    async def get_task_test_results(
+        self,
+        task_id: str,
+        execution_retries: int,
+        job_name: str,
+        tail_limit: int = 1000,
+    ) -> Optional[str]:
+        """
+        Get raw test log content for a task.
+
+        Fetches the test log from the REST API (stored in S3, not accessible
+        via GraphQL). Returns the raw log text for downstream processing.
+
+        Args:
+            task_id: The task identifier.
+            execution_retries: The execution number (0 for first run, 1+ for retries).
+            job_name: The job name (e.g., Job0, Job1).
+            tail_limit: Number of lines to return from the end of the log.
+
+        Returns:
+            The raw test log text, or None if the request failed.
+        """
+        endpoint = (
+            f"tasks/{task_id}/build/TestLogs/{job_name}%2Fglobal.log"
+            f"?execution={execution_retries}&tail_limit={tail_limit}"
+        )
+        response = await self._request("GET", endpoint)
+
+        if response.get("status") != "success":
+            return None
+
+        log_text = response.get("data") or ""
+        logger.info("Test results bytes: %s", len(log_text))
+
+        return log_text
