@@ -32,7 +32,7 @@ known_first_party = ["evergreen_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
-version = "0.4.0"
+version = "0.4.1"
 description = "A server for interacting with the Evergreen API."
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
@@ -52,7 +52,8 @@ dependencies = [
     "pyjwt>=2.0.0",
     "cryptography>=41.0.0",
     "authlib>=1.0.0",
-    "sentry-sdk>=2.43.0"
+    "sentry-sdk>=2.43.0",
+    "filelock>=3.0.0"
 ]
 
 [project.optional-dependencies]

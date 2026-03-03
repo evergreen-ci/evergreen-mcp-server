@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import time
 import webbrowser
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Optional
 import httpx
 import jwt as pyjwt
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+from filelock import AsyncFileLock, FileLock
 
 from evergreen_mcp import USER_AGENT
 from evergreen_mcp.utils import (
@@ -111,7 +113,12 @@ class OIDCAuthManager:
         token_file_path = os.getenv("EVERGREEN_TOKEN_FILE") or oauth_config.get(
             "token_file_path"
         )
-        self.token_file = Path(token_file_path) if token_file_path else None
+        if not token_file_path:
+            raise OIDCAuthenticationError(
+                f"Missing 'token_file_path' in oauth section of {EVERGREEN_CONFIG_FILE}\n"
+                "Set oauth.token_file_path in ~/.evergreen.yml to enable token caching."
+            )
+        self.token_file: Path = Path(token_file_path)
 
         logger.debug(
             "Initialized OIDC auth manager: issuer=%s, client_id=%s, token_file=%s",
@@ -120,10 +127,12 @@ class OIDCAuthManager:
             self.token_file,
         )
 
+        # Cross-process file lock (sibling of token file)
+        self.lock_file: Path = self.token_file.with_suffix(".lock")
+
         self._client: Optional[AsyncOAuth2Client] = None
         self._metadata: Optional[dict] = None
         self._access_token: Optional[str] = None
-        self._refresh_token: Optional[str] = None
         self._user_id: Optional[str] = None
 
     async def _get_client(self) -> AsyncOAuth2Client:
@@ -235,59 +244,88 @@ class OIDCAuthManager:
             token_data["expires_at"] = time.time() + token_data["expires_in"]
         return token_data
 
-    def check_token_file(self) -> Optional[dict]:
-        """Check configured token file for valid token.
+    def _read_token_file(self) -> Optional[dict]:
+        """Read and parse the token file (caller must hold file lock).
 
-        The token file path must be configured in ~/.evergreen.yml under
-        oauth.token_file_path.
-
-        If the access token is expired but a refresh token exists, this method
-        will store the refresh token internally so it can be used for refresh.
+        Returns the raw token data dict regardless of expiry. Callers are
+        responsible for checking validity and extracting fields they need.
 
         Returns:
-            Token data dict if valid token found, None otherwise
+            Token data dict if file exists and is valid JSON, None otherwise
         """
-        if not self.token_file:
-            logger.debug("No token file path configured in ~/.evergreen.yml")
-            return None
-
-        if not self.token_file.exists():
-            logger.debug("Token file not found: %s", self.token_file)
-            return None
-
-        logger.info("Found token file: %s", self.token_file)
         try:
             with open(self.token_file) as f:
                 token_data = json.load(f)
+        except FileNotFoundError:
+            logger.debug("Token file not found: %s", self.token_file)
+            return None
+        except Exception as e:
+            logger.error("Error reading token file: %s", e)
+            return None
 
-            if "access_token" in token_data:
+        logger.info("Found token file: %s", self.token_file)
+        if "access_token" not in token_data:
+            logger.warning("Token file missing access_token field")
+            return None
+
+        return token_data
+
+    def check_token_file(self) -> Optional[dict]:
+        """Check configured token file for valid token (acquires file lock).
+
+        Returns:
+            Token data dict if valid access token found, None otherwise
+        """
+        with FileLock(self.lock_file):
+            token_data = self._read_token_file()
+            if token_data:
                 is_valid, remaining = self._check_token_expiry(token_data)
                 if is_valid:
                     logger.info("Token valid (%d min remaining)", remaining // 60)
                     return token_data
-                else:
-                    # Token expired - but store the refresh token so we can try to refresh
-                    if token_data.get("refresh_token"):
-                        logger.info("Access token expired, but refresh token available")
-                        self._refresh_token = token_data["refresh_token"]
-                    else:
-                        logger.warning("Token expired and no refresh token available")
-        except Exception as e:
-            logger.error("Error reading token file: %s", e)
-
-        return None
+            return None
 
     async def refresh_token(self) -> Optional[dict]:
         """
         Attempt to refresh the token using authlib.
 
+        Acquires the cross-process file lock, then reads the refresh token
+        fresh from disk. This avoids stale in-memory refresh tokens when
+        another process has already rotated it.
+
         Returns:
             Token data dict if successful, None otherwise
         """
-        if not self._refresh_token:
-            logger.warning("No refresh token available")
-            return None
+        async with AsyncFileLock(self.lock_file):
+            # Read token file fresh from disk under the lock
+            token_data = self._read_token_file()
+            if not token_data:
+                logger.warning("No token file found for refresh")
+                return None
 
+            # Another process may have already refreshed — check first
+            is_valid, _ = self._check_token_expiry(token_data)
+            if is_valid:
+                logger.debug("Token already valid (refreshed by another process)")
+                self._access_token = token_data["access_token"]
+                self._user_id = self._extract_user_id(self._access_token)
+                return token_data
+
+            refresh_token_value = token_data.get("refresh_token")
+            if not refresh_token_value:
+                logger.warning("No refresh token in token file")
+                return None
+
+            return await self._do_refresh_token(refresh_token_value)
+
+    async def _do_refresh_token(self, refresh_token_value: str) -> Optional[dict]:
+        """Execute the HTTP token refresh.
+
+        Must be called under the cross-process file lock.
+
+        Args:
+            refresh_token_value: The refresh token read from disk.
+        """
         logger.info("Attempting token refresh...")
         try:
             await self._get_client()
@@ -299,7 +337,7 @@ class OIDCAuthManager:
                     self._metadata["token_endpoint"],
                     data={
                         "grant_type": "refresh_token",
-                        "refresh_token": self._refresh_token,
+                        "refresh_token": refresh_token_value,
                         "client_id": self.client_id,
                     },
                 )
@@ -309,18 +347,16 @@ class OIDCAuthManager:
 
                     # Validate token BEFORE updating state to ensure atomic updates
                     new_access_token = token_data["access_token"]
-                    new_refresh_token = token_data.get(
-                        "refresh_token", self._refresh_token
-                    )
                     new_user_id = self._extract_user_id(new_access_token)
 
-                    # Token is valid - now update internal state
+                    # Save to disk BEFORE updating in-memory state
+                    # If save fails, memory and disk stay consistent
+                    self._save_token(token_data)
+
+                    # Token saved successfully - now update in-memory cache
                     self._access_token = new_access_token
-                    self._refresh_token = new_refresh_token
                     self._user_id = new_user_id
 
-                    # Save the new token
-                    self._save_token(token_data)
                     logger.info("Token refreshed successfully!")
                     return token_data
                 else:
@@ -338,43 +374,43 @@ class OIDCAuthManager:
     def _save_token(self, token_data: dict):
         """Save token to configured token file atomically.
 
-        The token file path must be configured in ~/.evergreen.yml under
-        oauth.token_file_path. If not configured, tokens will not be persisted.
+        Raises:
+            OSError: If the write fails. Callers must not update in-memory
+                state when this happens, to keep memory and disk consistent.
         """
-        if not self.token_file:
-            logger.warning(
-                "No token file path configured - token will not be persisted. "
-                "Set oauth.token_file_path in ~/.evergreen.yml to enable token caching."
-            )
-            return
+        # Create parent directory if needed (raises on failure)
+        self.token_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create parent directory if needed
+        # Write to random temporary file first (avoids cross-process collisions)
+        temp_fd = None
+        temp_path = None
         try:
-            self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            logger.error(
-                "Cannot create token directory %s: %s", self.token_file.parent, e
+            temp_fd = tempfile.NamedTemporaryFile(
+                dir=str(self.token_file.parent),
+                prefix=".tmp_token_",
+                suffix=".json",
+                mode="w",
+                delete=False,
             )
-            return
-
-        # Write to temporary file first
-        temp_file = self.token_file.with_suffix(".tmp")
-        try:
-            with open(temp_file, "w") as f:
-                json.dump(token_data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
+            temp_path = Path(temp_fd.name)
+            json.dump(token_data, temp_fd, indent=2)
+            temp_fd.flush()
+            os.fsync(temp_fd.fileno())
+            temp_fd.close()
+            temp_fd = None  # Mark as closed
 
             # Atomic rename
-            temp_file.replace(self.token_file)
+            temp_path.replace(self.token_file)
             logger.info("Token saved to %s", self.token_file)
-        except Exception as e:
-            logger.error("Failed to save token: %s", e)
-            if temp_file.exists():
+        except Exception:
+            if temp_fd is not None:
+                temp_fd.close()
+            if temp_path is not None and temp_path.exists():
                 try:
-                    temp_file.unlink()
+                    temp_path.unlink()
                 except OSError:
                     pass
+            raise
 
     async def device_flow_auth(self) -> dict:
         """Perform device authorization flow with browser prompt and blocking poll.
@@ -443,22 +479,23 @@ class OIDCAuthManager:
 
     async def ensure_authenticated(self) -> bool:
         """
-        Main authentication flow.
+        Main authentication flow with cross-process coordination.
+
+        Fast-path check (no lock), then acquires file lock and re-checks
+        the token file after acquiring the lock — another process may have
+        completed authentication while we waited.
 
         Steps:
-        1. Check if already authenticated
-        2. Check token file
-        3. Try refresh if expired
-        4. Do device flow if needed
+        1. Check if already authenticated (fast path, no lock)
+        2. Acquire cross-process file lock
+        3. Re-check token file (another process may have written it)
+        4. Delegate to _do_authentication() if still needed
         """
         logger.info("Checking authentication status...")
 
-        # Check if already authenticated
+        # Fast path: already authenticated in-memory
         if self._access_token:
-            token_data = {
-                "access_token": self._access_token,
-                "refresh_token": self._refresh_token,
-            }
+            token_data = {"access_token": self._access_token}
             is_valid, remaining = self._check_token_expiry(token_data)
             if is_valid:
                 logger.debug(
@@ -467,48 +504,65 @@ class OIDCAuthManager:
                 )
                 return True
 
+        # Acquire cross-process file lock before doing authentication
+        async with AsyncFileLock(self.lock_file):
+            # Re-check token file after acquiring lock — another process
+            # may have completed auth while we were waiting
+            token_data = self._read_token_file()
+            if token_data:
+                is_valid, remaining = self._check_token_expiry(token_data)
+                if is_valid:
+                    try:
+                        self._access_token = token_data["access_token"]
+                        self._user_id = self._extract_user_id(self._access_token)
+                        logger.info(
+                            "Token file valid after lock acquisition, "
+                            "skipping authentication"
+                        )
+                        return True
+                    except OIDCAuthenticationError as e:
+                        logger.warning("Token file malformed after lock: %s", e)
+                        self._access_token = None
+
+            return await self._do_authentication()
+
+    async def _do_authentication(self) -> bool:
+        """Execute the authentication flow (token file -> refresh -> device flow).
+
+        Must be called under the cross-process file lock.
+        """
         # Initialize client
         await self._get_client()
 
-        # Check configured token file
+        # Read token file from disk (already under file lock)
         logger.info("Checking for existing token...")
-        token_data = self.check_token_file()
-        if token_data:
-            self._access_token = token_data["access_token"]
-            self._refresh_token = token_data.get("refresh_token")
-            try:
-                self._user_id = self._extract_user_id(self._access_token)
-                return True
-            except OIDCAuthenticationError as e:
-                # Token file is corrupted - try refresh or device flow
-                logger.warning("Token file is malformed: %s. Trying refresh...", e)
-                self._access_token = None
+        token_data = self._read_token_file()
 
-        # Try refresh if we have a refresh token
-        if self._refresh_token:
-            logger.info("Attempting token refresh...")
-            token_data = await self.refresh_token()
-            if token_data:
-                self._access_token = token_data["access_token"]
-                self._refresh_token = token_data.get(
-                    "refresh_token", self._refresh_token
-                )
+        if token_data:
+            is_valid, _ = self._check_token_expiry(token_data)
+            if is_valid:
                 try:
+                    self._access_token = token_data["access_token"]
                     self._user_id = self._extract_user_id(self._access_token)
                     return True
                 except OIDCAuthenticationError as e:
-                    # Refresh returned malformed token - try device flow
-                    logger.warning(
-                        "Refreshed token is malformed: %s. Trying device flow...", e
-                    )
+                    logger.warning("Token file is malformed: %s. Trying refresh...", e)
                     self._access_token = None
+
+            # Access token expired — try refresh if available
+            refresh_token_value = token_data.get("refresh_token")
+            if refresh_token_value:
+                logger.info("Attempting token refresh...")
+                refreshed = await self._do_refresh_token(refresh_token_value)
+                if refreshed:
+                    # _do_refresh_token already updated _access_token and _user_id
+                    return True
 
         # Need to authenticate
         logger.warning("No valid token found - authentication required")
         token_data = await self.device_flow_auth()
         if token_data:
             self._access_token = token_data["access_token"]
-            self._refresh_token = token_data.get("refresh_token")
             # If device flow returns malformed token, something is seriously wrong
             # with the OIDC provider - let the exception propagate
             self._user_id = self._extract_user_id(self._access_token)
@@ -593,11 +647,17 @@ class OIDCAuthManager:
                 if response.status_code == 200:
                     token_data = self._normalize_token_data(response.json())
 
-                    self._access_token = token_data["access_token"]
-                    self._refresh_token = token_data.get("refresh_token")
-                    self._user_id = self._extract_user_id(self._access_token)
+                    # Validate before persisting
+                    new_access_token = token_data["access_token"]
+                    new_user_id = self._extract_user_id(new_access_token)
 
+                    # Save to disk BEFORE updating in-memory state
                     self._save_token(token_data)
+
+                    # Disk write succeeded — now update in-memory cache
+                    self._access_token = new_access_token
+                    self._user_id = new_user_id
+
                     logger.info("Authentication successful!")
                     return token_data
 
@@ -634,11 +694,6 @@ class OIDCAuthManager:
     def access_token(self) -> Optional[str]:
         """Get current access token."""
         return self._access_token
-
-    @property
-    def has_refresh_token(self) -> bool:
-        """Check if a refresh token is available."""
-        return self._refresh_token is not None
 
     @property
     def user_id(self) -> Optional[str]:

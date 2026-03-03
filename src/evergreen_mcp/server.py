@@ -11,12 +11,10 @@ import os
 import os.path
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import AsyncIterator
 
 import yaml
 from fastmcp import Context, FastMCP
-from fastmcp.server.providers.skills import SkillsDirectoryProvider
 
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
@@ -258,40 +256,26 @@ You are connected to the Evergreen CI/CD MCP server for MongoDB. This server \
 provides tools to inspect patches, diagnose CI failures, and retrieve logs.
 
 ## On Startup
-1. Call `get_inferred_project_ids_evergreen` to discover the user's active projects.
-2. If multiple projects are returned, ask the user which one to use.
-3. Use the chosen `project_id` in all subsequent tool calls.
+1. Read all available skills using `get_evergreen_skill` tool.
+2. Call `get_inferred_project_ids_evergreen` to discover the user's active projects.
+3. If multiple projects are returned, ask the user which one to use.
+4. Use the chosen `project_id` in all subsequent tool calls.
 
-## Available Skills (MCP Resources)
-This server exposes detailed skill guides as `skill://` resources. \
-Read these for in-depth tool documentation, debugging workflows, and Evergreen \
-domain knowledge:
-- `skill://tool-guide/SKILL.md` — Complete tool reference with parameters, \
-return shapes, and decision tree for which tool to use when.
-- `skill://debugging-workflow/SKILL.md` — Step-by-step workflows for \
-diagnosing CI failures from patch to root cause.
-- `skill://evergreen-concepts/SKILL.md` — Evergreen domain knowledge: \
-hierarchy, statuses, terminology, and how to interpret results.
-
-## Quick Tool Selection
-- **"Check my CI"** → `list_user_recent_patches_evergreen`
-- **"Why is it failing?"** → `get_patch_failed_jobs_evergreen` (needs patch_id)
-- **"Which tests failed?"** → `get_task_test_results_evergreen` (needs task_id)
-- **"Show me the logs"** → `get_task_logs_evergreen` (needs task_id)
-- **"What projects do I have?"** → `get_inferred_project_ids_evergreen`
+## Available Skills
+This server includes detailed skill guides accessible via the \
+`get_evergreen_skill` tool. Before using other tools, call \
+`get_evergreen_skill` with one of these skill names:
+- **tool-guide** — Complete tool reference with parameters, return shapes, \
+and decision tree for which tool to use when.
+- **debugging-workflow** — Step-by-step workflows for diagnosing CI failures \
+from patch to root cause.
+- **evergreen-concepts** — Evergreen domain knowledge: hierarchy, statuses, \
+terminology, and how to interpret results.
 
 ## Key Rule
 Always progress from broad to narrow: Project → Patch → Task → Tests/Logs. \
 Do not skip steps.
 """,
-)
-
-# Register skills as MCP resources using the SkillsDirectoryProvider.
-# Each subdirectory under skills/ with a SKILL.md becomes a discoverable
-# skill resource at skill://<name>/SKILL.md.
-_skills_dir = Path(__file__).parent / "skills"
-mcp.add_provider(
-    SkillsDirectoryProvider(roots=_skills_dir, supporting_files="resources")
 )
 
 register_tools(mcp)
