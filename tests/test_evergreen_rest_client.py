@@ -457,7 +457,7 @@ class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
             {
                 "task_id": "t1",
                 "execution_retries": 0,
-                "job_name": "Job0",
+                "test_name": "Job0",
                 "tail_limit": 500,
             },
         )
@@ -471,7 +471,7 @@ class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
         mock_client.get_task_test_results.return_value = "output"
 
         await fetch_evergreen_task_test_results(
-            mock_client, {"task_id": "t1", "job_name": "Job0"}
+            mock_client, {"task_id": "t1", "test_name": "Job0"}
         )
         mock_client.get_task_test_results.assert_called_once_with(
             "t1", 0, "Job0", tail_limit=1000

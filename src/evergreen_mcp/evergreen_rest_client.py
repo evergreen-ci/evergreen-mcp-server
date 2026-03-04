@@ -173,7 +173,7 @@ class EvergreenRestClient:
         self,
         task_id: str,
         execution_retries: int,
-        job_name: str,
+        test_name: str,
         tail_limit: int = 1000,
     ) -> Optional[str]:
         """
@@ -185,14 +185,14 @@ class EvergreenRestClient:
         Args:
             task_id: The task identifier.
             execution_retries: The execution number (0 for first run, 1+ for retries).
-            job_name: The job name (e.g., Job0, Job1).
+            test_name: The test name used to locate logs in S3 (e.g., Job0, Job1).
             tail_limit: Number of lines to return from the end of the log.
 
         Returns:
             The raw test log text, or None if the request failed.
         """
         endpoint = (
-            f"tasks/{task_id}/build/TestLogs/{job_name}%2Fglobal.log"
+            f"tasks/{task_id}/build/TestLogs/{test_name}%2Fglobal.log"
             f"?execution={execution_retries}&tail_limit={tail_limit}"
         )
         response = await self._request("GET", endpoint)

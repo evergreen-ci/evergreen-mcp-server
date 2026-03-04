@@ -378,15 +378,17 @@ def register_tools(mcp: FastMCP) -> None:
             "Get raw test log content via REST API. "
             "Fetches actual test output (stored in S3, not accessible via GraphQL). "
             "Use this to understand WHY a test failed, not just that it failed. "
-            "Requires task_id and job_name from get_patch_failed_jobs results."
+            "Requires task_id and test_name from get_patch_failed_jobs results."
         )
     )
     async def get_test_results_detailed(
         ctx: Context,
-        job_name: Annotated[
+        test_name: Annotated[
             str,
-            "The name of the job to get the test results for. This is the "
-            "'job_name' field of the failed_tasks array. i.e. Job0, Job1, etc.",
+            "The test name used to locate its log in S3. For resmoke tests "
+            "this is typically Job0, Job1, etc. For other test runners it may "
+            "be the full test identifier. Used to construct the S3 log path: "
+            "TestLogs/{test_name}/global.log.",
         ],
         task_id: Annotated[
             str,
@@ -408,7 +410,7 @@ def register_tools(mcp: FastMCP) -> None:
         arguments = {
             "task_id": task_id,
             "execution_retries": execution_retries,
-            "job_name": job_name,
+            "test_name": test_name,
             "tail_limit": tail_limit,
         }
         result = await fetch_evergreen_task_test_results(evg_ctx.api_client, arguments)
