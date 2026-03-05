@@ -179,9 +179,7 @@ class EvergreenRestClient:
             return log_text
 
         parts: list[str] = []
-        parts.append(
-            f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched"
-        )
+        parts.append(f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched")
         parts.append("")
 
         if scan.top_terms:
@@ -245,9 +243,7 @@ class EvergreenRestClient:
             return log_text
 
         parts: list[str] = []
-        parts.append(
-            f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched"
-        )
+        parts.append(f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched")
         parts.append("")
 
         if scan.top_terms:
