@@ -6,14 +6,13 @@ It handles authentication, connection management and query execution.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
 import aiohttp
 
 from evergreen_mcp.utils import scan_log_for_errors
 
-if TYPE_CHECKING:
-    from .oidc_auth import OIDCAuthManager
+from .oidc_auth import OIDCAuthManager
 
 # from . import __version__
 __version__ = "0.1.0"
