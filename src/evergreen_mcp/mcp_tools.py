@@ -12,6 +12,8 @@ from fastmcp import Context, FastMCP
 
 from .failed_jobs_tools import (
     ProjectInferenceResult,
+    fetch_evergreen_task_logs,
+    fetch_evergreen_task_test_results,
     fetch_inferred_project_ids,
     fetch_patch_failed_jobs,
     fetch_task_logs,
@@ -225,13 +227,15 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Extract detailed logs from a specific failed Evergreen task to "
-            "identify root cause of failures. Filters for error messages by "
-            "default to focus on relevant failure information. Use task_id "
-            "from get_patch_failed_jobs results."
+            "Get a truncated view of task logs via GraphQL. Returns log metadata "
+            "and filtered error/failure messages, but only captures a limited "
+            "portion of the full log (mostly test log ingestion messages). "
+            "For complete raw task logs including timeout output, process dumps, "
+            "and full execution logs, use get_task_log_detailed instead. "
+            "Use task_id from get_patch_failed_jobs results."
         )
     )
-    async def get_task_logs_evergreen(
+    async def get_task_log_summary(
         ctx: Context,
         task_id: Annotated[
             str,
@@ -269,13 +273,14 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Fetch detailed test results for a specific Evergreen task, "
-            "including individual unit test failures. Use this when a task "
-            "shows failed_test_count > 0 to get specific test failure "
-            "details. Essential for debugging unit test failures."
+            "Get test result metadata via GraphQL. Returns test names, pass/fail "
+            "statuses, durations, and Parsley log viewer URLs — but not the actual "
+            "error messages from test output. For the raw test log content with "
+            "error pattern analysis, use get_test_results_detailed instead. "
+            "Use task_id from get_patch_failed_jobs results."
         )
     )
-    async def get_task_test_results_evergreen(
+    async def get_test_results_summary(
         ctx: Context,
         task_id: Annotated[
             str,
@@ -336,4 +341,79 @@ def register_tools(mcp: FastMCP) -> None:
         )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 5)
+    @mcp.tool(
+        description=(
+            "Get the complete raw task logs via REST API. Returns the full "
+            "untruncated task execution log including timeout handler output, "
+            "process dumps, and stdout/stderr — content that the GraphQL "
+            "get_task_log_summary tool cannot access. Best for debugging "
+            "non-test failures (setup errors, timeouts, compilation failures). "
+            "Use task_id from get_patch_failed_jobs results."
+        )
+    )
+    async def get_task_log_detailed(
+        ctx: Context,
+        task_id: Annotated[
+            str,
+            "Task identifier from get_patch_failed_jobs response. Found in the "
+            "'task_id' field of failed_tasks array.",
+        ],
+        execution_retries: Annotated[
+            int,
+            "Task execution number if task was retried. Usually 0 for first "
+            "execution, 1+ for retries.",
+        ] = 0,
+    ) -> str:
+        evg_ctx = ctx.request_context.lifespan_context
+        arguments = {
+            "task_id": task_id,
+            "execution_retries": execution_retries,
+        }
+
+        result = await fetch_evergreen_task_logs(evg_ctx.api_client, arguments)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Get raw test log content via REST API. "
+            "Fetches actual test output (stored in S3, not accessible via GraphQL). "
+            "Use this to understand WHY a test failed, not just that it failed. "
+            "Requires task_id and test_name from get_patch_failed_jobs results."
+        )
+    )
+    async def get_test_results_detailed(
+        ctx: Context,
+        test_name: Annotated[
+            str,
+            "The test name used to locate its log in S3. For resmoke tests "
+            "this is typically Job0, Job1, etc. For other test runners it may "
+            "be the full test identifier. Used to construct the S3 log path: "
+            "TestLogs/{test_name}/global.log.",
+        ],
+        task_id: Annotated[
+            str,
+            "Task identifier from get_patch_failed_jobs response. Found in the "
+            "'task_id' field of failed_tasks array.",
+        ],
+        execution_retries: Annotated[
+            int,
+            "Task execution number if task was retried. Usually 0 for first "
+            "execution, 1+ for retries.",
+        ] = 0,
+        tail_limit: Annotated[
+            int,
+            "The number of lines to return from the end of the test results. "
+            "Use 100-500 for quick error analysis, 1000+ for comprehensive review.",
+        ] = 1000,
+    ) -> str:
+        evg_ctx = ctx.request_context.lifespan_context
+        arguments = {
+            "task_id": task_id,
+            "execution_retries": execution_retries,
+            "test_name": test_name,
+            "tail_limit": tail_limit,
+        }
+        result = await fetch_evergreen_task_test_results(evg_ctx.api_client, arguments)
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 7)

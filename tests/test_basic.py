@@ -114,11 +114,11 @@ class TestVersion(unittest.TestCase):
         """Test that version follows expected format"""
         from evergreen_mcp import __version__
 
-        # Version should be in format like "0.4.0"
+        # Version should be in format like "0.4.2"
         self.assertRegex(
             __version__,
             r"^\d+\.\d+\.\d+$",
-            "Version should follow semantic versioning format (e.g., 0.4.0)",
+            "Version should follow semantic versioning format (e.g., 0.4.2)",
         )
 
 

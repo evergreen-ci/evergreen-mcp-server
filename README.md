@@ -2019,5 +2019,5 @@ This project follows the same license as the main Evergreen project.
 
 ## Version
 
-Current version: 0.4.0
+Current version: 0.4.2
 

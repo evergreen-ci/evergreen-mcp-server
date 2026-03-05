@@ -7,6 +7,7 @@ Tests cover:
 - Lazy session creation and cleanup
 - Token refresh flow
 - Request routing, 401 retry logic, and response handling
+- REST endpoint methods: get_task_logs, get_task_test_results
 """
 
 import unittest
@@ -319,3 +320,159 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         ):
             with pytest.raises(aiohttp.ClientResponseError):
                 await client._request("GET", "tasks/1", _retry=False)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint methods
+# ---------------------------------------------------------------------------
+
+
+class TestGetTaskLogs(unittest.IsolatedAsyncioTestCase):
+    """Test get_task_logs endpoint method."""
+
+    async def test_get_task_logs_success(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": "log line 1\nlog line 2"}
+        )
+
+        result = await client.get_task_logs("task-abc", 0)
+        assert result == "log line 1\nlog line 2"
+        client._request.assert_called_once_with(
+            "GET", "tasks/task-abc/build/TaskLogs?type=task_log&execution=0"
+        )
+
+    async def test_get_task_logs_with_retries(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": "retry logs"}
+        )
+
+        result = await client.get_task_logs("task-abc", 2)
+        assert result == "retry logs"
+        client._request.assert_called_once_with(
+            "GET", "tasks/task-abc/build/TaskLogs?type=task_log&execution=2"
+        )
+
+    async def test_get_task_logs_failure(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(return_value={"status": "error", "data": None})
+
+        result = await client.get_task_logs("task-abc", 0)
+        assert result is None
+
+
+class TestGetTaskTestResults(unittest.IsolatedAsyncioTestCase):
+    """Test get_task_test_results endpoint method."""
+
+    async def test_get_test_results_success(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(
+            return_value={
+                "status": "success",
+                "data": "FAIL: TestSomething\npanic: oops",
+            }
+        )
+
+        result = await client.get_task_test_results("task-abc", 0, "Job0")
+        assert result == "FAIL: TestSomething\npanic: oops"
+        client._request.assert_called_once_with(
+            "GET",
+            "tasks/task-abc/build/TestLogs/Job0%2Fglobal.log"
+            "?execution=0&tail_limit=1000",
+        )
+
+    async def test_get_test_results_custom_tail_limit(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": "some logs"}
+        )
+
+        result = await client.get_task_test_results(
+            "task-abc", 1, "Job1", tail_limit=500
+        )
+        assert result == "some logs"
+        client._request.assert_called_once_with(
+            "GET",
+            "tasks/task-abc/build/TestLogs/Job1%2Fglobal.log"
+            "?execution=1&tail_limit=500",
+        )
+
+    async def test_get_test_results_failure(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(return_value={"status": "error", "data": None})
+
+        result = await client.get_task_test_results("task-abc", 0, "Job0")
+        assert result is None
+
+    async def test_get_test_results_empty_data(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(return_value={"status": "success", "data": ""})
+
+        result = await client.get_task_test_results("task-abc", 0, "Job0")
+        assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# Wrapper functions in failed_jobs_tools
+# ---------------------------------------------------------------------------
+
+
+from evergreen_mcp.failed_jobs_tools import (
+    fetch_evergreen_task_logs,
+    fetch_evergreen_task_test_results,
+)
+
+
+class TestFetchEvergreenTaskLogs(unittest.IsolatedAsyncioTestCase):
+    """Test fetch_evergreen_task_logs wrapper."""
+
+    async def test_delegates_to_client(self):
+        mock_client = AsyncMock()
+        mock_client.get_task_logs.return_value = "raw log output"
+
+        result = await fetch_evergreen_task_logs(
+            mock_client, {"task_id": "t1", "execution_retries": 1}
+        )
+        assert result == {"logs": "raw log output"}
+        mock_client.get_task_logs.assert_called_once_with("t1", 1)
+
+    async def test_defaults_execution_retries(self):
+        mock_client = AsyncMock()
+        mock_client.get_task_logs.return_value = "logs"
+
+        await fetch_evergreen_task_logs(mock_client, {"task_id": "t1"})
+        mock_client.get_task_logs.assert_called_once_with("t1", 0)
+
+
+class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
+    """Test fetch_evergreen_task_test_results wrapper."""
+
+    async def test_delegates_to_client(self):
+        mock_client = AsyncMock()
+        mock_client.get_task_test_results.return_value = "test output"
+
+        result = await fetch_evergreen_task_test_results(
+            mock_client,
+            {
+                "task_id": "t1",
+                "execution_retries": 0,
+                "test_name": "Job0",
+                "tail_limit": 500,
+            },
+        )
+        assert result == {"logs": "test output"}
+        mock_client.get_task_test_results.assert_called_once_with(
+            "t1", 0, "Job0", tail_limit=500
+        )
+
+    async def test_defaults(self):
+        mock_client = AsyncMock()
+        mock_client.get_task_test_results.return_value = "output"
+
+        await fetch_evergreen_task_test_results(
+            mock_client, {"task_id": "t1", "test_name": "Job0"}
+        )
+        mock_client.get_task_test_results.assert_called_once_with(
+            "t1", 0, "Job0", tail_limit=1000
+        )

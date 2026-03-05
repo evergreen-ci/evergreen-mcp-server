@@ -6,7 +6,10 @@ It uses a patch-based approach focused on the authenticated user's recent patche
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
+
+if TYPE_CHECKING:
+    from .evergreen_rest_client import EvergreenRestClient
 
 logger = logging.getLogger(__name__)
 
@@ -607,3 +610,54 @@ async def infer_project_id_from_context(
             """),
         source="most_recent_fallback",
     )
+
+
+async def fetch_evergreen_task_logs(
+    client: "EvergreenRestClient",
+    arguments: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Fetch task logs via the REST API.
+
+    Args:
+        client: EvergreenRestClient instance
+        arguments: Tool arguments containing task_id, execution_retries
+
+    Returns:
+        Dictionary containing task logs
+    """
+    logger.info("fetch_evergreen_task_logs called with arguments: %s", arguments)
+    task_id = arguments.get("task_id")
+    execution_retries = arguments.get("execution_retries", 0)
+
+    logger.info("Calling client.get_task_logs for task %s", task_id)
+    response = await client.get_task_logs(task_id, execution_retries)
+    logger.info("client.get_task_logs returned type: %s", type(response))
+
+    return {"logs": response}
+
+
+async def fetch_evergreen_task_test_results(
+    client: "EvergreenRestClient",
+    arguments: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Fetch raw test log content via the REST API.
+
+    Args:
+        client: EvergreenRestClient instance
+        arguments: Tool arguments containing task_id, execution_retries, test_name, tail_limit
+
+    Returns:
+        Dictionary containing raw test log content
+    """
+    logger.info(
+        "fetch_evergreen_task_test_results called with arguments: %s", arguments
+    )
+    task_id = arguments.get("task_id")
+    execution_retries = arguments.get("execution_retries", 0)
+    test_name = arguments.get("test_name")
+    tail_limit = arguments.get("tail_limit", 1000)
+    logger.info("Fetching test results with tail_limit: %s", tail_limit)
+    response = await client.get_task_test_results(
+        task_id, execution_retries, test_name, tail_limit=tail_limit
+    )
+    return {"logs": response}

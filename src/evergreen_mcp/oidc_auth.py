@@ -467,10 +467,9 @@ class OIDCAuthManager:
                 )
                 return True
 
-        # Initialize client
-        await self._get_client()
-
-        # Check configured token file
+        # Check configured token file first — this is a local file read
+        # and avoids the network round-trip to fetch OIDC metadata when
+        # a valid token already exists on disk.
         logger.info("Checking for existing token...")
         token_data = self.check_token_file()
         if token_data:
@@ -483,6 +482,8 @@ class OIDCAuthManager:
                 # Token file is corrupted - try refresh or device flow
                 logger.warning("Token file is malformed: %s. Trying refresh...", e)
                 self._access_token = None
+
+        await self._get_client()
 
         # Try refresh if we have a refresh token
         if self._refresh_token:
