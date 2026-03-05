@@ -375,11 +375,14 @@ class TestGetTaskTestResults(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await client.get_task_test_results("task-abc", 0, "Job0")
-        assert result == "FAIL: TestSomething\npanic: oops"
+        # Log contains error keywords, so the scanner returns a structured summary
+        assert "Log scan: 2/2 lines matched" in result
+        assert "fail: 1" in result
+        assert "panic: 1" in result
         client._request.assert_called_once_with(
             "GET",
             "tasks/task-abc/build/TestLogs/Job0%2Fglobal.log"
-            "?execution=0&tail_limit=1000",
+            "?execution=0&tail_limit=100000",
         )
 
     async def test_get_test_results_custom_tail_limit(self):
@@ -474,5 +477,5 @@ class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
             mock_client, {"task_id": "t1", "test_name": "Job0"}
         )
         mock_client.get_task_test_results.assert_called_once_with(
-            "t1", 0, "Job0", tail_limit=1000
+            "t1", 0, "Job0", tail_limit=100000
         )

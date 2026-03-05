@@ -324,3 +324,99 @@ get_task_logs_evergreen(task_id=..., filter_errors=True)
 → If not enough context: retry with filter_errors=False
 → Present error summary
 ```
+
+---
+
+## Tool 6: get_task_log_detailed
+
+**Purpose**: Fetch the complete, untruncated task logs via REST API. Returns the full task execution log including timeout handler output, process dumps, and stdout/stderr — content the GraphQL tool cannot access. Automatically scans for error patterns and returns a structured summary when errors are found.
+
+**When to Use**:
+- When get_task_logs_evergreen (GraphQL) returns truncated or incomplete logs
+- Debugging non-test failures (setup errors, timeouts, compilation failures)
+- When you need the full raw log with error analysis
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| task_id | str | **required** | Task ID from get_patch_failed_jobs results |
+| execution_retries | int | 0 | Execution number (0 = first run, 1+ = retries) |
+
+**Return shape** (when errors are found):
+```
+Log scan: 42/1500 lines matched
+
+Top error terms:
+  error: 15
+  failed: 10
+  panic: 3
+
+Example lines per term:
+  [error]
+    2025-01-15T10:35:00Z fatal error: cannot find header file 'auth.h'
+  [panic]
+    goroutine 1 [running]: panic: runtime error: index out of range
+
+Matched excerpt (last 50 matched lines):
+  ...
+```
+
+If no error keywords are found, returns the raw log text unchanged.
+
+**What to do with results**:
+1. The "Top error terms" section shows the most frequent error types at a glance
+2. "Example lines per term" gives representative error messages for each category
+3. The "Matched excerpt" provides the tail of matched lines for context
+4. Use this to quickly identify root cause without reading thousands of log lines
+
+---
+
+## Tool 7: get_test_results_detailed
+
+**Purpose**: Fetch raw test log content via REST API (stored in S3, not accessible via GraphQL). Use this to understand WHY a test failed, not just that it failed. Automatically scans for error patterns and returns a structured summary.
+
+**When to Use**:
+- After get_task_test_results_evergreen shows which tests failed, to understand the actual failure output
+- When you need the raw test execution log with error analysis
+- For resmoke tests where the test name is Job0, Job1, etc.
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| test_name | str | **required** | Test name for S3 log path (e.g., Job0, Job1). Constructs path: TestLogs/{test_name}/global.log |
+| task_id | str | **required** | Task ID from get_patch_failed_jobs results |
+| execution_retries | int | 0 | Execution number (0 = first run, 1+ = retries) |
+| tail_limit | int | 100000 | Lines from end of log. Defaults to 100000 for comprehensive review. |
+
+**Return shape**: Same structured error summary as get_task_log_detailed (when errors found), or raw text (when no errors found).
+
+**What to do with results**:
+1. Check "Top error terms" for the dominant failure type (panic, assertion, timeout, etc.)
+2. Read "Example lines per term" for the actual error messages
+3. Use this together with get_task_test_results_evergreen — the GraphQL tool tells you WHICH tests failed, this tool tells you WHY
+
+---
+
+## Common Tool Chains (Updated)
+
+### "Why is my patch failing?" (Full Investigation)
+```
+list_user_recent_patches_evergreen(project_id=..., limit=5)
+→ Find failed patch → get patch_id
+→ get_patch_failed_jobs_evergreen(patch_id=...)
+→ For tasks with failed_test_count > 0:
+    → get_task_test_results_evergreen(task_id=...)  (which tests failed)
+    → get_test_results_detailed(task_id=..., test_name=...)  (why they failed)
+→ For tasks without test results:
+    → get_task_log_detailed(task_id=...)  (full logs with error scan)
+→ Synthesize findings and present root cause
+```
+
+### "Show me the full error logs" (REST Direct Access)
+```
+get_task_log_detailed(task_id=...)
+→ Returns structured error summary with top terms and examples
+→ If you need per-test detail: get_test_results_detailed(task_id=..., test_name=...)
+```

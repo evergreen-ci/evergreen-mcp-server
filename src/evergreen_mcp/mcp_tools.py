@@ -346,7 +346,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Get the complete raw task logs via REST API. Returns the full "
             "untruncated task execution log including timeout handler output, "
             "process dumps, and stdout/stderr — content that the GraphQL "
-            "get_task_log_summary tool cannot access. Best for debugging "
+            "get_task_log_summary tool cannot access. Automatically scans for "
+            "error patterns and returns a structured summary with top error "
+            "terms and example lines when errors are found. Best for debugging "
             "non-test failures (setup errors, timeouts, compilation failures). "
             "Use task_id from get_patch_failed_jobs results."
         )
@@ -377,6 +379,8 @@ def register_tools(mcp: FastMCP) -> None:
         description=(
             "Get raw test log content via REST API. "
             "Fetches actual test output (stored in S3, not accessible via GraphQL). "
+            "Automatically scans for error patterns and returns a structured "
+            "summary with top error terms and example lines when errors are found. "
             "Use this to understand WHY a test failed, not just that it failed. "
             "Requires task_id and test_name from get_patch_failed_jobs results."
         )
@@ -403,8 +407,8 @@ def register_tools(mcp: FastMCP) -> None:
         tail_limit: Annotated[
             int,
             "The number of lines to return from the end of the test results. "
-            "Use 100-500 for quick error analysis, 1000+ for comprehensive review.",
-        ] = 1000,
+            "Defaults to 100000 for comprehensive review.",
+        ] = 100000,
     ) -> str:
         evg_ctx = ctx.request_context.lifespan_context
         arguments = {

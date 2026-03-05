@@ -655,7 +655,7 @@ async def fetch_evergreen_task_test_results(
     task_id = arguments.get("task_id")
     execution_retries = arguments.get("execution_retries", 0)
     test_name = arguments.get("test_name")
-    tail_limit = arguments.get("tail_limit", 1000)
+    tail_limit = arguments.get("tail_limit", 100000)
     logger.info("Fetching test results with tail_limit: %s", tail_limit)
     response = await client.get_task_test_results(
         task_id, execution_retries, test_name, tail_limit=tail_limit
