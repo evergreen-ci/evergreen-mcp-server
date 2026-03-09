@@ -16,10 +16,11 @@ A Model Context Protocol (MCP) server that provides access to the Evergreen CI/C
 - **Failed Jobs Analysis**: Fetch failed jobs and logs for specific commits to help identify CI/CD failures
 - **Unit Test Failure Analysis**: Detailed analysis of individual unit test failures with test-specific logs and metadata
 - **Task Log Retrieval**: Get detailed logs for failed tasks with error filtering
+- **REST API Log Analysis**: Full untruncated task and test logs via REST API with automatic error pattern scanning
 - **Stepback Analysis**: Find failed mainline tasks that have undergone stepback bisection
 - **Authentication**: Secure OIDC-based authentication via `evergreen login`
 - **Async Operations**: Built on asyncio for efficient concurrent operations
-- **GraphQL Integration**: Uses Evergreen's GraphQL API for efficient data retrieval
+- **GraphQL + REST Integration**: Uses Evergreen's GraphQL API for metadata and REST API for full log content
 
 ## Quick Start
 
@@ -869,6 +870,47 @@ Retrieves detailed unit test results for a task.
   "arguments": {
     "task_id": "task_456",
     "failed_only": true
+  }
+}
+```
+
+### `get_task_log_detailed`
+
+Fetches the complete, untruncated task logs via REST API. Returns the full task execution log including timeout handler output, process dumps, and stdout/stderr — content not accessible via the GraphQL `get_task_logs_evergreen` tool. Automatically scans for error patterns and returns a structured summary with top error terms and example lines when errors are found; returns raw text when no errors are detected.
+
+**Parameters:**
+- `task_id` (required): Task identifier from `get_patch_failed_jobs` results
+- `execution_retries` (optional): Execution number, 0 for first run, 1+ for retries (default: 0)
+
+**Example Usage:**
+```json
+{
+  "tool": "get_task_log_detailed",
+  "arguments": {
+    "task_id": "task_456",
+    "execution_retries": 0
+  }
+}
+```
+
+### `get_test_results_detailed`
+
+Fetches raw test log content via REST API (stored in S3, not accessible via GraphQL). Automatically scans for error patterns and returns a structured summary. Use this to understand WHY a test failed, not just that it failed.
+
+**Parameters:**
+- `test_name` (required): Test name for S3 log path (e.g., Job0, Job1)
+- `task_id` (required): Task identifier from `get_patch_failed_jobs` results
+- `execution_retries` (optional): Execution number (default: 0)
+- `tail_limit` (optional): Lines from end of log (default: 100000)
+
+**Example Usage:**
+```json
+{
+  "tool": "get_test_results_detailed",
+  "arguments": {
+    "test_name": "Job0",
+    "task_id": "task_456",
+    "execution_retries": 0
   }
 }
 ```

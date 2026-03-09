@@ -123,7 +123,8 @@ Evergreen has several types of logs:
 **Viewing logs**:
 - **Spruce** (spruce.mongodb.com) — Shows log tail (~100 lines) in the task view
 - **Parsley** — Full log viewer with search, filtering, and AI-powered analysis
-- **API / MCP tools** — get_task_logs_evergreen fetches logs programmatically
+- **GraphQL MCP tools** — get_task_logs_evergreen fetches truncated logs with severity metadata
+- **REST MCP tools** — get_task_log_detailed and get_test_results_detailed fetch full untruncated logs from S3 with automatic error scanning (returns structured summaries with top error terms and example lines)
 
 ---
 

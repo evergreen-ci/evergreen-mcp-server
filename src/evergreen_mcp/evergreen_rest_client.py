@@ -6,12 +6,13 @@ It handles authentication, connection management and query execution.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
 import aiohttp
 
-if TYPE_CHECKING:
-    from .oidc_auth import OIDCAuthManager
+from evergreen_mcp.utils import scan_log_for_errors
+
+from .oidc_auth import OIDCAuthManager
 
 # from . import __version__
 __version__ = "0.1.0"
@@ -164,17 +165,48 @@ class EvergreenRestClient:
         """
         endpoint = f"tasks/{task_id}/build/TaskLogs?type=task_log&execution={execution_retries}"
         response = await self._request("GET", endpoint)
-        if response.get("status") == "success":
-            return response.get("data")
-        else:
+        if response.get("status") != "success":
             return None
+
+        log_text = response.get("data") or ""
+        logger.info("Task log bytes: %s", len(log_text))
+
+        # Scan for error patterns and return a structured summary when matches
+        # are found; otherwise fall back to the raw text.
+        scan = scan_log_for_errors(log_text)
+        if scan.matched_lines == 0:
+            return log_text
+
+        parts: list[str] = []
+        parts.append(f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched")
+        parts.append("")
+
+        if scan.top_terms:
+            parts.append("Top error terms:")
+            for term, count in scan.top_terms:
+                parts.append(f"  {term}: {count}")
+            parts.append("")
+
+        if scan.examples_by_term:
+            parts.append("Example lines per term:")
+            for term, examples in list(scan.examples_by_term.items())[:10]:
+                parts.append(f"  [{term}]")
+                for ex in examples:
+                    parts.append(f"    {ex}")
+            parts.append("")
+
+        if scan.matched_excerpt:
+            parts.append("Matched excerpt (last 50 matched lines):")
+            parts.append(scan.matched_excerpt)
+
+        return "\n".join(parts)
 
     async def get_task_test_results(
         self,
         task_id: str,
         execution_retries: int,
         test_name: str,
-        tail_limit: int = 1000,
+        tail_limit: int = 100000,
     ) -> Optional[str]:
         """
         Get raw test log content for a task.
@@ -203,4 +235,32 @@ class EvergreenRestClient:
         log_text = response.get("data") or ""
         logger.info("Test results bytes: %s", len(log_text))
 
-        return log_text
+        # Scan for error patterns and return a structured summary when matches
+        # are found; otherwise fall back to the raw text.
+        scan = scan_log_for_errors(log_text)
+        if scan.matched_lines == 0:
+            return log_text
+
+        parts: list[str] = []
+        parts.append(f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched")
+        parts.append("")
+
+        if scan.top_terms:
+            parts.append("Top error terms:")
+            for term, count in scan.top_terms:
+                parts.append(f"  {term}: {count}")
+            parts.append("")
+
+        if scan.examples_by_term:
+            parts.append("Example lines per term:")
+            for term, examples in list(scan.examples_by_term.items())[:10]:
+                parts.append(f"  [{term}]")
+                for ex in examples:
+                    parts.append(f"    {ex}")
+            parts.append("")
+
+        if scan.matched_excerpt:
+            parts.append("Matched excerpt (last 50 matched lines):")
+            parts.append(scan.matched_excerpt)
+
+        return "\n".join(parts)

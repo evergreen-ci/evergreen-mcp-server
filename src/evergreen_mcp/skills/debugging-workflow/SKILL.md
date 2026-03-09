@@ -64,19 +64,31 @@ This gives you the exact test names that failed. Present them to the user:
 - Look for patterns in test names (all auth-related? all in the same directory?)
 - Share Parsley links (`url_parsley`) for the user to explore logs visually
 
-If you need to understand *why* a test failed (not just *which*), proceed to Step 4b with the same task_id.
+If you need to understand *why* a test failed (not just *which*), use the REST detailed tool:
+
+```
+Call: get_test_results_detailed(task_id="...", test_name="Job0")
+```
+
+This fetches the raw test log from S3 and automatically scans it for error patterns, returning a structured summary with top error terms and example lines.
 
 ### Step 4b: Investigate Logs
+
+First try the REST detailed tool for full logs with automatic error scanning:
+
+```
+Call: get_task_log_detailed(task_id="...", execution_retries=0)
+```
+
+This returns a structured error summary showing matched line counts, top error terms, and example lines — much faster than reading raw logs manually.
+
+If you need the GraphQL view (truncated, with severity metadata):
 
 ```
 Call: get_task_logs_evergreen(task_id="...", filter_errors=True)
 ```
 
-Scan the returned error logs for root cause:
-- The first `error` or `fatal` severity message is usually the trigger
-- Look for stack traces, assertion failures, or error codes
-
-If `filter_errors=True` returns too few or no results (the actual error might not contain "error" in its text), retry:
+If `filter_errors=True` returns too few results, retry with full output:
 
 ```
 Call: get_task_logs_evergreen(task_id="...", filter_errors=False, max_lines=500)
@@ -121,9 +133,11 @@ When the user already has a task_id (e.g., from a Spruce/Parsley URL):
 
 ```
 1. get_task_test_results_evergreen(task_id="...", failed_only=True)
-   → If tests failed, report them
-2. get_task_logs_evergreen(task_id="...", filter_errors=True)
-   → Report error messages
+   → If tests failed, report which ones
+2. get_test_results_detailed(task_id="...", test_name="Job0")
+   → Get the raw test log with automatic error scanning to understand WHY
+3. get_task_log_detailed(task_id="...", execution_retries=0)
+   → Get full task logs with error scanning for non-test failures
 ```
 
 ---
