@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+from evergreen_mcp.models import TaskResponse
 from evergreen_mcp.utils import scan_log_for_errors
 
 from .oidc_auth import OIDCAuthManager
@@ -264,3 +265,41 @@ class EvergreenRestClient:
             parts.append(scan.matched_excerpt)
 
         return "\n".join(parts)
+
+    async def get_task_details(
+        self, task_id: str, fetch_all_executions: bool = False
+    ) -> TaskResponse:
+        """Fetch detailed information about a specific task.
+
+        Args:
+            task_id: The task identifier.
+            fetch_all_executions: Whether to include all historical executions.
+
+        Returns:
+            TaskResponse for the requested task.
+
+        Raises:
+            RuntimeError: If the API request fails or returns an unexpected
+                response shape.
+            ValidationError: If the API payload cannot be parsed into a
+                TaskResponse.
+        """
+        params = ""
+        if fetch_all_executions:
+            params = "?fetch_all_executions=true"
+        endpoint = f"tasks/{task_id}{params}"
+        response = await self._request(
+            "GET", endpoint, timeout=aiohttp.ClientTimeout(total=30)
+        )
+
+        if response.get("status") != "success":
+            raise RuntimeError(
+                f"Failed to fetch task details for '{task_id}': "
+                f"status={response.get('status')!r}"
+            )
+
+        data = response.get("data")
+        if data is None:
+            raise RuntimeError(f"No data returned for task '{task_id}'")
+
+        return TaskResponse.model_validate(data)
