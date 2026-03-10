@@ -264,7 +264,9 @@ class OIDCAuthManager:
             logger.debug("Token file not found: %s", self.token_file)
             return None
         except PermissionError as e:
-            logger.error("Permission denied reading token file %s: %s", self.token_file, e)
+            logger.error(
+                "Permission denied reading token file %s: %s", self.token_file, e
+            )
             return None
         except json.JSONDecodeError as e:
             logger.warning("Token file is corrupted (invalid JSON): %s", e)
