@@ -36,6 +36,7 @@ def auth_manager():
         "oauth": {
             "issuer": "https://dex.example.com",
             "client_id": "test-client-id",
+            "token_file_path": "/tmp/test-token.json",
         }
     }
     with patch("builtins.open", mock_open(read_data=json.dumps(mock_config))):
@@ -155,9 +156,8 @@ class TestOIDCAuthManagerInit:
         """Test that manager initializes with config from evergreen.yml."""
         assert auth_manager.issuer == "https://dex.example.com"
         assert auth_manager.client_id == "test-client-id"
-        assert auth_manager.token_file is None  # No token_file_path in fixture
+        assert auth_manager.token_file == Path("/tmp/test-token.json")
         assert auth_manager._access_token is None
-        assert auth_manager._refresh_token is None
         assert auth_manager._user_id is None
         assert auth_manager._client is None
         assert auth_manager._metadata is None
@@ -303,134 +303,223 @@ class TestUserIdExtraction:
         assert "missing required identity claims" in str(exc_info.value).lower()
 
 
-class TestTokenFileCheck:
-    """Test token file checking."""
+class TestReadTokenFile:
+    """Test token file reading."""
 
-    def test_check_token_file_success(self, auth_manager_with_config, valid_jwt_claims):
-        """Test successful token file check."""
+    def test_read_token_file_success(self, auth_manager_with_config, valid_jwt_claims):
+        """Test successful token file read returns raw data."""
         token = create_mock_jwt(valid_jwt_claims)
         token_data = {
             "access_token": token,
             "refresh_token": "valid.refresh.token",
         }
 
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager_with_config.check_token_file()
+        with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+            result = auth_manager_with_config._read_token_file()
 
-                assert result is not None
-                assert result["access_token"] == token
-                assert result["refresh_token"] == "valid.refresh.token"
+            assert result is not None
+            assert result["access_token"] == token
+            assert result["refresh_token"] == "valid.refresh.token"
 
-    def test_check_token_file_no_path_configured(self, auth_manager):
-        """Test token file check when no path is configured."""
-        # auth_manager has no token_file configured (None)
-        result = auth_manager.check_token_file()
-        assert result is None
-
-    def test_check_token_file_not_found(self, auth_manager_with_config):
-        """Test token file check when file doesn't exist."""
-        with patch.object(Path, "exists", return_value=False):
-            result = auth_manager_with_config.check_token_file()
+    def test_read_token_file_not_found(self, auth_manager_with_config):
+        """Test token file read when file doesn't exist."""
+        with patch("builtins.open", side_effect=FileNotFoundError("No such file")):
+            result = auth_manager_with_config._read_token_file()
             assert result is None
 
-    def test_check_token_file_expired(
+    def test_read_token_file_expired_still_returns_data(
         self, auth_manager_with_config, expired_jwt_claims
     ):
-        """Test token file check with expired token."""
+        """Test that _read_token_file returns data even if token is expired."""
         token = create_mock_jwt(expired_jwt_claims)
         token_data = {
             "access_token": token,
             "refresh_token": "valid.refresh.token",
         }
 
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
-                result = auth_manager_with_config.check_token_file()
-                assert result is None
+        with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+            result = auth_manager_with_config._read_token_file()
+            # _read_token_file does NOT check expiry — it returns raw data
+            assert result is not None
+            assert result["access_token"] == token
 
-    def test_check_token_file_invalid_json(self, auth_manager_with_config):
-        """Test token file check with invalid JSON."""
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data="invalid json{")):
-                result = auth_manager_with_config.check_token_file()
-                assert result is None
+    def test_read_token_file_invalid_json(self, auth_manager_with_config):
+        """Test token file read with invalid JSON."""
+        with patch("builtins.open", mock_open(read_data="invalid json{")):
+            result = auth_manager_with_config._read_token_file()
+            assert result is None
+
+    def test_read_token_file_missing_access_token(self, auth_manager_with_config):
+        """Test token file read with missing access_token field."""
+        token_data = {"refresh_token": "some.refresh.token"}
+        with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+            result = auth_manager_with_config._read_token_file()
+            assert result is None
 
 
 class TestTokenRefresh:
     """Test token refresh functionality."""
 
     @pytest.mark.asyncio
-    async def test_refresh_token_success(self, auth_manager_with_config):
-        """Test successful token refresh."""
-        auth_manager_with_config._refresh_token = "valid.refresh.token"
-        auth_manager_with_config._metadata = {
-            "token_endpoint": "https://dex.example.com/token"
+    async def test_refresh_token_reads_from_disk(
+        self, auth_manager_with_config, expired_jwt_claims
+    ):
+        """Test that refresh_token reads the refresh token from disk, not memory."""
+        expired_token = create_mock_jwt(expired_jwt_claims)
+        disk_token_data = {
+            "access_token": expired_token,
+            "refresh_token": "disk.refresh.token",
         }
-        auth_manager_with_config._client = Mock()  # Mark as initialized
 
         new_token_data = {
             "access_token": "new.access.token",
             "refresh_token": "new.refresh.token",
         }
 
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token"
+        }
+        auth_manager_with_config._client = Mock()
+
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = new_token_data
 
-        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+        with patch.object(
+            auth_manager_with_config, "_read_token_file", return_value=disk_token_data
+        ):
+            with patch(
+                "evergreen_mcp.oidc_auth.httpx.AsyncClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=None)
+                mock_client_class.return_value = mock_client
 
-            with patch.object(auth_manager_with_config, "_save_token"):
-                with patch.object(
-                    auth_manager_with_config,
-                    "_extract_user_id",
-                    return_value="testuser",
-                ):
-                    result = await auth_manager_with_config.refresh_token()
+                with patch.object(auth_manager_with_config, "_save_token"):
+                    with patch.object(
+                        auth_manager_with_config,
+                        "_extract_user_id",
+                        return_value="testuser",
+                    ):
+                        with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                            async_cm = AsyncMock()
+                            async_cm.__aenter__ = AsyncMock(return_value=None)
+                            async_cm.__aexit__ = AsyncMock(return_value=False)
+                            mock_afl.return_value = async_cm
 
-                    assert result is not None
-                    assert result["access_token"] == "new.access.token"
-                    assert auth_manager_with_config._access_token == "new.access.token"
-                    assert (
-                        auth_manager_with_config._refresh_token == "new.refresh.token"
-                    )
+                            result = await auth_manager_with_config.refresh_token()
+
+                            assert result is not None
+                            assert result["access_token"] == "new.access.token"
+                            assert (
+                                auth_manager_with_config._access_token
+                                == "new.access.token"
+                            )
+
+                            # Verify the refresh token sent in HTTP request came from disk
+                            post_call = mock_client.post.call_args
+                            assert (
+                                post_call.kwargs["data"]["refresh_token"]
+                                == "disk.refresh.token"
+                            )
 
     @pytest.mark.asyncio
-    async def test_refresh_token_no_refresh_token(self, auth_manager):
-        """Test token refresh without refresh token."""
-        auth_manager._refresh_token = None
+    async def test_refresh_token_no_token_file(self, auth_manager):
+        """Test token refresh when no token file exists."""
+        with patch.object(auth_manager, "_read_token_file", return_value=None):
+            with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=None)
+                async_cm.__aexit__ = AsyncMock(return_value=False)
+                mock_afl.return_value = async_cm
 
-        result = await auth_manager.refresh_token()
-        assert result is None
+                result = await auth_manager.refresh_token()
+                assert result is None
 
     @pytest.mark.asyncio
-    async def test_refresh_token_server_error(self, auth_manager_with_config):
+    async def test_refresh_token_no_refresh_token_in_file(
+        self, auth_manager, expired_jwt_claims
+    ):
+        """Test token refresh when file has no refresh token."""
+        expired_token = create_mock_jwt(expired_jwt_claims)
+        disk_data = {"access_token": expired_token}  # No refresh_token
+
+        with patch.object(auth_manager, "_read_token_file", return_value=disk_data):
+            with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=None)
+                async_cm.__aexit__ = AsyncMock(return_value=False)
+                mock_afl.return_value = async_cm
+
+                result = await auth_manager.refresh_token()
+                assert result is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_already_valid_on_disk(
+        self, auth_manager, valid_jwt_claims
+    ):
+        """Test that refresh_token returns early if disk token is already valid."""
+        valid_token = create_mock_jwt(valid_jwt_claims)
+        disk_data = {
+            "access_token": valid_token,
+            "refresh_token": "some.refresh",
+        }
+
+        with patch.object(auth_manager, "_read_token_file", return_value=disk_data):
+            with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=None)
+                async_cm.__aexit__ = AsyncMock(return_value=False)
+                mock_afl.return_value = async_cm
+
+                result = await auth_manager.refresh_token()
+
+                assert result is not None
+                assert result["access_token"] == valid_token
+                assert auth_manager._access_token == valid_token
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_server_error(
+        self, auth_manager_with_config, expired_jwt_claims
+    ):
         """Test token refresh with server error."""
-        auth_manager_with_config._refresh_token = "valid.refresh.token"
-        auth_manager_with_config._access_token = None
+        expired_token = create_mock_jwt(expired_jwt_claims)
+        disk_data = {
+            "access_token": expired_token,
+            "refresh_token": "valid.refresh.token",
+        }
+
         auth_manager_with_config._metadata = {
             "token_endpoint": "https://dex.example.com/token"
         }
-        auth_manager_with_config._client = Mock()  # Mark as initialized
+        auth_manager_with_config._client = Mock()
 
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.text = "Invalid refresh token"
 
-        with patch("evergreen_mcp.oidc_auth.httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+        with patch.object(
+            auth_manager_with_config, "_read_token_file", return_value=disk_data
+        ):
+            with patch(
+                "evergreen_mcp.oidc_auth.httpx.AsyncClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=None)
+                mock_client_class.return_value = mock_client
 
-            result = await auth_manager_with_config.refresh_token()
-            assert result is None
+                with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                    async_cm = AsyncMock()
+                    async_cm.__aenter__ = AsyncMock(return_value=None)
+                    async_cm.__aexit__ = AsyncMock(return_value=False)
+                    mock_afl.return_value = async_cm
+
+                    result = await auth_manager_with_config.refresh_token()
+                    assert result is None
 
 
 class TestSaveToken:
@@ -443,47 +532,45 @@ class TestSaveToken:
             "refresh_token": "test.refresh.token",
         }
 
+        mock_tmp = MagicMock()
+        mock_tmp.name = "/tmp/.tmp_token_abc123.json"
+        mock_tmp.__enter__ = Mock(return_value=mock_tmp)
+        mock_tmp.__exit__ = Mock(return_value=False)
+
         with patch.object(Path, "mkdir"):
-            with patch("builtins.open", mock_open()) as m:
+            with patch(
+                "evergreen_mcp.oidc_auth.tempfile.NamedTemporaryFile",
+                return_value=mock_tmp,
+            ):
                 with patch("os.fsync"):
                     with patch.object(Path, "replace"):
-                        with patch.object(Path, "with_suffix") as mock_suffix:
-                            temp_path = Mock(spec=Path)
-                            temp_path.exists.return_value = False
-                            mock_suffix.return_value = temp_path
+                        auth_manager_with_config._save_token(token_data)
 
-                            auth_manager_with_config._save_token(token_data)
-
-                            # Verify file was written
-                            m.assert_called()
-
-    def test_save_token_no_path_configured(self, auth_manager):
-        """Test that save does nothing when no token file path configured."""
-        token_data = {"access_token": "test.token"}
-
-        # auth_manager has no token_file configured
-        # Should return without error and without writing
-        with patch("builtins.open", mock_open()) as m:
-            auth_manager._save_token(token_data)
-            m.assert_not_called()
+                        # Verify temp file was written to
+                        mock_tmp.flush.assert_called_once()
 
     def test_save_token_cleanup_on_error(self, auth_manager_with_config):
-        """Test that temp file is cleaned up on error."""
+        """Test that temp file is cleaned up and exception re-raised on error."""
         token_data = {"access_token": "test.token"}
 
-        with patch.object(Path, "mkdir"):
-            with patch("builtins.open", side_effect=OSError("Write error")):
-                with patch.object(Path, "with_suffix") as mock_suffix:
-                    temp_path = Mock(spec=Path)
-                    temp_path.exists.return_value = True
-                    temp_path.unlink = Mock()
-                    mock_suffix.return_value = temp_path
+        mock_tmp = MagicMock()
+        mock_tmp.name = "/tmp/.tmp_token_abc123.json"
 
-                    # Should not raise, but should clean up temp file
-                    auth_manager_with_config._save_token(token_data)
+        with patch.object(Path, "mkdir"):
+            with patch(
+                "evergreen_mcp.oidc_auth.tempfile.NamedTemporaryFile",
+                return_value=mock_tmp,
+            ):
+                # Simulate write error during json.dump
+                mock_tmp.flush.side_effect = OSError("Write error")
+
+                with patch.object(Path, "unlink") as mock_unlink:
+                    # Should raise so callers skip in-memory state update
+                    with pytest.raises(OSError, match="Write error"):
+                        auth_manager_with_config._save_token(token_data)
 
                     # Verify temp file cleanup was attempted
-                    temp_path.unlink.assert_called_once()
+                    mock_unlink.assert_called_once()
 
 
 class TestDeviceFlowAuth:
@@ -541,9 +628,9 @@ class TestDeviceFlowAuth:
                                 auth_manager_with_config._access_token
                                 == "new.access.token"
                             )
-                            assert (
-                                auth_manager_with_config._refresh_token
-                                == "new.refresh.token"
+                            # Refresh token only on disk, not in memory
+                            assert not hasattr(
+                                auth_manager_with_config, "_refresh_token"
                             )
 
     @pytest.mark.asyncio
@@ -763,26 +850,28 @@ class TestEnsureAuthenticated:
         """Test that already authenticated state is recognized."""
         token = create_mock_jwt(valid_jwt_claims)
         auth_manager_with_config._access_token = token
-        auth_manager_with_config._refresh_token = "refresh.token"
 
         result = await auth_manager_with_config.ensure_authenticated()
 
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_ensure_authenticated_with_kanopy_token(
+    async def test_ensure_authenticated_with_valid_token_on_disk(
         self, auth_manager_with_config, valid_jwt_claims
     ):
-        """Test authentication using Kanopy token."""
+        """Test authentication using valid token found on disk after lock."""
         token = create_mock_jwt(valid_jwt_claims)
         token_data = {"access_token": token, "refresh_token": "refresh"}
 
         with patch.object(
-            auth_manager_with_config, "_get_client", new_callable=AsyncMock
+            auth_manager_with_config, "_read_token_file", return_value=token_data
         ):
-            with patch.object(
-                auth_manager_with_config, "check_token_file", return_value=token_data
-            ):
+            with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                async_cm = AsyncMock()
+                async_cm.__aenter__ = AsyncMock(return_value=None)
+                async_cm.__aexit__ = AsyncMock(return_value=False)
+                mock_afl.return_value = async_cm
+
                 result = await auth_manager_with_config.ensure_authenticated()
 
                 assert result is True
@@ -790,29 +879,55 @@ class TestEnsureAuthenticated:
 
     @pytest.mark.asyncio
     async def test_ensure_authenticated_with_refresh(
-        self, auth_manager_with_config, valid_jwt_claims
+        self, auth_manager_with_config, valid_jwt_claims, expired_jwt_claims
     ):
-        """Test authentication using token refresh."""
-        token = create_mock_jwt(valid_jwt_claims)
-        token_data = {"access_token": token, "refresh_token": "new.refresh"}
+        """Test authentication using token refresh from disk."""
+        valid_token = create_mock_jwt(valid_jwt_claims)
+        expired_token = create_mock_jwt(expired_jwt_claims)
 
-        auth_manager_with_config._refresh_token = "old.refresh.token"
+        # Disk has expired access token + refresh token
+        expired_disk_data = {
+            "access_token": expired_token,
+            "refresh_token": "disk.refresh",
+        }
+        refreshed_data = {
+            "access_token": valid_token,
+            "refresh_token": "new.refresh",
+        }
 
         with patch.object(
-            auth_manager_with_config, "_get_client", new_callable=AsyncMock
+            auth_manager_with_config,
+            "_read_token_file",
+            return_value=expired_disk_data,
         ):
             with patch.object(
-                auth_manager_with_config, "check_token_file", return_value=None
+                auth_manager_with_config, "_get_client", new_callable=AsyncMock
             ):
                 with patch.object(
-                    auth_manager_with_config, "refresh_token", new_callable=AsyncMock
+                    auth_manager_with_config,
+                    "_do_refresh_token",
+                    new_callable=AsyncMock,
                 ) as mock_refresh:
-                    mock_refresh.return_value = token_data
+                    mock_refresh.return_value = refreshed_data
+                    # Set _access_token as _do_refresh_token would
+                    mock_refresh.side_effect = (
+                        lambda rt: setattr(
+                            auth_manager_with_config, "_access_token", valid_token
+                        )
+                        or setattr(auth_manager_with_config, "_user_id", "test")
+                        or refreshed_data
+                    )
 
-                    result = await auth_manager_with_config.ensure_authenticated()
+                    with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                        async_cm = AsyncMock()
+                        async_cm.__aenter__ = AsyncMock(return_value=None)
+                        async_cm.__aexit__ = AsyncMock(return_value=False)
+                        mock_afl.return_value = async_cm
 
-                    assert result is True
-                    mock_refresh.assert_called_once()
+                        result = await auth_manager_with_config.ensure_authenticated()
+
+                        assert result is True
+                        mock_refresh.assert_called_once_with("disk.refresh")
 
     @pytest.mark.asyncio
     async def test_ensure_authenticated_with_device_flow(
@@ -826,17 +941,22 @@ class TestEnsureAuthenticated:
             auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
             with patch.object(
-                auth_manager_with_config, "check_token_file", return_value=None
+                auth_manager_with_config, "_read_token_file", return_value=None
             ):
                 with patch.object(
                     auth_manager_with_config, "device_flow_auth", new_callable=AsyncMock
                 ) as mock_device:
                     mock_device.return_value = token_data
+                    with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                        async_cm = AsyncMock()
+                        async_cm.__aenter__ = AsyncMock(return_value=None)
+                        async_cm.__aexit__ = AsyncMock(return_value=False)
+                        mock_afl.return_value = async_cm
 
-                    result = await auth_manager_with_config.ensure_authenticated()
+                        result = await auth_manager_with_config.ensure_authenticated()
 
-                    assert result is True
-                    mock_device.assert_called_once()
+                        assert result is True
+                        mock_device.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_ensure_authenticated_all_methods_fail(
@@ -847,16 +967,21 @@ class TestEnsureAuthenticated:
             auth_manager_with_config, "_get_client", new_callable=AsyncMock
         ):
             with patch.object(
-                auth_manager_with_config, "check_token_file", return_value=None
+                auth_manager_with_config, "_read_token_file", return_value=None
             ):
                 with patch.object(
                     auth_manager_with_config, "device_flow_auth", new_callable=AsyncMock
                 ) as mock_device:
                     mock_device.return_value = None
+                    with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                        async_cm = AsyncMock()
+                        async_cm.__aenter__ = AsyncMock(return_value=None)
+                        async_cm.__aexit__ = AsyncMock(return_value=False)
+                        mock_afl.return_value = async_cm
 
-                    result = await auth_manager_with_config.ensure_authenticated()
+                        result = await auth_manager_with_config.ensure_authenticated()
 
-                    assert result is False
+                        assert result is False
 
 
 class TestProperties:
