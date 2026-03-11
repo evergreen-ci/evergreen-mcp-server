@@ -7,7 +7,8 @@ Tests cover:
 - Lazy session creation and cleanup
 - Token refresh flow
 - Request routing, 401 retry logic, and response handling
-- REST endpoint methods: get_task_logs, get_task_test_results
+- REST endpoint methods: get_task_logs, get_task_test_results,
+  get_task_details, download_task_artifacts
 """
 
 import unittest
@@ -479,3 +480,83 @@ class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
         mock_client.get_task_test_results.assert_called_once_with(
             "t1", 0, "Job0", tail_limit=100000
         )
+
+
+# ---------------------------------------------------------------------------
+# get_task_details
+# ---------------------------------------------------------------------------
+
+_TASK_RESPONSE_DATA = {
+    "task_id": "task-abc",
+    "execution": 0,
+    "display_name": "compile",
+    "status": "failed",
+    "activated": True,
+    "build_id": "build-1",
+    "build_variant": "enterprise-rhel-80-64-bit",
+    "version_id": "version-xyz",
+    "artifacts": [
+        {
+            "name": "binary",
+            "url": "https://s3.example.com/binary.tar.gz",
+            "visibility": "signed",
+            "ignore_for_fetch": False,
+            "content_type": "application/x-gzip",
+        }
+    ],
+}
+
+
+class TestGetTaskDetails(unittest.IsolatedAsyncioTestCase):
+    """Test get_task_details endpoint method."""
+
+    async def test_returns_task_response_on_success(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": _TASK_RESPONSE_DATA}
+        )
+
+        result = await client.get_task_details("task-abc")
+
+        assert result.task_id == "task-abc"
+        assert result.display_name == "compile"
+        assert result.version_id == "version-xyz"
+        assert len(result.artifacts) == 1
+        assert result.artifacts[0].name == "binary"
+
+    async def test_includes_fetch_all_executions_param(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": _TASK_RESPONSE_DATA}
+        )
+
+        await client.get_task_details("task-abc", fetch_all_executions=True)
+
+        call_url = client._request.call_args[0][1]
+        assert "fetch_all_executions=true" in call_url
+
+    async def test_raises_runtime_error_on_failed_status(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(return_value={"status": "error", "data": None})
+
+        with pytest.raises(RuntimeError, match="Failed to fetch task details"):
+            await client.get_task_details("task-abc")
+
+    async def test_raises_runtime_error_when_data_is_none(self):
+        client = EvergreenRestClient(bearer_token="tok")
+        client._request = AsyncMock(return_value={"status": "success", "data": None})
+
+        with pytest.raises(RuntimeError, match="No data returned"):
+            await client.get_task_details("task-abc")
+
+    async def test_raises_validation_error_on_bad_schema(self):
+        from pydantic import ValidationError
+
+        client = EvergreenRestClient(bearer_token="tok")
+        # Missing required fields (task_id, display_name, etc.)
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": {"unexpected": "shape"}}
+        )
+
+        with pytest.raises(ValidationError):
+            await client.get_task_details("task-abc")

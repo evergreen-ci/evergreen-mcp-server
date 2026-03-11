@@ -26,6 +26,9 @@ User wants to...
 ├─ Know which Evergreen projects they work on
 │   └─ get_inferred_project_ids_evergreen
 │
+├─ Download build outputs / artifacts from a task
+│   └─ download_task_artifacts_evergreen (needs task_id)
+│
 └─ Don't know their project_id
     └─ get_inferred_project_ids_evergreen FIRST
         then use the project_id in subsequent calls
@@ -396,6 +399,46 @@ If no error keywords are found, returns the raw log text unchanged.
 1. Check "Top error terms" for the dominant failure type (panic, assertion, timeout, etc.)
 2. Read "Example lines per term" for the actual error messages
 3. Use this together with get_task_test_results_evergreen — the GraphQL tool tells you WHICH tests failed, this tool tells you WHY
+
+---
+
+## Tool 8: download_task_artifacts_evergreen
+
+**Purpose**: Download build artifacts (binaries, test results, logs, archives, etc.) from a specific Evergreen task to a local directory. Artifacts are saved into a structured folder: `<work_dir>/<version_id>/task-<display_name>-<execution>/`.
+
+**When to Use**:
+- User asks to download or retrieve artifacts from a task
+- You need local copies of build outputs, compiled binaries, or generated files
+- After identifying a failing task, when the user wants the actual output files (not just logs)
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| task_id | str | **required** | Task ID from get_patch_failed_jobs results or any known task |
+| artifact_filter | str or None | None | Case-insensitive substring filter — only artifacts whose name contains this string are downloaded. Omit to download all. |
+| work_dir | str | "WORK" | Base directory for the download folder structure |
+
+**Return shape**:
+```json
+{
+  "downloaded_artifacts": {
+    "Binaries": "WORK/version123/task-compile-0/binaries.tgz",
+    "Test Logs": "WORK/version123/task-compile-0/test_logs.tgz"
+  },
+  "artifact_count": 2
+}
+```
+
+On failure, returns an `error` key instead of `downloaded_artifacts`/`artifact_count`:
+```json
+{
+  "error": "ValueError: No artifacts match filter 'nonexistent'.\n\nAvailable artifacts (3 total):\n  - Binaries\n  - Test Logs\n  - Coverage Report"
+}
+```
+**What to do with results**
+1. The returned file paths can be used for further local analysis (extracting archives, reading logs, etc.)
+2. If the response contains `error`, relay the error — especially the available artifact names list so the user can refine their filter
 
 ---
 
