@@ -263,16 +263,8 @@ class OIDCAuthManager:
         except FileNotFoundError:
             logger.debug("Token file not found: %s", self.token_file)
             return None
-        except PermissionError as e:
-            logger.error(
-                "Permission denied reading token file %s: %s", self.token_file, e
-            )
-            return None
-        except json.JSONDecodeError as e:
-            logger.warning("Token file is corrupted (invalid JSON): %s", e)
-            return None
-        except Exception as e:
-            logger.error("Unexpected error reading token file: %s", e)
+        except Exception:
+            logger.exception("Failed to read token file %s", self.token_file)
             return None
 
         logger.info("Found token file: %s", self.token_file)
