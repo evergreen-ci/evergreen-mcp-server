@@ -65,6 +65,7 @@ class EvergreenGraphQLClient:
         self.bearer_token = bearer_token
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
+        self._session = None
         self._auth_manager = auth_manager
 
         # Validate that we have some form of authentication
@@ -99,19 +100,20 @@ class EvergreenGraphQLClient:
         # Create transport with headers directly
         transport = AIOHTTPTransport(url=self.endpoint, headers=headers)
         self._client = Client(transport=transport)
+        self._session = await self._client.connect_async(reconnecting=True)
 
         logger.info("GraphQL client connected successfully")
 
     async def close(self):
         """Close client connections"""
-        if self._client:
+        if self._session:
             try:
-                # Close the transport if it has a close method
-                if hasattr(self._client.transport, "close"):
-                    await self._client.transport.close()
-                logger.debug("GraphQL client closed")
+                await self._session.close()
+                logger.debug("GraphQL session closed")
             except Exception:
-                logger.warning("Error closing GraphQL client", exc_info=True)
+                logger.warning("Error closing GraphQL session", exc_info=True)
+
+        self._session = None
         self._client = None
 
     async def _execute_query(
@@ -129,12 +131,12 @@ class EvergreenGraphQLClient:
         Raises:
             Exception: If query execution fails
         """
-        if not self._client:
+        if not self._session:
             raise RuntimeError("Client not connected. Call connect() first.")
 
         try:
             query = gql(query_string)
-            result = await self._client.execute_async(query, variable_values=variables)
+            result = await self._session.execute(query, variable_values=variables)
             logger.debug(
                 "Query executed successfully: %s chars returned", len(str(result))
             )
@@ -148,7 +150,7 @@ class EvergreenGraphQLClient:
                     logger.info("Retrying query after token refresh")
                     try:
                         query = gql(query_string)
-                        result = await self._client.execute_async(
+                        result = await self._session.execute(
                             query, variable_values=variables
                         )
                         logger.debug(
