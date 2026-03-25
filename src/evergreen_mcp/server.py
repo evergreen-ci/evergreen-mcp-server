@@ -178,6 +178,24 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     """
     evergreen_config, default_project_id, auth_manager = await load_evergreen_config()
 
+    # Configurable endpoint URLs — per auth method, with defaults
+    oidc_rest_url = os.getenv(
+        "EVERGREEN_OIDC_REST_URL",
+        "https://evergreen.corp.mongodb.com/rest/v2/",
+    )
+    oidc_graphql_url = os.getenv(
+        "EVERGREEN_OIDC_GRAPHQL_URL",
+        "https://evergreen.corp.mongodb.com/graphql/query",
+    )
+    api_key_rest_url = os.getenv(
+        "EVERGREEN_API_KEY_REST_URL",
+        "https://evergreen.mongodb.com/rest/v2/",
+    )
+    api_key_graphql_url = os.getenv(
+        "EVERGREEN_API_KEY_GRAPHQL_URL",
+        "https://evergreen.mongodb.com/graphql/query",
+    )
+
     # Get workspace directory for intelligent project detection
     workspace_dir = os.getenv("WORKSPACE_PATH") or os.getenv("PWD") or os.getcwd()
 
@@ -193,24 +211,26 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
         # Pass auth_manager to enable automatic token refresh
         client = EvergreenGraphQLClient(
             bearer_token=evergreen_config["bearer_token"],
-            endpoint="https://evergreen.corp.mongodb.com/graphql/query",
+            endpoint=oidc_graphql_url,
             auth_manager=auth_manager,
         )
         api_client = EvergreenRestClient(
             bearer_token=evergreen_config["bearer_token"],
-            base_url="https://evergreen.corp.mongodb.com/rest/v2/",
+            base_url=oidc_rest_url,
             auth_manager=auth_manager,
         )
     else:
         logger.info("Initializing GraphQL client with API key")
         # These fields were validated during config loading
         client = EvergreenGraphQLClient(
-            user=evergreen_config["user"], api_key=evergreen_config["api_key"]
+            user=evergreen_config["user"],
+            api_key=evergreen_config["api_key"],
+            endpoint=api_key_graphql_url,
         )
         api_client = EvergreenRestClient(
             user=evergreen_config["user"],
             api_key=evergreen_config["api_key"],
-            base_url="https://evergreen.corp.mongodb.com/rest/v2/",
+            base_url=api_key_rest_url,
         )
 
     async with client:
