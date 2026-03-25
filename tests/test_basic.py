@@ -6,7 +6,7 @@ These tests validate individual components without requiring Evergreen credentia
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 class TestImports(unittest.TestCase):
@@ -143,6 +143,7 @@ class TestUserAgent(unittest.TestCase):
             )
 
             # Connect (which should set headers)
+            mock_client.return_value.connect_async = AsyncMock()
             await client.connect()
 
             # Verify that AIOHTTPTransport was called with correct headers
