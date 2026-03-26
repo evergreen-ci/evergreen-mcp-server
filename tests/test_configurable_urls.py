@@ -26,18 +26,19 @@ class TestConfigurableEndpointURLs(unittest.IsolatedAsyncioTestCase):
 
         custom_rest_url = "https://custom-evergreen.example.com/rest/v2/"
 
-        with patch(
-            "evergreen_mcp.server.load_evergreen_config",
-            new_callable=AsyncMock,
-            return_value=(mock_config, None, mock_auth_manager),
-        ), patch(
-            "evergreen_mcp.server.EvergreenGraphQLClient"
-        ) as mock_graphql_client, patch(
-            "evergreen_mcp.server.EvergreenRestClient"
-        ) as mock_rest_client, patch.dict(
-            "os.environ",
-            {"EVERGREEN_OIDC_REST_URL": custom_rest_url},
-            clear=False,
+        with (
+            patch(
+                "evergreen_mcp.server.load_evergreen_config",
+                new_callable=AsyncMock,
+                return_value=(mock_config, None, mock_auth_manager),
+            ),
+            patch("evergreen_mcp.server.EvergreenGraphQLClient") as mock_graphql_client,
+            patch("evergreen_mcp.server.EvergreenRestClient") as mock_rest_client,
+            patch.dict(
+                "os.environ",
+                {"EVERGREEN_OIDC_REST_URL": custom_rest_url},
+                clear=False,
+            ),
         ):
             # Create mock instances
             mock_graphql_instance = AsyncMock()
@@ -77,18 +78,19 @@ class TestConfigurableEndpointURLs(unittest.IsolatedAsyncioTestCase):
 
         custom_graphql_url = "https://custom-evergreen.example.com/graphql/query"
 
-        with patch(
-            "evergreen_mcp.server.load_evergreen_config",
-            new_callable=AsyncMock,
-            return_value=(mock_config, None, mock_auth_manager),
-        ), patch(
-            "evergreen_mcp.server.EvergreenGraphQLClient"
-        ) as mock_graphql_client, patch(
-            "evergreen_mcp.server.EvergreenRestClient"
-        ) as mock_rest_client, patch.dict(
-            "os.environ",
-            {"EVERGREEN_OIDC_GRAPHQL_URL": custom_graphql_url},
-            clear=False,
+        with (
+            patch(
+                "evergreen_mcp.server.load_evergreen_config",
+                new_callable=AsyncMock,
+                return_value=(mock_config, None, mock_auth_manager),
+            ),
+            patch("evergreen_mcp.server.EvergreenGraphQLClient") as mock_graphql_client,
+            patch("evergreen_mcp.server.EvergreenRestClient") as mock_rest_client,
+            patch.dict(
+                "os.environ",
+                {"EVERGREEN_OIDC_GRAPHQL_URL": custom_graphql_url},
+                clear=False,
+            ),
         ):
             # Create mock instances
             mock_graphql_instance = AsyncMock()
@@ -127,18 +129,19 @@ class TestConfigurableEndpointURLs(unittest.IsolatedAsyncioTestCase):
 
         custom_rest_url = "https://custom-evergreen.example.com/rest/v2/"
 
-        with patch(
-            "evergreen_mcp.server.load_evergreen_config",
-            new_callable=AsyncMock,
-            return_value=(mock_config, None, None),
-        ), patch(
-            "evergreen_mcp.server.EvergreenGraphQLClient"
-        ) as mock_graphql_client, patch(
-            "evergreen_mcp.server.EvergreenRestClient"
-        ) as mock_rest_client, patch.dict(
-            "os.environ",
-            {"EVERGREEN_API_KEY_REST_URL": custom_rest_url},
-            clear=False,
+        with (
+            patch(
+                "evergreen_mcp.server.load_evergreen_config",
+                new_callable=AsyncMock,
+                return_value=(mock_config, None, None),
+            ),
+            patch("evergreen_mcp.server.EvergreenGraphQLClient") as mock_graphql_client,
+            patch("evergreen_mcp.server.EvergreenRestClient") as mock_rest_client,
+            patch.dict(
+                "os.environ",
+                {"EVERGREEN_API_KEY_REST_URL": custom_rest_url},
+                clear=False,
+            ),
         ):
             # Create mock instances
             mock_graphql_instance = AsyncMock()
@@ -177,18 +180,19 @@ class TestConfigurableEndpointURLs(unittest.IsolatedAsyncioTestCase):
 
         custom_graphql_url = "https://custom-evergreen.example.com/graphql/query"
 
-        with patch(
-            "evergreen_mcp.server.load_evergreen_config",
-            new_callable=AsyncMock,
-            return_value=(mock_config, None, None),
-        ), patch(
-            "evergreen_mcp.server.EvergreenGraphQLClient"
-        ) as mock_graphql_client, patch(
-            "evergreen_mcp.server.EvergreenRestClient"
-        ) as mock_rest_client, patch.dict(
-            "os.environ",
-            {"EVERGREEN_API_KEY_GRAPHQL_URL": custom_graphql_url},
-            clear=False,
+        with (
+            patch(
+                "evergreen_mcp.server.load_evergreen_config",
+                new_callable=AsyncMock,
+                return_value=(mock_config, None, None),
+            ),
+            patch("evergreen_mcp.server.EvergreenGraphQLClient") as mock_graphql_client,
+            patch("evergreen_mcp.server.EvergreenRestClient") as mock_rest_client,
+            patch.dict(
+                "os.environ",
+                {"EVERGREEN_API_KEY_GRAPHQL_URL": custom_graphql_url},
+                clear=False,
+            ),
         ):
             # Create mock instances
             mock_graphql_instance = AsyncMock()
@@ -226,18 +230,19 @@ class TestConfigurableEndpointURLs(unittest.IsolatedAsyncioTestCase):
         }
         mock_auth_manager = MagicMock()
 
-        with patch(
-            "evergreen_mcp.server.load_evergreen_config",
-            new_callable=AsyncMock,
-            return_value=(mock_config, None, mock_auth_manager),
-        ), patch(
-            "evergreen_mcp.server.EvergreenGraphQLClient"
-        ) as mock_graphql_client, patch(
-            "evergreen_mcp.server.EvergreenRestClient"
-        ) as mock_rest_client, patch.dict(
-            "os.environ",
-            {},
-            clear=True,
+        with (
+            patch(
+                "evergreen_mcp.server.load_evergreen_config",
+                new_callable=AsyncMock,
+                return_value=(mock_config, None, mock_auth_manager),
+            ),
+            patch("evergreen_mcp.server.EvergreenGraphQLClient") as mock_graphql_client,
+            patch("evergreen_mcp.server.EvergreenRestClient") as mock_rest_client,
+            patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ),
         ):
             # Create mock instances
             mock_graphql_instance = AsyncMock()
@@ -279,18 +284,19 @@ class TestConfigurableEndpointURLs(unittest.IsolatedAsyncioTestCase):
             "projects_for_directory": {},
         }
 
-        with patch(
-            "evergreen_mcp.server.load_evergreen_config",
-            new_callable=AsyncMock,
-            return_value=(mock_config, None, None),
-        ), patch(
-            "evergreen_mcp.server.EvergreenGraphQLClient"
-        ) as mock_graphql_client, patch(
-            "evergreen_mcp.server.EvergreenRestClient"
-        ) as mock_rest_client, patch.dict(
-            "os.environ",
-            {},
-            clear=True,
+        with (
+            patch(
+                "evergreen_mcp.server.load_evergreen_config",
+                new_callable=AsyncMock,
+                return_value=(mock_config, None, None),
+            ),
+            patch("evergreen_mcp.server.EvergreenGraphQLClient") as mock_graphql_client,
+            patch("evergreen_mcp.server.EvergreenRestClient") as mock_rest_client,
+            patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ),
         ):
             # Create mock instances
             mock_graphql_instance = AsyncMock()
