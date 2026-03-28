@@ -42,7 +42,7 @@ def before_send(event, hint):
     return event
 
 
-if os.getenv("SENTRY_ENABLED", "false").lower() == "true":
+if os.getenv("SENTRY_ENABLED", "true").lower() == "true":
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN", SENTRY_DSN),
         traces_sample_rate=1.0,

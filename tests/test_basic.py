@@ -154,13 +154,12 @@ class TestUserAgent(unittest.TestCase):
             self.assertIn("headers", call_kwargs)
             headers = call_kwargs["headers"]
 
-            # Verify User-Agent header exists and has correct format
+            # Verify User-Agent header exists and starts with correct base format
             self.assertIn("User-Agent", headers)
-            expected_user_agent = f"evergreen-mcp-server/{__version__}"
-            self.assertEqual(
-                headers["User-Agent"],
-                expected_user_agent,
-                f"User-Agent should be '{expected_user_agent}'",
+            expected_base = f"evergreen-mcp-server/{__version__}"
+            self.assertTrue(
+                headers["User-Agent"].startswith(expected_base),
+                f"User-Agent should start with '{expected_base}', got '{headers['User-Agent']}'",
             )
 
         # Run the async test
@@ -191,20 +190,23 @@ class TestUserAgentConstant(unittest.TestCase):
         self.assertIsInstance(USER_AGENT, str, "USER_AGENT should be a string")
 
     def test_user_agent_constant_value(self):
-        """Test that USER_AGENT matches expected format with current version"""
+        """Test that USER_AGENT starts with expected base format with current version"""
         from evergreen_mcp import USER_AGENT, __version__
 
-        expected = f"evergreen-mcp-server/{__version__}"
-        self.assertEqual(USER_AGENT, expected)
+        expected_base = f"evergreen-mcp-server/{__version__}"
+        self.assertTrue(
+            USER_AGENT.startswith(expected_base),
+            f"USER_AGENT should start with '{expected_base}', got '{USER_AGENT}'",
+        )
 
     def test_user_agent_constant_format(self):
-        """Test that USER_AGENT follows the pattern evergreen-mcp-server/x.y.z"""
+        """Test that USER_AGENT follows the pattern evergreen-mcp-server/x.y.z with optional user_id suffix"""
         from evergreen_mcp import USER_AGENT
 
         self.assertRegex(
             USER_AGENT,
-            r"^evergreen-mcp-server/\d+\.\d+\.\d+$",
-            "USER_AGENT should be in format 'evergreen-mcp-server/x.y.z'",
+            r"^evergreen-mcp-server/\d+\.\d+\.\d+(/user_id=\S+)?$",
+            "USER_AGENT should be in format 'evergreen-mcp-server/x.y.z' with optional '/user_id=...' suffix",
         )
 
     def test_graphql_client_uses_shared_constant(self):

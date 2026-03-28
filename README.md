@@ -287,6 +287,37 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 }
 ```
 
+**With custom endpoint URLs (optional):**
+
+Override the default Evergreen API endpoint URLs via environment variables. This is useful for Kanopy deployments or other environments where the server needs to reach Evergreen over a service mesh instead of the public ingress.
+
+```json
+{
+  "mcpServers": {
+    "evergreen": {
+      "command": "uvx",
+      "args": [
+        "--from=git+https://github.com/evergreen-ci/evergreen-mcp-server",
+        "evergreen-mcp-server"
+      ],
+      "env": {
+        "EVERGREEN_OIDC_REST_URL": "https://custom-evergreen.example.com/rest/v2/",
+        "EVERGREEN_OIDC_GRAPHQL_URL": "https://custom-evergreen.example.com/graphql/query"
+      }
+    }
+  }
+}
+```
+
+Four env vars are available, one per auth-method/endpoint combination:
+
+| Variable | Auth Method | Default |
+|----------|-------------|---------|
+| `EVERGREEN_OIDC_REST_URL` | OIDC | `https://evergreen.corp.mongodb.com/rest/v2/` |
+| `EVERGREEN_OIDC_GRAPHQL_URL` | OIDC | `https://evergreen.corp.mongodb.com/graphql/query` |
+| `EVERGREEN_API_KEY_REST_URL` | API key | `https://evergreen.mongodb.com/rest/v2/` |
+| `EVERGREEN_API_KEY_GRAPHQL_URL` | API key | `https://evergreen.mongodb.com/graphql/query` |
+
 > **Tip**: If your IDE can't find `uvx`, use the full path (e.g., `~/.local/bin/uvx` on macOS/Linux). Run `which uvx` to find it.
 
 ### Method 2: Docker with OIDC
@@ -1156,6 +1187,10 @@ projects_for_directory:
 | `EVERGREEN_API_KEY` | string | API key for authentication | `abc123def456...` |
 | `EVERGREEN_PROJECT` | string | Default project identifier | `mongodb-mongo-master` |
 | `EVERGREEN_API_SERVER` | string | API server URL (advanced) | `https://evergreen.mongodb.com` |
+| `EVERGREEN_OIDC_REST_URL` | string | Override REST base URL for OIDC auth | `https://evergreen.corp.mongodb.com/rest/v2/` |
+| `EVERGREEN_OIDC_GRAPHQL_URL` | string | Override GraphQL endpoint URL for OIDC auth | `https://evergreen.corp.mongodb.com/graphql/query` |
+| `EVERGREEN_API_KEY_REST_URL` | string | Override REST base URL for API key auth | `https://evergreen.mongodb.com/rest/v2/` |
+| `EVERGREEN_API_KEY_GRAPHQL_URL` | string | Override GraphQL endpoint URL for API key auth | `https://evergreen.mongodb.com/graphql/query` |
 | `EVERGREEN_MCP_TRANSPORT` | enum | Transport protocol | `stdio`, `sse`, `streamable-http` |
 | `EVERGREEN_MCP_HOST` | string | HTTP host binding | `0.0.0.0`, `127.0.0.1` |
 | `EVERGREEN_MCP_PORT` | integer | HTTP port | `8000` |
