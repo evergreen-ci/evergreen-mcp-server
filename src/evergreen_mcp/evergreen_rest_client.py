@@ -77,6 +77,8 @@ class EvergreenRestClient:
         if self.bearer_token:
             logger.debug("Using Bearer token for authenticating HTTP requests")
             headers["Authorization"] = f"Bearer {self.bearer_token}"
+            # Also set the Kanopy internal header for mesh-to-mesh communication
+            headers["x-kanopy-internal-authorization"] = f"Bearer {self.bearer_token}"
         elif self.user and self.api_key:
             logger.debug("Using API key for authenticating HTTP requests")
             headers["Api-User"] = self.user

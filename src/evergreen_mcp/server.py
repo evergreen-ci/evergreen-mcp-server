@@ -133,6 +133,16 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
             "auth_method": "api_key",
             "projects_for_directory": projects_for_directory,
         }
+    elif os.getenv("EVERGREEN_AUTH_MODE") == "per_request":
+        # No default credentials — per-request api_user/api_key are required
+        # on every tool call. Used by MCP gateways that inject per-user
+        # credentials from a credential store.
+        logger.info("Using per-request authentication (no default credentials)")
+        evergreen_config = {
+            "user": "",
+            "auth_method": "per_request",
+            "projects_for_directory": projects_for_directory,
+        }
     else:
         # OIDC Authentication (always - no API key fallback)
         logger.info("Using OIDC authentication...")
@@ -219,6 +229,12 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
             base_url=oidc_rest_url,
             auth_manager=auth_manager,
         )
+    elif auth_method == "per_request":
+        logger.info(
+            "No default clients — per-request credentials required on every tool call"
+        )
+        client = None
+        api_client = None
     else:
         logger.info("Initializing GraphQL client with API key")
         # These fields were validated during config loading
@@ -233,37 +249,52 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
             base_url=api_key_rest_url,
         )
 
-    async with client:
-        logger.info("Evergreen GraphQL client initialized")
-        logger.info("Authentication method: %s", auth_method)
-        logger.info("Current workspace directory: %s", workspace_dir)
-        if projects_for_directory:
-            logger.info(
-                "Loaded %d project directory mappings from config",
-                len(projects_for_directory),
-            )
-        if default_project_id:
-            logger.info("Default project ID configured: %s", default_project_id)
-        else:
-            logger.info(
-                "No default project ID configured - "
-                "tools will use intelligent auto-detection"
-            )
-
+    # In per_request mode, there are no default clients to manage.
+    if client is None:
+        logger.info("Per-request auth mode — no default clients to initialize")
         try:
             yield EvergreenContext(
-                api_client=api_client,
-                client=client,
-                user_id=evergreen_config["user"],
+                api_client=None,
+                client=None,
+                user_id="",
                 default_project_id=default_project_id,
                 workspace_dir=workspace_dir,
                 projects_for_directory=projects_for_directory,
             )
         finally:
-            await api_client._close_session()
-            logger.info("Evergreen REST client session closed")
+            pass
+    else:
+        async with client:
+            logger.info("Evergreen GraphQL client initialized")
+            logger.info("Authentication method: %s", auth_method)
+            logger.info("Current workspace directory: %s", workspace_dir)
+            if projects_for_directory:
+                logger.info(
+                    "Loaded %d project directory mappings from config",
+                    len(projects_for_directory),
+                )
+            if default_project_id:
+                logger.info("Default project ID configured: %s", default_project_id)
+            else:
+                logger.info(
+                    "No default project ID configured - "
+                    "tools will use intelligent auto-detection"
+                )
 
-    logger.info("Evergreen GraphQL client closed")
+            try:
+                yield EvergreenContext(
+                    api_client=api_client,
+                    client=client,
+                    user_id=evergreen_config["user"],
+                    default_project_id=default_project_id,
+                    workspace_dir=workspace_dir,
+                    projects_for_directory=projects_for_directory,
+                )
+            finally:
+                await api_client._close_session()
+                logger.info("Evergreen REST client session closed")
+
+        logger.info("Evergreen GraphQL client closed")
 
 
 # Create the FastMCP server instance

@@ -81,6 +81,8 @@ class EvergreenGraphQLClient:
             # Use Bearer token authentication
             headers = {
                 "Authorization": f"Bearer {self.bearer_token}",
+                # Also set the Kanopy internal header for mesh-to-mesh communication
+                "x-kanopy-internal-authorization": f"Bearer {self.bearer_token}",
                 "Content-Type": "application/json",
                 "User-Agent": USER_AGENT,
             }
