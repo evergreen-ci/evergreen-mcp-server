@@ -206,3 +206,33 @@ class WaterfallDetailedResponse(WaterfallSummaryResponse):
     """Top-level detailed response shape (same skeleton, detailed cells)."""
 
     pass
+
+
+class MainlineCommit(BaseModel):
+    """A single mainline commit in a change-point analysis range."""
+
+    order: int = Field(description="Revision order; ordering key for the range")
+    version_id: str = Field(description="Version identifier")
+    revision: Optional[str] = Field(default=None, description="Git commit SHA")
+    message: Optional[str] = Field(default=None, description="Commit message")
+    author: Optional[str] = Field(default=None, description="Commit author")
+    create_time: Optional[str] = Field(default=None, description="Version create time")
+    requester: Optional[str] = Field(
+        default=None, description="Requester type (e.g., gitter_request)"
+    )
+    activated: bool = Field(
+        default=False,
+        description="Whether the version had any activated builds",
+    )
+
+
+class MainlineCommitsBetweenResponse(BaseModel):
+    """Response shape for get_mainline_commits_between_evergreen."""
+
+    project_id: str
+    start_order: int
+    end_order: int
+    count: int
+    commits: List[MainlineCommit] = Field(default_factory=list)
+    message: Optional[str] = None
+    warnings: Optional[List[str]] = None

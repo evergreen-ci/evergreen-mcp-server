@@ -354,6 +354,32 @@ query GetWaterfall($options: WaterfallOptions!) {
 """
 
 
+# Lean version-only query for change-point / regression analysis.
+# Powers get_mainline_commits_between_evergreen — drops waterfallBuilds and
+# unused pagination cursors so the payload stays small for wide order ranges.
+GET_MAINLINE_COMMITS = """
+query GetMainlineCommits($options: WaterfallOptions!) {
+  waterfall(options: $options) {
+    flattenedVersions {
+      id
+      revision
+      author
+      message
+      createTime
+      order
+      activated
+      requester
+    }
+    pagination {
+      hasNextPage
+      nextPageOrder
+      mostRecentVersionOrder
+    }
+  }
+}
+"""
+
+
 # Get inferred project identifiers from user's patches
 GET_INFERRED_PROJECT_IDS = """
 query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {

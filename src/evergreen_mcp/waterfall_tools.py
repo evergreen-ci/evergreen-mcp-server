@@ -37,6 +37,7 @@ WATERFALL_VARIANT_CAP = 60
 MAX_LIMIT_SUMMARY = 30
 MAX_LIMIT_DETAILED = 15
 MIN_REVISION_LENGTH = 7
+MAX_COMMITS_RANGE = 200
 
 
 def _normalize_date(date_str: Optional[str]) -> Optional[str]:
@@ -483,6 +484,95 @@ async def fetch_waterfall_detailed(
         ),
         warnings=warnings or None,
     )
+
+
+async def fetch_mainline_commits_between(
+    client,
+    *,
+    project_id: str,
+    start_order: int,
+    end_order: int,
+    requesters: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """List mainline commits between two version order numbers, inclusive.
+
+    Built for change-point / regression analysis: returns *every* version in
+    the order window, including ones the variant of interest skipped. Does
+    not filter by `activeVersionIds` — the caller wants to see the commits
+    a perf variant didn't run on.
+    """
+    if not project_id:
+        return {"status": "error", "error": "project_id is required."}
+    if start_order is None or end_order is None:
+        return {
+            "status": "error",
+            "project_id": project_id,
+            "error": "start_order and end_order are required.",
+        }
+    lo, hi = sorted((int(start_order), int(end_order)))
+    span = hi - lo + 1
+    clamped = min(span, MAX_COMMITS_RANGE)
+
+    options: Dict[str, Any] = {
+        "projectIdentifier": project_id,
+        "limit": clamped,
+        # +1 is defensive: the WaterfallOptions schema isn't checked in here,
+        # so we don't know if maxOrder is inclusive or exclusive. The
+        # client-side [lo, hi] filter below makes either behavior correct.
+        "maxOrder": hi + 1,
+    }
+    if requesters:
+        options["requesters"] = requesters
+
+    try:
+        raw = await client.get_mainline_commits(options)
+    except Exception as e:
+        logger.warning("Mainline commits fetch failed for %s", project_id)
+        return {
+            "status": "error",
+            "project_id": project_id,
+            "error": _format_exception(e),
+        }
+
+    commits: List[Dict[str, Any]] = []
+    for v in raw.get("flattenedVersions") or []:
+        order = v.get("order") or 0
+        if order < lo or order > hi:
+            continue
+        commits.append(
+            {
+                "order": order,
+                "version_id": v.get("id") or "",
+                "revision": v.get("revision"),
+                "message": v.get("message"),
+                "author": v.get("author"),
+                "create_time": v.get("createTime"),
+                "requester": v.get("requester"),
+                "activated": bool(v.get("activated")),
+            }
+        )
+    commits.sort(key=lambda c: c["order"], reverse=True)
+
+    warnings: List[str] = []
+    if span > MAX_COMMITS_RANGE:
+        warnings.append(
+            f"Range of {span} commits exceeds max {MAX_COMMITS_RANGE}; "
+            f"returned the most-recent {clamped}. Narrow the range or "
+            "issue follow-up calls with adjusted bounds."
+        )
+
+    response: Dict[str, Any] = {
+        "project_id": project_id,
+        "start_order": lo,
+        "end_order": hi,
+        "count": len(commits),
+        "commits": commits,
+    }
+    if not commits:
+        response["message"] = "No mainline commits found in the requested order range."
+    if warnings:
+        response["warnings"] = warnings
+    return response
 
 
 async def fetch_project_build_variants(

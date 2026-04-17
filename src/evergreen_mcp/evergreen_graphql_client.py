@@ -17,6 +17,7 @@ from gql.transport.exceptions import TransportError
 from . import USER_AGENT
 from .evergreen_queries import (
     GET_INFERRED_PROJECT_IDS,
+    GET_MAINLINE_COMMITS,
     GET_PATCH_FAILED_TASKS,
     GET_PROJECT,
     GET_PROJECT_SETTINGS,
@@ -410,6 +411,30 @@ class EvergreenGraphQLClient:
         version_count = len(waterfall.get("flattenedVersions") or [])
         logger.info(
             "Retrieved waterfall for %s: %s versions",
+            options.get("projectIdentifier"),
+            version_count,
+        )
+        return waterfall
+
+    async def get_mainline_commits(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch mainline commits (version metadata only) for an order range.
+
+        Uses a lean selection set on the same `waterfall(options:)` schema as
+        get_waterfall, omitting waterfallBuilds so the payload stays small
+        for change-point / regression-analysis use cases.
+
+        Args:
+            options: WaterfallOptions input as a dict (projectIdentifier required).
+
+        Returns:
+            Payload with flattenedVersions and pagination (no waterfallBuilds).
+        """
+        variables = {"options": options}
+        result = await self._execute_query(GET_MAINLINE_COMMITS, variables)
+        waterfall = result.get("waterfall") or {}
+        version_count = len(waterfall.get("flattenedVersions") or [])
+        logger.info(
+            "Retrieved mainline commits for %s: %s versions",
             options.get("projectIdentifier"),
             version_count,
         )

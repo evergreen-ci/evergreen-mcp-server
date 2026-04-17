@@ -4,9 +4,11 @@ import unittest
 from unittest.mock import AsyncMock
 
 from evergreen_mcp.waterfall_tools import (
+    MAX_COMMITS_RANGE,
     MAX_LIMIT_DETAILED,
     MAX_LIMIT_SUMMARY,
     WATERFALL_VARIANT_CAP,
+    fetch_mainline_commits_between,
     fetch_project_build_variants,
     fetch_waterfall_detailed,
     fetch_waterfall_summary,
@@ -410,6 +412,178 @@ class TestFetchProjectBuildVariants(unittest.IsolatedAsyncioTestCase):
         result = await fetch_project_build_variants(mock_client, project_id="")
         self.assertEqual(result["status"], "error")
         mock_client.get_waterfall.assert_not_awaited()
+
+
+def _make_commit_version(
+    version_id: str,
+    order: int,
+    *,
+    activated: bool = True,
+    requester: str = "gitter_request",
+) -> dict:
+    """Lean version dict for the mainline-commits fetcher (no waterfallBuilds)."""
+    return {
+        "id": version_id,
+        "revision": f"rev{version_id}",
+        "author": "alice",
+        "message": f"msg-{version_id}",
+        "createTime": "2026-04-17T10:00:00Z",
+        "order": order,
+        "activated": activated,
+        "requester": requester,
+    }
+
+
+class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
+    async def test_happy_path_inclusive_range(self):
+        """All commits in the [lo, hi] window are returned, newest-first."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [
+                _make_commit_version(f"v{o}", o) for o in (74964, 74963, 74962, 74961, 74960, 74959)
+            ],
+            "pagination": {},
+        }
+
+        result = await fetch_mainline_commits_between(
+            mock_client, project_id="sys-perf", start_order=74959, end_order=74964
+        )
+
+        self.assertEqual(result["project_id"], "sys-perf")
+        self.assertEqual(result["start_order"], 74959)
+        self.assertEqual(result["end_order"], 74964)
+        self.assertEqual(result["count"], 6)
+        orders = [c["order"] for c in result["commits"]]
+        self.assertEqual(orders, [74964, 74963, 74962, 74961, 74960, 74959])
+        first = result["commits"][0]
+        for key in ("order", "version_id", "revision", "message", "author", "create_time"):
+            self.assertIn(key, first)
+        self.assertEqual(first["revision"], "revv74964")
+
+    async def test_reversed_bounds_normalize(self):
+        """start_order > end_order still produces the same ordered window."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [_make_commit_version(f"v{o}", o) for o in (102, 101, 100)],
+            "pagination": {},
+        }
+
+        result = await fetch_mainline_commits_between(
+            mock_client, project_id="proj", start_order=102, end_order=100
+        )
+
+        self.assertEqual(result["start_order"], 100)
+        self.assertEqual(result["end_order"], 102)
+        self.assertEqual([c["order"] for c in result["commits"]], [102, 101, 100])
+
+    async def test_filters_to_range(self):
+        """Versions outside [lo, hi] in the GraphQL feed are filtered out."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [_make_commit_version(f"v{o}", o) for o in (105, 103, 102, 101, 99)],
+            "pagination": {},
+        }
+
+        result = await fetch_mainline_commits_between(
+            mock_client, project_id="proj", start_order=101, end_order=103
+        )
+
+        self.assertEqual([c["order"] for c in result["commits"]], [103, 102, 101])
+
+    async def test_missing_project_id(self):
+        mock_client = AsyncMock()
+        result = await fetch_mainline_commits_between(
+            mock_client, project_id="", start_order=1, end_order=10
+        )
+        self.assertEqual(result["status"], "error")
+        mock_client.get_mainline_commits.assert_not_awaited()
+
+    async def test_upstream_error(self):
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.side_effect = Exception("graphql exploded")
+        result = await fetch_mainline_commits_between(
+            mock_client, project_id="proj", start_order=1, end_order=10
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["project_id"], "proj")
+        self.assertIn("graphql exploded", result["error"])
+
+    async def test_oversized_range_warning(self):
+        """A span > MAX_COMMITS_RANGE clamps and emits a truncation warning."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [],
+            "pagination": {},
+        }
+
+        result = await fetch_mainline_commits_between(
+            mock_client,
+            project_id="proj",
+            start_order=1,
+            end_order=MAX_COMMITS_RANGE + 50,
+        )
+
+        sent_options = mock_client.get_mainline_commits.await_args.args[0]
+        self.assertEqual(sent_options["limit"], MAX_COMMITS_RANGE)
+        self.assertIn("warnings", result)
+        self.assertTrue(any("exceeds max" in w for w in result["warnings"]))
+
+    async def test_requesters_propagation(self):
+        """When requesters is provided it lands in options; when None it's omitted."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [],
+            "pagination": {},
+        }
+
+        await fetch_mainline_commits_between(
+            mock_client, project_id="proj", start_order=1, end_order=5
+        )
+        opts_default = mock_client.get_mainline_commits.await_args.args[0]
+        self.assertNotIn("requesters", opts_default)
+
+        await fetch_mainline_commits_between(
+            mock_client,
+            project_id="proj",
+            start_order=1,
+            end_order=5,
+            requesters=["gitter_request", "trigger_request"],
+        )
+        opts_with = mock_client.get_mainline_commits.await_args.args[0]
+        self.assertEqual(opts_with["requesters"], ["gitter_request", "trigger_request"])
+
+    async def test_max_order_uses_hi_plus_one(self):
+        """maxOrder is set to hi+1 so inclusive-or-exclusive schema both work."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [],
+            "pagination": {},
+        }
+
+        await fetch_mainline_commits_between(
+            mock_client, project_id="proj", start_order=100, end_order=110
+        )
+
+        opts = mock_client.get_mainline_commits.await_args.args[0]
+        self.assertEqual(opts["maxOrder"], 111)
+        self.assertEqual(opts["limit"], 11)
+        self.assertEqual(opts["projectIdentifier"], "proj")
+
+    async def test_empty_range_message(self):
+        """Empty result carries an explanatory message."""
+        mock_client = AsyncMock()
+        mock_client.get_mainline_commits.return_value = {
+            "flattenedVersions": [],
+            "pagination": {},
+        }
+
+        result = await fetch_mainline_commits_between(
+            mock_client, project_id="proj", start_order=1, end_order=5
+        )
+
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["commits"], [])
+        self.assertIn("message", result)
 
 
 if __name__ == "__main__":

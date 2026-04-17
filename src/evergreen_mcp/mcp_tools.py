@@ -27,6 +27,7 @@ from .failed_jobs_tools import (
     infer_project_id_from_context,
 )
 from .waterfall_tools import (
+    fetch_mainline_commits_between,
     fetch_project_build_variants,
     fetch_waterfall_detailed,
     fetch_waterfall_summary,
@@ -858,4 +859,64 @@ def register_tools(mcp: FastMCP) -> None:
             result = await fetch_project_build_variants(client, project_id=effective_id)
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 11)
+    @mcp.tool(
+        description=(
+            "List mainline (master) commits on an Evergreen project between "
+            "two version order numbers, inclusive. Use this for change-point "
+            "/ regression analysis: when a perf variant skipped commits "
+            "between two runs, this enumerates the candidate culprits. "
+            "Returns {order, version_id, revision, message, author, "
+            "create_time, requester, activated} for each commit, "
+            "newest-first. Defaults to the server's mainline requesters "
+            "(commit/branch); override via the requesters parameter. "
+            "Order numbers can be obtained from get_waterfall_summary_evergreen."
+        )
+    )
+    async def get_mainline_commits_between_evergreen(
+        ctx: Context,
+        start_order: Annotated[
+            int,
+            "One end of the order range (inclusive). May be the lower or "
+            "upper bound — the tool normalizes.",
+        ],
+        end_order: Annotated[
+            int,
+            "The other end of the order range (inclusive).",
+        ],
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected.",
+        ] = None,
+        requesters: Annotated[
+            list[str] | None,
+            "Filter by requester type. If omitted, the server's mainline "
+            "default applies (commit/branch).",
+        ] = None,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """List mainline commits between two version order numbers."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+
+            result = await fetch_mainline_commits_between(
+                client,
+                project_id=effective_id,
+                start_order=start_order,
+                end_order=end_order,
+                requesters=requesters,
+            )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 12)
