@@ -121,3 +121,88 @@ class TaskResponse(BaseModel):
     distro_id: Optional[str] = Field(
         default=None, description="Distribution/OS identifier for this task"
     )
+
+
+class WaterfallVersionInfo(BaseModel):
+    """Per-version metadata in a waterfall response."""
+
+    order: int = Field(description="Revision order; used for cursor pagination")
+    version_id: str = Field(description="Version identifier")
+    revision: Optional[str] = Field(default=None, description="Git commit SHA")
+    message: Optional[str] = Field(default=None, description="Commit/patch message")
+    author: Optional[str] = Field(default=None, description="Commit/patch author")
+    create_time: Optional[str] = Field(default=None, description="Version create time")
+    requester: Optional[str] = Field(
+        default=None, description="Requester type (e.g., gitter_request)"
+    )
+    status: Optional[str] = Field(default=None, description="Aggregate version status")
+    activated: bool = Field(default=False, description="Whether the version is active")
+
+
+class WaterfallTaskBrief(BaseModel):
+    """A task entry in a detailed waterfall cell."""
+
+    task_id: str
+    display_name: str
+    status: str
+    execution: int = 0
+
+
+class WaterfallCellSummary(BaseModel):
+    """Per-(variant, version) cell with task status counts only."""
+
+    build_id: Optional[str] = None
+    activated: bool = False
+    status_counts: Dict[str, int] = Field(default_factory=dict)
+    total: int = 0
+
+
+class WaterfallCellDetailed(BaseModel):
+    """Per-(variant, version) cell with full task list."""
+
+    build_id: Optional[str] = None
+    activated: bool = False
+    tasks: List[WaterfallTaskBrief] = Field(default_factory=list)
+
+
+class WaterfallVariantRow(BaseModel):
+    """A row in the waterfall grid for a single build variant."""
+
+    build_variant: str
+    display_name: Optional[str] = None
+    cells: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Map of version_id -> cell (summary or detailed shape)",
+    )
+
+
+class WaterfallPaginationInfo(BaseModel):
+    """Pagination cursors and hints for the waterfall."""
+
+    has_next_page: bool
+    has_prev_page: bool
+    next_page_order: int
+    prev_page_order: int
+    most_recent_version_order: int
+    how_to_paginate: str = (
+        "Pass next_page_order as max_order for older versions; "
+        "prev_page_order as min_order for newer."
+    )
+
+
+class WaterfallSummaryResponse(BaseModel):
+    """Top-level summary response shape."""
+
+    project_id: str
+    versions: List[WaterfallVersionInfo] = Field(default_factory=list)
+    variants: List[WaterfallVariantRow] = Field(default_factory=list)
+    pagination: Optional[WaterfallPaginationInfo] = None
+    truncation: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
+    warnings: Optional[List[str]] = None
+
+
+class WaterfallDetailedResponse(WaterfallSummaryResponse):
+    """Top-level detailed response shape (same skeleton, detailed cells)."""
+
+    pass

@@ -26,6 +26,11 @@ from .failed_jobs_tools import (
     fetch_user_recent_patches,
     infer_project_id_from_context,
 )
+from .waterfall_tools import (
+    fetch_project_build_variants,
+    fetch_waterfall_detailed,
+    fetch_waterfall_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +91,42 @@ def _user_from_jwt(token: str) -> str:
         return decoded.get("preferred_username") or decoded.get("sub") or ""
     except Exception:
         return ""
+
+
+async def _resolve_project_id(
+    client: Any, user_id: str, project_id: Optional[str]
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Resolve a project_id, falling back to context inference.
+
+    Returns (effective_project_id, user_selection_payload). When
+    user_selection_payload is non-None, the caller should return it directly
+    to the user so they can pick a project.
+    """
+    if project_id:
+        return project_id, None
+
+    inference: ProjectInferenceResult = await infer_project_id_from_context(
+        client, user_id
+    )
+    if inference.project_id:
+        return inference.project_id, None
+
+    return None, {
+        "status": "user_selection_required",
+        "message": inference.message,
+        "available_projects": [
+            {
+                "project_identifier": p["project_identifier"],
+                "patch_count": p["patch_count"],
+                "latest_patch_time": p["latest_patch_time"],
+            }
+            for p in inference.available_projects
+        ],
+        "action_required": (
+            "ASK THE USER which project they want to use, then call this tool "
+            "again with the project_id parameter set to their choice."
+        ),
+    }
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -584,4 +625,237 @@ def register_tools(mcp: FastMCP) -> None:
             )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 8)
+    @mcp.tool(
+        description=(
+            "Get a compact view of the Evergreen project waterfall: a grid of "
+            "build variants (rows) by recent versions/patches (columns), where "
+            "each cell shows a count of task statuses (e.g., {success: 42, "
+            "failed: 3}). Use this to answer 'is the project healthy?', 'which "
+            "variants have been failing on recent commits?', or 'show me the "
+            "waterfall around date/revision X'. Returns version metadata and "
+            "pagination cursors. For per-task detail, follow up with "
+            "get_waterfall_detailed_evergreen filtered to a narrower slice. "
+            "If project_id is not provided, will auto-detect; may return a "
+            "user_selection_required response listing available projects."
+        )
+    )
+    async def get_waterfall_summary_evergreen(
+        ctx: Context,
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected from the "
+            "user's recent patch activity.",
+        ] = None,
+        limit: Annotated[
+            int,
+            "Number of versions (columns) to fetch. Clamped to 1–30. Default 10.",
+        ] = 10,
+        max_order: Annotated[
+            int | None,
+            "Pagination cursor: pass pagination.next_page_order from a prior "
+            "response to fetch older versions.",
+        ] = None,
+        min_order: Annotated[
+            int | None,
+            "Pagination cursor: pass pagination.prev_page_order to fetch newer "
+            "versions. Mutually exclusive with max_order.",
+        ] = None,
+        revision: Annotated[
+            str | None,
+            "Center the waterfall around this git revision (>=7 chars).",
+        ] = None,
+        date: Annotated[
+            str | None,
+            "Show versions on/before this date (YYYY-MM-DD).",
+        ] = None,
+        variants: Annotated[
+            list[str] | None,
+            "Filter by build variant (regex or exact). Use "
+            "list_project_build_variants_evergreen to discover valid values.",
+        ] = None,
+        statuses: Annotated[
+            list[str] | None,
+            "Filter task status counts (e.g., ['failed', 'system-failed']).",
+        ] = None,
+        requesters: Annotated[
+            list[str] | None,
+            "Filter by requester type. Server defaults to system requesters "
+            "(commit/branch).",
+        ] = None,
+        omit_inactive_builds: Annotated[
+            bool,
+            "Skip inactive builds in the grid. Defaults to True (less noise).",
+        ] = True,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, "
+            "uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Compact project waterfall: per-cell task status counts."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+
+            result = await fetch_waterfall_summary(
+                client,
+                project_id=effective_id,
+                limit=limit,
+                max_order=max_order,
+                min_order=min_order,
+                revision=revision,
+                date=date,
+                variants=variants,
+                statuses=statuses,
+                requesters=requesters,
+                omit_inactive_builds=omit_inactive_builds,
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Get the Evergreen project waterfall with per-task detail. Each "
+            "cell carries a list of tasks with id, display_name, status, and "
+            "execution. Returned task_id values plug directly into "
+            "get_task_log_summary, get_task_log_detailed, "
+            "get_test_results_summary, and get_test_results_detailed. "
+            "More expensive than the summary tool — narrow the slice via "
+            "variants, tasks, or statuses filters. If project_id is not "
+            "provided, will auto-detect."
+        )
+    )
+    async def get_waterfall_detailed_evergreen(
+        ctx: Context,
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected.",
+        ] = None,
+        limit: Annotated[
+            int,
+            "Number of versions (columns). Clamped to 1–15. Default 5.",
+        ] = 5,
+        max_order: Annotated[
+            int | None,
+            "Pagination cursor: next_page_order from a prior response.",
+        ] = None,
+        min_order: Annotated[
+            int | None,
+            "Pagination cursor: prev_page_order from a prior response.",
+        ] = None,
+        revision: Annotated[
+            str | None,
+            "Center on this git revision (>=7 chars).",
+        ] = None,
+        date: Annotated[
+            str | None,
+            "Show versions on/before this date (YYYY-MM-DD).",
+        ] = None,
+        variants: Annotated[
+            list[str] | None,
+            "Filter by build variant (regex or exact).",
+        ] = None,
+        tasks: Annotated[
+            list[str] | None,
+            "Filter by task display name (regex or exact).",
+        ] = None,
+        statuses: Annotated[
+            list[str] | None,
+            "Filter by task status (e.g., ['failed', 'system-failed']).",
+        ] = None,
+        requesters: Annotated[
+            list[str] | None,
+            "Filter by requester type. Server defaults to system requesters.",
+        ] = None,
+        omit_inactive_builds: Annotated[
+            bool,
+            "Skip inactive builds. Defaults to True.",
+        ] = True,
+        task_case_sensitive: Annotated[
+            bool,
+            "Case sensitivity for the tasks filter. Defaults to True (faster).",
+        ] = True,
+        variant_case_sensitive: Annotated[
+            bool,
+            "Case sensitivity for the variants filter. Defaults to True.",
+        ] = True,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Detailed project waterfall: per-cell task arrays with task_ids."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+
+            result = await fetch_waterfall_detailed(
+                client,
+                project_id=effective_id,
+                limit=limit,
+                max_order=max_order,
+                min_order=min_order,
+                revision=revision,
+                date=date,
+                variants=variants,
+                tasks=tasks,
+                statuses=statuses,
+                requesters=requesters,
+                omit_inactive_builds=omit_inactive_builds,
+                task_case_sensitive=task_case_sensitive,
+                variant_case_sensitive=variant_case_sensitive,
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "List the unique build variants for an Evergreen project. Use "
+            "this to discover valid variant names before filtering "
+            "get_waterfall_summary_evergreen or get_waterfall_detailed_evergreen "
+            "via the variants parameter. Returns build_variant identifiers and "
+            "their human display names."
+        )
+    )
+    async def list_project_build_variants_evergreen(
+        ctx: Context,
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected.",
+        ] = None,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """List unique build variants for a project."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+
+            result = await fetch_project_build_variants(client, project_id=effective_id)
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 11)

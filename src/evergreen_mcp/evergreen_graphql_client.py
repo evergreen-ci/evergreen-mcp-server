@@ -25,6 +25,7 @@ from .evergreen_queries import (
     GET_TASK_TEST_RESULTS,
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
+    GET_WATERFALL,
 )
 
 # Constants for test status values
@@ -393,6 +394,26 @@ class EvergreenGraphQLClient:
         test_count = test_results.get("filteredTestCount", 0)
         logger.info("Retrieved %s test results for task %s", test_count, task_id)
         return task
+
+    async def get_waterfall(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch the project waterfall (build variants × versions grid).
+
+        Args:
+            options: WaterfallOptions input as a dict (projectIdentifier required).
+
+        Returns:
+            Waterfall payload with flattenedVersions and pagination.
+        """
+        variables = {"options": options}
+        result = await self._execute_query(GET_WATERFALL, variables)
+        waterfall = result.get("waterfall") or {}
+        version_count = len(waterfall.get("flattenedVersions") or [])
+        logger.info(
+            "Retrieved waterfall for %s: %s versions",
+            options.get("projectIdentifier"),
+            version_count,
+        )
+        return waterfall
 
     async def get_inferred_project_ids(
         self, user_id: str, limit: int = 50, page: int = 0

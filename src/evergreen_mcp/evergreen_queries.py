@@ -311,6 +311,49 @@ query GetTaskTestResults(
 }
 """
 
+# Get the project waterfall (build variants × versions grid).
+# Powers get_waterfall_summary_evergreen, get_waterfall_detailed_evergreen,
+# and list_project_build_variants_evergreen.
+GET_WATERFALL = """
+query GetWaterfall($options: WaterfallOptions!) {
+  waterfall(options: $options) {
+    flattenedVersions {
+      id
+      revision
+      author
+      message
+      createTime
+      order
+      activated
+      requester
+      status
+      waterfallBuilds {
+        id
+        activated
+        buildVariant
+        displayName
+        version
+        tasks {
+          id
+          displayName
+          displayStatusCache
+          execution
+        }
+      }
+    }
+    pagination {
+      activeVersionIds
+      hasNextPage
+      hasPrevPage
+      mostRecentVersionOrder
+      nextPageOrder
+      prevPageOrder
+    }
+  }
+}
+"""
+
+
 # Get inferred project identifiers from user's patches
 GET_INFERRED_PROJECT_IDS = """
 query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {
