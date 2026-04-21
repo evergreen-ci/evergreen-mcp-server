@@ -29,6 +29,11 @@ User wants to...
 ├─ Download build outputs / artifacts from a task
 │   └─ download_task_artifacts_evergreen (needs task_id)
 │
+├─ Schedule a task that didn't run because it wasn't scheduled
+│   └─ get_waterfall_detailed_evergreen (statuses=["unscheduled"]) FIRST
+│       to discover the version_id and task_id values,
+│       then schedule_tasks_evergreen(version_id, task_ids)
+│
 └─ Don't know their project_id
     └─ get_inferred_project_ids_evergreen FIRST
         then use the project_id in subsequent calls
@@ -439,6 +444,57 @@ On failure, returns an `error` key instead of `downloaded_artifacts`/`artifact_c
 **What to do with results**
 1. The returned file paths can be used for further local analysis (extracting archives, reading logs, etc.)
 2. If the response contains `error`, relay the error — especially the available artifact names list so the user can refine their filter
+
+---
+
+## Tool 9: schedule_tasks_evergreen
+
+**Purpose**: Schedule (activate) previously-unscheduled tasks on a version so they will run. This is the only **write/mutation** tool — it changes shared CI state on Evergreen. Requires `TASKS:EDIT` permission on the project.
+
+**When to Use**:
+- User says "task X on version V didn't run, schedule it"
+- After `get_waterfall_detailed_evergreen` reveals tasks with status `unscheduled` that the user wants to run
+- Filling in skipped runs for change-point / regression analysis (paired with `get_mainline_commits_between_evergreen`)
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| version_id | str | **required** | Version (or patch version) ID owning the tasks. From `get_waterfall_detailed_evergreen` (`version_id` field) or a patch's `versionFull.id`. |
+| task_ids | list[str] | **required** | Task IDs to schedule. From `get_waterfall_detailed_evergreen` (the `task_id` field of each task in a cell). Must belong to the given version_id. |
+
+**Return shape**:
+```json
+{
+  "version_id": "abc123...",
+  "requested_task_ids": ["t1", "t2", "t3"],
+  "scheduled_count": 2,
+  "scheduled_tasks": [
+    {
+      "task_id": "t1",
+      "display_name": "compile",
+      "build_variant": "ubuntu",
+      "status": "will-run",
+      "execution": 0,
+      "activated": true
+    }
+  ],
+  "missing_task_ids": ["t3"],
+  "message": "1 task ID(s) were not scheduled. They may already be finished/running, may belong to a different version, or the caller may lack TASKS:EDIT permission on the project."
+}
+```
+
+**What to do with results**:
+1. Tell the user how many tasks were scheduled (`scheduled_count`).
+2. If `missing_task_ids` is non-empty, surface the `message` so the user knows what didn't happen and why.
+3. The scheduled tasks won't have results yet — wait for them to run, then re-query with `get_waterfall_detailed_evergreen` or the test/log tools.
+
+**Discovery workflow**:
+```
+get_waterfall_detailed_evergreen(project_id=..., variants=["my-variant"], statuses=["unscheduled"])
+→ pick version_id and the task_id(s) of interest
+→ schedule_tasks_evergreen(version_id=..., task_ids=[...])
+```
 
 ---
 

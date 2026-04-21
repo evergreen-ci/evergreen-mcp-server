@@ -380,6 +380,26 @@ query GetMainlineCommits($options: WaterfallOptions!) {
 """
 
 
+# Schedule (activate) previously-unscheduled tasks on a version.
+# Used by schedule_tasks_evergreen to flip task_ids found via the waterfall
+# (status="unscheduled") into the run queue. Returns the resulting Task
+# entities so the caller can confirm what was actually scheduled — Evergreen
+# silently drops IDs it can't act on (already finished, wrong version,
+# missing TASKS:EDIT permission).
+SCHEDULE_TASKS = """
+mutation ScheduleTasks($versionId: String!, $taskIds: [String!]!) {
+  scheduleTasks(versionId: $versionId, taskIds: $taskIds) {
+    id
+    displayName
+    buildVariant
+    status
+    execution
+    activated
+  }
+}
+"""
+
+
 # Get inferred project identifiers from user's patches
 GET_INFERRED_PROJECT_IDS = """
 query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {

@@ -78,3 +78,6 @@ credentials.yaml
 # Logs
 *.log
 mcp_server.log
+
+# Downloaded task artifacts (default work_dir for download_task_artifacts_evergreen)
+WORK/

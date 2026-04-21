@@ -26,6 +26,7 @@ from .failed_jobs_tools import (
     fetch_user_recent_patches,
     infer_project_id_from_context,
 )
+from .schedule_tools import schedule_unscheduled_tasks
 from .waterfall_tools import (
     fetch_mainline_commits_between,
     fetch_project_build_variants,
@@ -919,4 +920,53 @@ def register_tools(mcp: FastMCP) -> None:
             )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 12)
+    @mcp.tool(
+        description=(
+            "Schedule (activate) previously-unscheduled tasks on an Evergreen "
+            "version so they will run. This is a write/mutation: it changes "
+            "shared CI state. Use it when a task on version X / variant Y did "
+            "not run because it wasn't scheduled. Requires TASKS:EDIT "
+            "permission on the project. "
+            "Workflow: first call get_waterfall_detailed_evergreen with "
+            "statuses=['unscheduled'] to discover the task_id values for the "
+            "version of interest, then pass version_id and those task_ids "
+            "here. Returns the tasks that were actually scheduled plus a "
+            "missing_task_ids list for any IDs Evergreen silently dropped "
+            "(already finished, wrong version, or insufficient permission)."
+        )
+    )
+    async def schedule_tasks_evergreen(
+        ctx: Context,
+        version_id: Annotated[
+            str,
+            "Version (or patch version) identifier owning the tasks. Found in "
+            "the 'version_id' field of get_waterfall_detailed_evergreen "
+            "responses, or the 'versionFull.id' field on a patch.",
+        ],
+        task_ids: Annotated[
+            list[str],
+            "Task identifiers to schedule. Obtain from "
+            "get_waterfall_detailed_evergreen (the 'task_id' field of each "
+            "task in a cell). Must be tasks belonging to the given version_id.",
+        ],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, "
+            "uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Schedule previously-unscheduled tasks on a version."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await schedule_unscheduled_tasks(
+                client,
+                version_id=version_id,
+                task_ids=task_ids,
+            )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 13)

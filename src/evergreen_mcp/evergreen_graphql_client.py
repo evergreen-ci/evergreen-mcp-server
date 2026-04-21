@@ -27,6 +27,7 @@ from .evergreen_queries import (
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
     GET_WATERFALL,
+    SCHEDULE_TASKS,
 )
 
 # Constants for test status values
@@ -468,6 +469,31 @@ class EvergreenGraphQLClient:
             user_id,
         )
         return patches
+
+    async def schedule_tasks(
+        self, version_id: str, task_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Schedule (activate) previously-unscheduled tasks on a version.
+
+        Args:
+            version_id: Version (or patch version) identifier owning the tasks.
+            task_ids: Task identifiers to schedule. Evergreen requires
+                TASKS:EDIT permission on the project.
+
+        Returns:
+            List of Task dicts that were scheduled. Evergreen silently drops
+            IDs it can't act on, so the result may be shorter than the input.
+        """
+        variables = {"versionId": version_id, "taskIds": task_ids}
+        result = await self._execute_query(SCHEDULE_TASKS, variables)
+        scheduled = result.get("scheduleTasks") or []
+        logger.info(
+            "Scheduled %s/%s tasks on version %s",
+            len(scheduled),
+            len(task_ids),
+            version_id,
+        )
+        return scheduled
 
     async def __aenter__(self):
         """Async context manager entry"""
