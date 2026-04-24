@@ -400,6 +400,44 @@ mutation ScheduleTasks($versionId: String!, $taskIds: [String!]!) {
 """
 
 
+# Restart a single task. `failedOnly` only affects display tasks (restart
+# only failed execution tasks vs all of them). Requires TASKS:EDIT.
+RESTART_TASK = """
+mutation RestartTask($taskId: String!, $failedOnly: Boolean!) {
+  restartTask(taskId: $taskId, failedOnly: $failedOnly) {
+    id
+    displayName
+    buildVariant
+    status
+    execution
+    activated
+  }
+}
+"""
+
+
+# Restart tasks on one or more versions. Passing an empty `taskIds` list for
+# a version restarts all completed tasks on it. `abort=true` additionally
+# aborts any in-progress tasks and queues them for reset. Requires TASKS:EDIT.
+RESTART_VERSIONS = """
+mutation RestartVersions(
+  $versionId: String!,
+  $abort: Boolean!,
+  $versionsToRestart: [VersionToRestart!]!
+) {
+  restartVersions(
+    versionId: $versionId,
+    abort: $abort,
+    versionsToRestart: $versionsToRestart
+  ) {
+    id
+    status
+    activated
+  }
+}
+"""
+
+
 # Get inferred project identifiers from user's patches
 GET_INFERRED_PROJECT_IDS = """
 query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {

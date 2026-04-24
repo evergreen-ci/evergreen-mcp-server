@@ -27,6 +27,8 @@ from .evergreen_queries import (
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
     GET_WATERFALL,
+    RESTART_TASK,
+    RESTART_VERSIONS,
     SCHEDULE_TASKS,
 )
 
@@ -494,6 +496,57 @@ class EvergreenGraphQLClient:
             version_id,
         )
         return scheduled
+
+    async def restart_task(
+        self, task_id: str, failed_only: bool
+    ) -> Dict[str, Any]:
+        """Restart a single finished task, producing a new execution.
+
+        Args:
+            task_id: Task identifier to restart.
+            failed_only: For display tasks, restart only failed execution
+                tasks. No effect on non-display tasks.
+
+        Returns:
+            The Task dict returned by Evergreen after the restart.
+        """
+        variables = {"taskId": task_id, "failedOnly": failed_only}
+        result = await self._execute_query(RESTART_TASK, variables)
+        task = result.get("restartTask") or {}
+        logger.info("Restarted task %s (failed_only=%s)", task_id, failed_only)
+        return task
+
+    async def restart_versions(
+        self, version_id: str, abort: bool, task_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Restart tasks on a version.
+
+        Args:
+            version_id: Version (or patch version) identifier to restart.
+            abort: If True, abort in-progress tasks and queue them for reset
+                before restarting completed tasks.
+            task_ids: Specific task IDs to restart. An empty list means
+                "restart all completed tasks on the version".
+
+        Returns:
+            List of Version dicts reflecting post-restart state.
+        """
+        variables = {
+            "versionId": version_id,
+            "abort": abort,
+            "versionsToRestart": [
+                {"versionId": version_id, "taskIds": task_ids}
+            ],
+        }
+        result = await self._execute_query(RESTART_VERSIONS, variables)
+        versions = result.get("restartVersions") or []
+        logger.info(
+            "Restarted version %s (abort=%s, explicit_task_count=%s)",
+            version_id,
+            abort,
+            len(task_ids),
+        )
+        return versions
 
     async def __aenter__(self):
         """Async context manager entry"""

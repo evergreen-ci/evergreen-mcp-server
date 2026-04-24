@@ -26,6 +26,7 @@ from .failed_jobs_tools import (
     fetch_user_recent_patches,
     infer_project_id_from_context,
 )
+from .restart_tools import restart_task, restart_version
 from .schedule_tools import schedule_unscheduled_tasks
 from .waterfall_tools import (
     fetch_mainline_commits_between,
@@ -969,4 +970,107 @@ def register_tools(mcp: FastMCP) -> None:
             )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 13)
+    @mcp.tool(
+        description=(
+            "Restart a finished Evergreen task, producing a new execution. "
+            "This is a write/mutation: it changes shared CI state. Requires "
+            "TASKS:EDIT permission on the project. Use it to re-run a task "
+            "that failed flakily or to reproduce a failure. "
+            "Obtain task_id from get_patch_failed_jobs_evergreen, "
+            "get_waterfall_detailed_evergreen, or the Spruce task URL "
+            "(https://spruce.corp.mongodb.com/task/<task_id>/logs). "
+            "failed_only only affects display tasks — when true, only "
+            "restarts their failed execution tasks; ignored otherwise. "
+            "Returns the restarted task with its new execution number."
+        )
+    )
+    async def restart_task_evergreen(
+        ctx: Context,
+        task_id: Annotated[
+            str,
+            "Task identifier to restart. Taken from a Spruce task URL "
+            "(/task/<task_id>/logs) or from the 'task_id' field of "
+            "get_patch_failed_jobs_evergreen / "
+            "get_waterfall_detailed_evergreen responses.",
+        ],
+        failed_only: Annotated[
+            bool,
+            "For display tasks, restart only the failed execution tasks "
+            "instead of all of them. Has no effect on non-display tasks. "
+            "Defaults to false.",
+        ] = False,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, "
+            "uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Restart a finished task, producing a new execution."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await restart_task(
+                client,
+                task_id=task_id,
+                failed_only=failed_only,
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Restart tasks on an Evergreen version (patch). This is a "
+            "write/mutation: it changes shared CI state. Requires TASKS:EDIT "
+            "permission on the project. "
+            "When task_ids is omitted or empty, restarts all completed tasks "
+            "on the version (mirrors Spruce's 'Restart' button on a patch). "
+            "Pass specific task_ids to restart only a subset. "
+            "Set abort=true to also abort any in-progress tasks and queue "
+            "them for reset before restarting completed ones. "
+            "Obtain version_id from list_user_recent_patches_evergreen "
+            "('version_id' field) or the 'versionFull.id' on a patch. "
+            "Returns the restarted version entities."
+        )
+    )
+    async def restart_version_evergreen(
+        ctx: Context,
+        version_id: Annotated[
+            str,
+            "Version (or patch version) identifier to restart. Found in the "
+            "'version_id' field of list_user_recent_patches_evergreen or "
+            "'versionFull.id' on a patch.",
+        ],
+        task_ids: Annotated[
+            list[str] | None,
+            "Specific task identifiers to restart. Omit or pass an empty "
+            "list to restart all completed tasks on the version.",
+        ] = None,
+        abort: Annotated[
+            bool,
+            "If true, abort any in-progress tasks and queue them for reset "
+            "before restarting completed tasks. Defaults to false.",
+        ] = False,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, "
+            "uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Restart tasks on a version (full patch or a subset)."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await restart_version(
+                client,
+                version_id=version_id,
+                task_ids=task_ids,
+                abort=abort,
+            )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 15)
