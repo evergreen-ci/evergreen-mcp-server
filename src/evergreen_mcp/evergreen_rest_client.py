@@ -5,8 +5,10 @@ This module provides a REST client for interacting with the Evergreen CI/CD plat
 It handles authentication, connection management and query execution.
 """
 
+import base64
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import aiohttp
 
@@ -19,6 +21,20 @@ from .oidc_auth import OIDCAuthManager
 __version__ = "0.1.0"
 
 logger = logging.getLogger(__name__)
+
+
+def _derive_legacy_base_url(base_url: str) -> str:
+    """Derive the legacy /api/ base URL from a /rest/v2/ base URL.
+
+    Evergreen mounts patch-creation, patch-modify, and module endpoints under
+    `/api/...` on the same host that serves `/rest/v2/...`. The CLI uses both.
+    We accept the v2 base for compatibility with existing config and derive
+    the legacy base by string substitution.
+    """
+    if "/rest/v2" in base_url:
+        return base_url.replace("/rest/v2/", "/api/").replace("/rest/v2", "/api")
+    # Fallback: append /api/ to the host root.
+    return base_url.rstrip("/") + "/api/"
 
 
 class EvergreenRestClient:
@@ -50,6 +66,7 @@ class EvergreenRestClient:
 
         self.user = user
         self.base_url = base_url
+        self._legacy_base_url = _derive_legacy_base_url(base_url)
         self.api_key = api_key
         self.bearer_token = bearer_token
         self._auth_manager = auth_manager
@@ -305,3 +322,128 @@ class EvergreenRestClient:
             raise RuntimeError(f"No data returned for task '{task_id}'")
 
         return TaskResponse.model_validate(data)
+
+    async def create_patch(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Submit a new patch via the legacy `PUT /api/patches/` endpoint.
+
+        Returns the parsed JSON response (`{"patch": {...}}`).
+        """
+        url = self._legacy_base_url + "patches/"
+        session = self._get_session()
+        async with session.request("PUT", url, json=payload) as resp:
+            text = await resp.text()
+            if resp.status == 401 and await self._try_refresh_token():
+                return await self.create_patch(payload)
+            if resp.status != 201:
+                raise RuntimeError(
+                    f"create_patch failed: status={resp.status}, body={text[:500]}"
+                )
+            import json as _json
+
+            return _json.loads(text) if text else {}
+
+    async def modify_patch(self, patch_id: str, action: str) -> None:
+        """Cancel or finalize via legacy `POST /api/patches/{id}`.
+
+        action must be 'finalize' or 'cancel'.
+        """
+        if action not in ("finalize", "cancel"):
+            raise ValueError(f"action must be 'finalize' or 'cancel', got {action!r}")
+        url = self._legacy_base_url + f"patches/{patch_id}"
+        session = self._get_session()
+        body = {"patch_id": patch_id, "action": action}
+        async with session.request("POST", url, json=body) as resp:
+            if resp.status == 401 and await self._try_refresh_token():
+                return await self.modify_patch(patch_id, action)
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(
+                    f"modify_patch({action}) failed: status={resp.status}, "
+                    f"body={text[:500]}"
+                )
+
+    async def get_patch(self, patch_id: str) -> Dict[str, Any]:
+        """Fetch a single patch via `GET /rest/v2/patches/{id}`."""
+        endpoint = f"patches/{patch_id}"
+        response = await self._request("GET", endpoint)
+        if response.get("status") != "success":
+            raise RuntimeError(f"get_patch({patch_id}) failed: {response}")
+        data = response.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"get_patch({patch_id}) returned unexpected payload shape"
+            )
+        return data
+
+    async def set_patch_module(
+        self,
+        *,
+        patch_id: str,
+        module: str,
+        diff: str,
+        base_revision: str,
+        message: str = "",
+    ) -> None:
+        """Attach a module diff via legacy `POST /api/patches/{id}/modules`.
+
+        The CLI sends the diff as a `patch_bytes` byte slice, which Go's JSON
+        marshaller base64-encodes. We replicate that format here.
+        """
+        url = self._legacy_base_url + f"patches/{patch_id}/modules"
+        body = {
+            "module": module,
+            "patch_bytes": base64.b64encode(diff.encode("utf-8")).decode("ascii"),
+            "githash": base_revision,
+            "message": message,
+        }
+        session = self._get_session()
+        async with session.request("POST", url, json=body) as resp:
+            if resp.status == 401 and await self._try_refresh_token():
+                return await self.set_patch_module(
+                    patch_id=patch_id,
+                    module=module,
+                    diff=diff,
+                    base_revision=base_revision,
+                    message=message,
+                )
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(
+                    f"set_patch_module failed: status={resp.status}, body={text[:500]}"
+                )
+
+    async def remove_patch_module(self, patch_id: str, module: str) -> None:
+        """Remove a module via legacy `DELETE /api/patches/{id}/modules?module=...`."""
+        url = (
+            self._legacy_base_url
+            + f"patches/{patch_id}/modules?module={quote(module, safe='')}"
+        )
+        session = self._get_session()
+        async with session.request("DELETE", url) as resp:
+            if resp.status == 401 and await self._try_refresh_token():
+                return await self.remove_patch_module(patch_id, module)
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(
+                    f"remove_patch_module failed: status={resp.status}, "
+                    f"body={text[:500]}"
+                )
+
+    async def list_project_patch_aliases(
+        self, project_id: str, include_project_config: bool = False
+    ) -> List[Dict[str, Any]]:
+        """List patch aliases for a project via `GET /rest/v2/alias/{project}`."""
+        endpoint = f"alias/{project_id}"
+        if include_project_config:
+            endpoint += "?includeProjectConfig=true"
+        response = await self._request("GET", endpoint)
+        if response.get("status") != "success":
+            raise RuntimeError(
+                f"list_project_patch_aliases({project_id}) failed: {response}"
+            )
+        data = response.get("data")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []

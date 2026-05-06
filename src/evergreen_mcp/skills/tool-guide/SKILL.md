@@ -519,3 +519,67 @@ get_task_log_detailed(task_id=...)
 → Returns structured error summary with top terms and examples
 → If you need per-test detail: get_test_results_detailed(task_id=..., test_name=...)
 ```
+
+---
+
+## Patch creation & lifecycle
+
+These tools let an agent submit a new patch directly from a local diff,
+and manage its lifecycle. They are the MCP equivalent of the
+`evergreen patch` CLI command. The diff itself must be captured by the
+caller (e.g., Claude Code via the `Bash` tool running `git diff`); the
+server only forwards it.
+
+### Tool: create_patch_evergreen
+
+**Purpose**: Submit a new patch (`PUT /api/patches/`). Returns the new patch
+id and a Spruce URL. By default the patch is **not** finalized — call
+`finalize_patch_evergreen` after, or pass `finalize=true`.
+
+**Required parameters**:
+- `diff` — unified diff string. Capture with `git diff --binary <merge-base>..HEAD`.
+- `base_revision` — git commit SHA the diff is based on.
+- One task selection: `variants`+`tasks`, or `regex_variants`+`regex_tasks`,
+  or `alias`, or a repeat option (`repeat_patch_id`, `repeat_definition`,
+  `repeat_failed`).
+
+**Optional**: `description`, `parameters`, `trigger_aliases`, test selection
+regexes, `git_metadata` (`{author, email, git_version}`), `finalize` (default
+`false`).
+
+**Common flow**:
+```
+git diff --binary $(git merge-base @ origin/main)..HEAD   (locally)
+→ create_patch_evergreen(diff=..., base_revision=..., project_id=..., variants=[...], tasks=[...])
+→ finalize_patch_evergreen(patch_id=...)
+```
+
+### Tool: finalize_patch_evergreen
+Activate an unfinalized patch so its tasks get scheduled. Use this after
+`create_patch_evergreen` when `finalize=false` was passed (the default).
+For already-scheduled patches, use `restart_version_evergreen` instead.
+
+### Tool: cancel_patch_evergreen
+Cancel an unfinalized patch. The patch will not run any tasks.
+
+### Tool: get_patch_evergreen
+Fetch the full v2 APIPatch payload for a single patch by id. Closes the
+gap between `list_user_recent_patches_evergreen` (lists) and
+`get_patch_failed_jobs_evergreen` (failure-focused view).
+
+### Tool: set_patch_module_evergreen / remove_patch_module_evergreen
+Attach (or remove) a module diff on an existing patch. Modules are
+auxiliary repositories defined by the project; submitting code changes
+that span multiple modules requires one `set_patch_module_evergreen` call
+per module.
+
+### Tool: list_project_tasks_evergreen
+List the unique task names that ran on the most recent waterfall version
+of a project. Use to discover valid task names for the `tasks` parameter
+of `create_patch_evergreen`. Pairs with `list_project_build_variants_evergreen`.
+
+### Tool: list_project_patch_aliases_evergreen
+List patch aliases defined for a project. Aliases are server-defined task
+selectors that can be used as the `alias` parameter of
+`create_patch_evergreen`. Pass `include_project_config=true` to also
+include aliases declared inline in the project's evergreen.yml.

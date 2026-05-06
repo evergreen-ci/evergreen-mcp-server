@@ -26,6 +26,16 @@ from .failed_jobs_tools import (
     fetch_user_recent_patches,
     infer_project_id_from_context,
 )
+from .patch_creation_tools import (
+    cancel_patch,
+    create_patch,
+    finalize_patch,
+    get_patch,
+    list_project_patch_aliases,
+    list_project_tasks,
+    remove_patch_module,
+    set_patch_module,
+)
 from .restart_tools import restart_task, restart_version
 from .schedule_tools import schedule_unscheduled_tasks
 from .waterfall_tools import (
@@ -1073,4 +1083,394 @@ def register_tools(mcp: FastMCP) -> None:
             )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 15)
+    @mcp.tool(
+        description=(
+            "Submit a new Evergreen patch from a locally-captured git diff. "
+            "This is the MCP equivalent of the `evergreen patch` CLI command. "
+            "The diff itself must be captured by the caller (e.g. via "
+            "`git diff --binary <merge-base>..HEAD`) and passed as the `diff` "
+            "parameter. The server forwards it to Evergreen unchanged. "
+            "At least one task-selection mode is required: variants+tasks, "
+            "regex_variants+regex_tasks, alias, or a repeat option "
+            "(repeat_patch_id, repeat_definition, repeat_failed). "
+            "By default the patch is NOT finalized — call "
+            "finalize_patch_evergreen afterwards (or pass finalize=true) to "
+            "actually schedule its tasks. Returns the new patch_id and a "
+            "Spruce URL."
+        )
+    )
+    async def create_patch_evergreen(
+        ctx: Context,
+        diff: Annotated[
+            str,
+            "Unified diff content. Capture locally with `git diff --binary "
+            "<merge-base>..HEAD`. Empty diffs are rejected.",
+        ],
+        base_revision: Annotated[
+            str,
+            "Git commit SHA the diff is based on. Use `git merge-base "
+            "<upstream> HEAD` and pass that SHA.",
+        ],
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected from " "context.",
+        ] = None,
+        description: Annotated[
+            str | None,
+            "Patch description shown in the Spruce UI.",
+        ] = None,
+        variants: Annotated[
+            list[str] | None,
+            "Build variants to run. Use ['all'] for every variant. Pair "
+            "with `tasks`.",
+        ] = None,
+        tasks: Annotated[
+            list[str] | None,
+            "Task names to run on the selected variants. Use ['all'] for "
+            "every task. Pair with `variants`.",
+        ] = None,
+        regex_variants: Annotated[
+            list[str] | None,
+            "Regex patterns matching variants to run. Pair with regex_tasks.",
+        ] = None,
+        regex_tasks: Annotated[
+            list[str] | None,
+            "Regex patterns matching tasks to run. Pair with regex_variants.",
+        ] = None,
+        alias: Annotated[
+            str | None,
+            "Patch alias name (server-defined task selector). Discover with "
+            "list_project_patch_aliases_evergreen.",
+        ] = None,
+        repeat_patch_id: Annotated[
+            str | None,
+            "If set, copy the variant/task definition from this prior patch.",
+        ] = None,
+        repeat_definition: Annotated[
+            bool,
+            "If true, reuse the most recent patch's variant/task definition.",
+        ] = False,
+        repeat_failed: Annotated[
+            bool,
+            "If true, re-run only the failed tasks from the most recent "
+            "patch. Useful for the debug-and-retry loop.",
+        ] = False,
+        parameters: Annotated[
+            list[dict] | None,
+            "Patch parameters as a list of {key, value} dicts.",
+        ] = None,
+        trigger_aliases: Annotated[
+            list[str] | None,
+            "Cross-project trigger alias names.",
+        ] = None,
+        test_selection_include_variants: Annotated[
+            list[str] | None,
+            "Regex patterns — enable test selection on matching variants.",
+        ] = None,
+        test_selection_include_tasks: Annotated[
+            list[str] | None,
+            "Regex patterns — enable test selection on matching tasks.",
+        ] = None,
+        test_selection_exclude_variants: Annotated[
+            list[str] | None,
+            "Regex patterns — disable test selection on matching variants.",
+        ] = None,
+        test_selection_exclude_tasks: Annotated[
+            list[str] | None,
+            "Regex patterns — disable test selection on matching tasks.",
+        ] = None,
+        git_metadata: Annotated[
+            dict | None,
+            "Optional git context: {author, email, git_version}.",
+        ] = None,
+        finalize: Annotated[
+            bool,
+            "If true, immediately schedule the patch's tasks. Defaults to "
+            "false (matches CLI); call finalize_patch_evergreen later.",
+        ] = False,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Submit a new patch."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+            assert effective_id is not None
+            result = await create_patch(
+                api_client,
+                project_id=effective_id,
+                diff=diff,
+                base_revision=base_revision,
+                description=description,
+                variants=variants,
+                tasks=tasks,
+                regex_variants=regex_variants,
+                regex_tasks=regex_tasks,
+                alias=alias,
+                parameters=parameters,
+                trigger_aliases=trigger_aliases,
+                test_selection_include_variants=test_selection_include_variants,
+                test_selection_include_tasks=test_selection_include_tasks,
+                test_selection_exclude_variants=test_selection_exclude_variants,
+                test_selection_exclude_tasks=test_selection_exclude_tasks,
+                git_metadata=git_metadata,
+                finalize=finalize,
+                repeat_patch_id=repeat_patch_id,
+                repeat_definition=repeat_definition,
+                repeat_failed=repeat_failed,
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Finalize an unfinalized Evergreen patch — activates it so its "
+            "selected tasks get scheduled. Use this after "
+            "create_patch_evergreen when finalize=false was passed (the "
+            "default). For already-finalized patches, use "
+            "restart_version_evergreen instead."
+        )
+    )
+    async def finalize_patch_evergreen(
+        ctx: Context,
+        patch_id: Annotated[
+            str,
+            "Patch identifier returned by create_patch_evergreen.",
+        ],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Activate an unfinalized patch."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await finalize_patch(api_client, patch_id=patch_id)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Cancel an unfinalized Evergreen patch. The patch will not run "
+            "any tasks. Use this to abandon a patch that was created but "
+            "should not proceed."
+        )
+    )
+    async def cancel_patch_evergreen(
+        ctx: Context,
+        patch_id: Annotated[
+            str,
+            "Patch identifier to cancel.",
+        ],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Cancel an unfinalized patch."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await cancel_patch(api_client, patch_id=patch_id)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Fetch full details for a single Evergreen patch by its ID. "
+            "Returns the v2 APIPatch payload (status, project, variants, "
+            "tasks, etc.). Use list_user_recent_patches_evergreen to find "
+            "patch IDs, or get_patch_failed_jobs_evergreen for a "
+            "failure-focused view of the same patch."
+        )
+    )
+    async def get_patch_evergreen(
+        ctx: Context,
+        patch_id: Annotated[
+            str,
+            "Patch identifier.",
+        ],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Fetch a single patch by id."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await get_patch(api_client, patch_id=patch_id)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Attach (or replace) a module diff on an existing patch. Modules "
+            "are auxiliary repositories defined by the project; submitting "
+            "code changes that span multiple modules requires one call per "
+            "module. The caller captures each module's diff locally."
+        )
+    )
+    async def set_patch_module_evergreen(
+        ctx: Context,
+        patch_id: Annotated[str, "Patch identifier."],
+        module_name: Annotated[
+            str,
+            "Module name as defined in the project's evergreen.yml modules " "section.",
+        ],
+        diff: Annotated[str, "Unified diff for this module (captured locally)."],
+        base_revision: Annotated[
+            str,
+            "Git commit SHA the module diff is based on.",
+        ],
+        message: Annotated[
+            str,
+            "Optional commit message / note attached to the module diff.",
+        ] = "",
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Set a module diff on a patch."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await set_patch_module(
+                api_client,
+                patch_id=patch_id,
+                module_name=module_name,
+                diff=diff,
+                base_revision=base_revision,
+                message=message,
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Detach a module from an existing patch. Use this to remove a "
+            "previously-set module diff before finalizing."
+        )
+    )
+    async def remove_patch_module_evergreen(
+        ctx: Context,
+        patch_id: Annotated[str, "Patch identifier."],
+        module_name: Annotated[str, "Module name to remove."],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Remove a module from a patch."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await remove_patch_module(
+                api_client, patch_id=patch_id, module_name=module_name
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "List unique task names that ran on the latest waterfall version "
+            "of an Evergreen project, with the build variant each was seen "
+            "on. Use this to discover valid task names to pass to "
+            "create_patch_evergreen's `tasks` parameter. Pairs with "
+            "list_project_build_variants_evergreen."
+        )
+    )
+    async def list_project_tasks_evergreen(
+        ctx: Context,
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected.",
+        ] = None,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """List task names for a project."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+            assert effective_id is not None
+            result = await list_project_tasks(client, project_id=effective_id)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "List patch aliases defined for an Evergreen project. Aliases "
+            "are server-defined task selectors that can be used as the "
+            "`alias` parameter of create_patch_evergreen. Returns each "
+            "alias's name, description, and the variant/task patterns it "
+            "expands to."
+        )
+    )
+    async def list_project_patch_aliases_evergreen(
+        ctx: Context,
+        project_id: Annotated[
+            str | None,
+            "Evergreen project identifier. If omitted, auto-detected.",
+        ] = None,
+        include_project_config: Annotated[
+            bool,
+            "If true, also return aliases declared inline in the project's "
+            "evergreen.yml. Defaults to false (only admin-defined aliases).",
+        ] = False,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """List patch aliases for a project."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            effective_id, selection = await _resolve_project_id(
+                client, user_id, project_id
+            )
+            if selection is not None:
+                return json.dumps(selection, indent=2)
+            assert effective_id is not None
+            result = await list_project_patch_aliases(
+                api_client,
+                project_id=effective_id,
+                include_project_config=include_project_config,
+            )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 23)
