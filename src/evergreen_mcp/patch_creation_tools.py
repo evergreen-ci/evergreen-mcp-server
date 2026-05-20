@@ -22,6 +22,15 @@ def _shape_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
     its keys differ from the v2 representation. We accept either by reading
     the most useful fields if present.
     """
+    raw_vts = patch.get("variants_tasks") or patch.get("VariantsTasks") or []
+    variants_tasks = [
+        {
+            "variant": vt.get("variant") or vt.get("Variant") or "",
+            "tasks": vt.get("tasks") or vt.get("Tasks") or [],
+        }
+        for vt in raw_vts
+        if isinstance(vt, dict)
+    ]
     return {
         "patch_id": patch.get("Id") or patch.get("id") or patch.get("patch_id"),
         "description": patch.get("Description") or patch.get("description"),
@@ -34,6 +43,7 @@ def _shape_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
             else patch.get("activated", False)
         ),
         "version": patch.get("Version") or patch.get("version"),
+        "variants_tasks": variants_tasks,
         "github_patch_data": patch.get("GithubPatchData")
         or patch.get("github_patch_data"),
     }
@@ -75,6 +85,38 @@ def _validate_selection(
     return None
 
 
+def _encode_local_module_includes(
+    includes: Optional[List[Dict[str, str]]],
+) -> List[Dict[str, str]]:
+    """Convert caller-supplied module-include entries to the wire format.
+
+    Each entry maps to a Go `patch.LocalModuleInclude{Module, FileName,
+    FileContent}`; FileContent is `[]byte`, which Go marshals as base64.
+    """
+    out: List[Dict[str, str]] = []
+    for entry in includes or []:
+        module = entry.get("module") or ""
+        filename = entry.get("filename") or entry.get("file_name") or ""
+        content = entry.get("file_content") or entry.get("content") or ""
+        if isinstance(content, str) and content.startswith("diff --git"):
+            raise ValueError(
+                f"local_module_includes entry for '{filename}' looks like a git diff. "
+                "Pass the full raw file content (YAML), not the diff."
+            )
+        if isinstance(content, bytes):
+            content_bytes = content
+        else:
+            content_bytes = str(content).encode("utf-8")
+        out.append(
+            {
+                "module": module,
+                "filename": filename,
+                "file_content": base64.b64encode(content_bytes).decode("ascii"),
+            }
+        )
+    return out
+
+
 def _build_create_payload(
     *,
     project_id: str,
@@ -97,6 +139,7 @@ def _build_create_payload(
     repeat_patch_id: Optional[str],
     repeat_definition: bool,
     repeat_failed: bool,
+    local_module_includes: Optional[List[Dict[str, str]]],
 ) -> Dict[str, Any]:
     """Build the JSON payload accepted by `PUT /api/patches/`.
 
@@ -138,7 +181,7 @@ def _build_create_payload(
         "repeat_patch_id": repeat_patch_id or "",
         "github_author": "",
         "patch_author": "",
-        "local_module_includes": [],
+        "local_module_includes": _encode_local_module_includes(local_module_includes),
     }
 
 
@@ -146,7 +189,7 @@ async def create_patch(
     api_client,
     *,
     project_id: str,
-    diff: str,
+    diff: str = "",
     base_revision: str,
     description: Optional[str] = None,
     variants: Optional[List[str]] = None,
@@ -165,17 +208,18 @@ async def create_patch(
     repeat_patch_id: Optional[str] = None,
     repeat_definition: bool = False,
     repeat_failed: bool = False,
+    local_module_includes: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """Submit a new patch to Evergreen."""
     if not project_id:
         return {"status": "error", "error": "project_id is required."}
-    if not diff:
+    if diff is None:
         return {
             "status": "error",
             "project_id": project_id,
             "error": (
                 "diff is required. Capture it locally with `git diff --binary` "
-                "against the merge-base."
+                "against the merge-base. Pass an empty string for module-only patches."
             ),
         }
     if not base_revision:
@@ -223,6 +267,7 @@ async def create_patch(
         repeat_patch_id=repeat_patch_id,
         repeat_definition=repeat_definition,
         repeat_failed=repeat_failed,
+        local_module_includes=local_module_includes,
     )
 
     try:
@@ -238,13 +283,37 @@ async def create_patch(
     raw = response.get("patch") or response
     shaped = _shape_patch(raw if isinstance(raw, dict) else {})
     patch_id = shaped.get("patch_id")
-    return {
+
+    result: Dict[str, Any] = {
         "status": "ok",
         "patch_id": patch_id,
         "url": _spruce_patch_url(patch_id),
         "finalized": bool(finalize),
         "patch": shaped,
     }
+
+    # Evergreen silently drops tasks whose task-variant pair doesn't exist in
+    # the resolved project config. Detect this early so the agent doesn't have
+    # to wait for finalize to discover the problem.
+    requested_explicit = bool(variants) and bool(tasks)
+    has_tasks = bool(shaped.get("variants_tasks"))
+    if requested_explicit and not has_tasks and not alias and not repeat_patch_id and not repeat_definition and not repeat_failed:
+        result["warning"] = (
+            "No tasks were registered for the requested variant/task selection. "
+            "Finalize will fail with 'no tasks'. This usually means the selected "
+            "tasks are not configured for those variants in the resolved project "
+            "config. For projects that include task definitions from a module "
+            "(e.g. sys-perf with DSI), pass `local_module_include_paths` pointing "
+            "at the patched module file so Evergreen resolves the config against "
+            "your local changes. Do NOT call finalize_patch_evergreen on this patch."
+        )
+        logger.warning(
+            "create_patch for project %s: no tasks registered (patch_id=%s)",
+            project_id,
+            patch_id,
+        )
+
+    return result
 
 
 async def finalize_patch(api_client, *, patch_id: str) -> Dict[str, Any]:

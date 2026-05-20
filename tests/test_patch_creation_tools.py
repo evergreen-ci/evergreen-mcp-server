@@ -31,8 +31,15 @@ class TestCreatePatchValidation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("project_id", result["error"])
         client.create_patch.assert_not_awaited()
 
-    async def test_missing_diff(self):
+    async def test_empty_diff_allowed_for_module_only_patches(self):
+        """Empty string diff is valid — module-only patches have no server changes."""
         client = AsyncMock()
+        client.create_patch.return_value = {
+            "patch": {
+                "Id": "p7",
+                "variants_tasks": [{"variant": "v", "tasks": ["t"]}],
+            }
+        }
         result = await create_patch(
             client,
             project_id="p",
@@ -41,9 +48,8 @@ class TestCreatePatchValidation(unittest.IsolatedAsyncioTestCase):
             variants=["v"],
             tasks=["t"],
         )
-        self.assertEqual(result["status"], "error")
-        self.assertIn("diff", result["error"])
-        client.create_patch.assert_not_awaited()
+        self.assertEqual(result["status"], "ok")
+        client.create_patch.assert_awaited_once()
 
     async def test_missing_base_revision(self):
         client = AsyncMock()
@@ -123,6 +129,9 @@ class TestCreatePatchHappyPath(unittest.IsolatedAsyncioTestCase):
                 "Project": "evergreen",
                 "Status": "created",
                 "Activated": False,
+                "variants_tasks": [
+                    {"variant": "ubuntu", "tasks": ["compile", "test"]},
+                ],
             }
         }
 
@@ -143,6 +152,8 @@ class TestCreatePatchHappyPath(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["patch_id"], "p1")
         self.assertFalse(result["finalized"])
         self.assertIn("spruce.mongodb.com/version/p1", result["url"])
+        self.assertNotIn("warning", result)
+        self.assertEqual(result["patch"]["variants_tasks"][0]["variant"], "ubuntu")
 
         # Inspect the payload that was sent.
         client.create_patch.assert_awaited_once()
@@ -177,6 +188,101 @@ class TestCreatePatchHappyPath(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["finalized"])
         payload = client.create_patch.await_args.args[0]
         self.assertTrue(payload["finalize"])
+
+    async def test_empty_variants_tasks_triggers_warning(self):
+        """When Evergreen returns no variants_tasks for an explicit selection,
+        we surface a warning so the agent knows to use local_module_include_paths."""
+        client = AsyncMock()
+        # Simulate the server accepting the patch but resolving 0 tasks because
+        # the requested tasks aren't in the variant's unpatched config.
+        client.create_patch.return_value = {
+            "patch": {"Id": "p5", "variants_tasks": []}
+        }
+
+        result = await create_patch(
+            client,
+            project_id="sys-perf",
+            diff="d",
+            base_revision="abc",
+            variants=["perf-atlas-gen2.arm.aws"],
+            tasks=["find_one_and_update_locust"],
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("warning", result)
+        self.assertIn("local_module_include_paths", result["warning"])
+        self.assertIn("Do NOT call finalize", result["warning"])
+
+    async def test_no_warning_when_alias_used(self):
+        """Alias-only patches have no explicit task selection — no warning needed."""
+        client = AsyncMock()
+        client.create_patch.return_value = {"patch": {"Id": "p6", "variants_tasks": []}}
+
+        result = await create_patch(
+            client,
+            project_id="sys-perf",
+            diff="d",
+            base_revision="abc",
+            alias="some-alias",
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertNotIn("warning", result)
+
+    async def test_local_module_includes_default_empty(self):
+        client = AsyncMock()
+        client.create_patch.return_value = {"patch": {"Id": "p3"}}
+
+        await create_patch(
+            client,
+            project_id="p",
+            diff="d",
+            base_revision="abc",
+            alias="a",
+        )
+
+        payload = client.create_patch.await_args.args[0]
+        self.assertEqual(payload["local_module_includes"], [])
+
+    async def test_local_module_includes_base64_encoded(self):
+        client = AsyncMock()
+        client.create_patch.return_value = {"patch": {"Id": "p4"}}
+
+        await create_patch(
+            client,
+            project_id="sys-perf",
+            diff="d",
+            base_revision="abc",
+            variants=["v"],
+            tasks=["t"],
+            local_module_includes=[
+                {
+                    "module": "dsi",
+                    "filename": "configurations/some.yml",
+                    "file_content": "tasks:\n- name: foo\n",
+                },
+                # Accept aliased keys.
+                {
+                    "module": "dsi",
+                    "file_name": "other.yml",
+                    "content": "x: 1",
+                },
+            ],
+        )
+
+        payload = client.create_patch.await_args.args[0]
+        includes = payload["local_module_includes"]
+        self.assertEqual(len(includes), 2)
+        self.assertEqual(includes[0]["module"], "dsi")
+        self.assertEqual(includes[0]["filename"], "configurations/some.yml")
+        self.assertEqual(
+            base64.b64decode(includes[0]["file_content"]).decode("utf-8"),
+            "tasks:\n- name: foo\n",
+        )
+        self.assertEqual(includes[1]["filename"], "other.yml")
+        self.assertEqual(
+            base64.b64decode(includes[1]["file_content"]).decode("utf-8"), "x: 1"
+        )
 
     async def test_api_error_path(self):
         client = AsyncMock()
@@ -269,6 +375,23 @@ class TestPatchModuleTools(unittest.IsolatedAsyncioTestCase):
             result = await set_patch_module(client, **kwargs)
             self.assertEqual(result["status"], "error", kwargs)
         client.set_patch_module.assert_not_awaited()
+
+    async def test_set_local_module_includes_rejects_diff_content(self):
+        """Passing a git diff as file_content should raise a clear ValueError."""
+        from evergreen_mcp.patch_creation_tools import _encode_local_module_includes
+
+        with self.assertRaises(ValueError) as cm:
+            _encode_local_module_includes(
+                [
+                    {
+                        "module": "dsi",
+                        "filename": "evergreen/system_perf/master/variants.yml",
+                        "file_content": "diff --git a/variants.yml b/variants.yml\n...",
+                    }
+                ]
+            )
+        self.assertIn("git diff", str(cm.exception))
+        self.assertIn("full raw file content", str(cm.exception))
 
     async def test_remove_happy_path(self):
         client = AsyncMock()

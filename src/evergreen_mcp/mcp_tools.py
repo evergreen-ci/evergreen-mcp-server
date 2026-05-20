@@ -7,6 +7,7 @@ Tools are registered with the FastMCP server instance.
 import json
 import logging
 import os
+import subprocess
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, AsyncIterator, Dict, Optional, Tuple
 
@@ -140,6 +141,46 @@ async def _resolve_project_id(
             "again with the project_id parameter set to their choice."
         ),
     }
+
+
+def _git_diff_from_repo(repo_path: str) -> tuple[str, str]:
+    """Run git diff against mainline and return (diff, base_revision).
+
+    Upstream detection order: origin/master → origin/main → @{u}.
+    Feature branches often track themselves, so prefer the explicit mainline
+    refs rather than the branch's tracking remote.
+    """
+    expanded = os.path.expanduser(repo_path)
+    upstream = None
+    for candidate in ("origin/master", "origin/main"):
+        r = subprocess.run(
+            ["git", "rev-parse", "--verify", candidate],
+            cwd=expanded,
+            capture_output=True,
+        )
+        if r.returncode == 0:
+            upstream = candidate
+            break
+    if upstream is None:
+        upstream = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "@{u}"],
+            cwd=expanded,
+            text=True,
+            stderr=subprocess.PIPE,
+        ).strip()
+    base_revision = subprocess.check_output(
+        ["git", "merge-base", upstream, "HEAD"],
+        cwd=expanded,
+        text=True,
+        stderr=subprocess.PIPE,
+    ).strip()
+    diff = subprocess.check_output(
+        ["git", "diff", "--binary", f"{upstream}...HEAD"],
+        cwd=expanded,
+        text=True,
+        stderr=subprocess.PIPE,
+    )
+    return diff, base_revision
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -1085,32 +1126,56 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Submit a new Evergreen patch from a locally-captured git diff. "
-            "This is the MCP equivalent of the `evergreen patch` CLI command. "
-            "The diff itself must be captured by the caller (e.g. via "
-            "`git diff --binary <merge-base>..HEAD`) and passed as the `diff` "
-            "parameter. The server forwards it to Evergreen unchanged. "
+            "Submit a new Evergreen patch. "
+            "PREFERRED: pass `server_repo_path` (path to the server's local git "
+            "checkout) and optionally `module_repos` (list of "
+            "{module, repo_path} dicts for each module). The server generates "
+            "the diffs automatically — no need to run git commands yourself. "
+            "After creating the patch the server calls set_patch_module for "
+            "each entry in module_repos, then finalizes if finalize=true. "
+            "ALTERNATIVE: omit server_repo_path and pass `diff` + "
+            "`base_revision` directly (legacy behavior). "
             "At least one task-selection mode is required: variants+tasks, "
             "regex_variants+regex_tasks, alias, or a repeat option "
             "(repeat_patch_id, repeat_definition, repeat_failed). "
-            "By default the patch is NOT finalized — call "
-            "finalize_patch_evergreen afterwards (or pass finalize=true) to "
-            "actually schedule its tasks. Returns the new patch_id and a "
-            "Spruce URL."
+            "For projects that generate their task list from a module-included "
+            "file (e.g. sys-perf with DSI), pass `local_module_include_paths` "
+            "so the patched config is resolved at create time. "
+            "Returns the new patch_id and a Spruce URL."
         )
     )
     async def create_patch_evergreen(
         ctx: Context,
-        diff: Annotated[
-            str,
-            "Unified diff content. Capture locally with `git diff --binary "
-            "<merge-base>..HEAD`. Empty diffs are rejected.",
-        ],
+        server_repo_path: Annotated[
+            str | None,
+            "Absolute (or ~-expanded) path to the server's local git repo. "
+            "When provided, the server runs `git diff --binary <upstream>...HEAD` "
+            "and `git merge-base` automatically. `diff` and `base_revision` can "
+            "be omitted. Upstream is inferred as origin/master > origin/main > "
+            "@{u}. For module-only patches (no server changes) leave this unset "
+            "and pass an empty string for `diff`.",
+        ] = None,
+        module_repos: Annotated[
+            list[dict] | None,
+            "List of {module, repo_path} dicts, one per module to attach. "
+            "The server runs `git diff --binary <upstream>...HEAD` inside each "
+            "repo and calls set_patch_module automatically. Example: "
+            '[{"module": "dsi", "repo_path": "~/dsi/my-branch"}]. '
+            "After all modules are set, the patch is finalized if finalize=true.",
+        ] = None,
         base_revision: Annotated[
             str,
             "Git commit SHA the diff is based on. Use `git merge-base "
-            "<upstream> HEAD` and pass that SHA.",
-        ],
+            "<upstream> HEAD` and pass that SHA. Optional when server_repo_path "
+            "is provided.",
+        ] = "",
+        diff: Annotated[
+            str,
+            "Unified diff content. Capture locally with `git diff --binary "
+            "<merge-base>..HEAD`. Pass an empty string for module-only "
+            "patches where the server repo has no local changes. Optional "
+            "when server_repo_path is provided.",
+        ] = "",
         project_id: Annotated[
             str | None,
             "Evergreen project identifier. If omitted, auto-detected from " "context.",
@@ -1188,12 +1253,84 @@ def register_tools(mcp: FastMCP) -> None:
             "If true, immediately schedule the patch's tasks. Defaults to "
             "false (matches CLI); call finalize_patch_evergreen later.",
         ] = False,
+        local_module_includes: Annotated[
+            list[dict] | None,
+            "MCP equivalent of the CLI's --include-modules. Provide a list of "
+            "{module, filename, file_content} entries, one per file referenced "
+            "by the project YAML's `include:` directive. Required for projects "
+            "where the task list is generated from a module-included file "
+            "(e.g. sys-perf reads task definitions from dsi/). Pass the FULL "
+            "RAW FILE CONTENT of each YAML file in `file_content` — NOT a git "
+            "diff. Evergreen uses these to resolve the project config at "
+            "patch-creation time. Without this, the patched task list is "
+            "resolved against the unpatched module files and selected tasks may "
+            "not exist. For large files prefer local_module_include_paths.",
+        ] = None,
+        local_module_include_paths: Annotated[
+            list[dict] | None,
+            "File-path variant of local_module_includes for large files. "
+            "Provide a list of {module, filename, path} entries where `path` "
+            "is an absolute path on the local filesystem. The server reads "
+            "each file's FULL RAW CONTENT (not a diff) and bundles it exactly "
+            "as local_module_includes would. Use this instead of "
+            "local_module_includes when the file content is too large to pass "
+            "inline (e.g. dsi/variants.yml is ~140 KB). "
+            "Entries from both parameters are merged before sending.",
+        ] = None,
         bearer_token: Annotated[
             str | None,
             "Override with a bearer token for this request.",
         ] = None,
     ) -> str:
         """Submit a new patch."""
+        import os as _os
+
+        # --- auto-generate diff from server repo path ---
+        effective_diff = diff
+        effective_base_revision = base_revision
+        if server_repo_path:
+            try:
+                effective_diff, effective_base_revision = _git_diff_from_repo(
+                    server_repo_path
+                )
+            except subprocess.CalledProcessError as exc:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": f"git command failed in {server_repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
+                    },
+                    indent=2,
+                )
+
+        # --- expand local_module_include_paths ---
+        combined_includes = list(local_module_includes or [])
+        for entry in local_module_include_paths or []:
+            path = entry.get("path") or ""
+            if not path:
+                return json.dumps(
+                    {"status": "error", "error": f"local_module_include_paths entry missing 'path': {entry}"},
+                    indent=2,
+                )
+            try:
+                with open(_os.path.expanduser(path), "r", encoding="utf-8") as fh:
+                    content = fh.read()
+            except OSError as exc:
+                return json.dumps(
+                    {"status": "error", "error": f"Cannot read {path}: {exc}"},
+                    indent=2,
+                )
+            combined_includes.append(
+                {
+                    "module": entry.get("module") or "",
+                    "filename": entry.get("filename") or entry.get("file_name") or "",
+                    "file_content": content,
+                }
+            )
+
+        # When module_repos are provided we finalize manually after setting
+        # modules, so don't let create_patch trigger finalize itself.
+        create_finalize = finalize and not module_repos
+
         evg_ctx = ctx.request_context.lifespan_context
         async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
             client,
@@ -1209,8 +1346,8 @@ def register_tools(mcp: FastMCP) -> None:
             result = await create_patch(
                 api_client,
                 project_id=effective_id,
-                diff=diff,
-                base_revision=base_revision,
+                diff=effective_diff,
+                base_revision=effective_base_revision,
                 description=description,
                 variants=variants,
                 tasks=tasks,
@@ -1224,11 +1361,68 @@ def register_tools(mcp: FastMCP) -> None:
                 test_selection_exclude_variants=test_selection_exclude_variants,
                 test_selection_exclude_tasks=test_selection_exclude_tasks,
                 git_metadata=git_metadata,
-                finalize=finalize,
+                finalize=create_finalize,
                 repeat_patch_id=repeat_patch_id,
                 repeat_definition=repeat_definition,
                 repeat_failed=repeat_failed,
+                local_module_includes=combined_includes or None,
             )
+
+            if result.get("status") != "ok":
+                return json.dumps(result, indent=2)
+
+            patch_id = result.get("patch_id")
+
+            # --- attach module diffs ---
+            module_results = []
+            for mod in module_repos or []:
+                mod_name = mod.get("module") or ""
+                mod_path = mod.get("repo_path") or ""
+                if not mod_name or not mod_path:
+                    module_results.append(
+                        {"module": mod_name, "status": "error", "error": "module and repo_path are required in module_repos entries"}
+                    )
+                    continue
+                try:
+                    mod_diff, mod_base = _git_diff_from_repo(mod_path)
+                except subprocess.CalledProcessError as exc:
+                    module_results.append(
+                        {
+                            "module": mod_name,
+                            "status": "error",
+                            "error": f"git command failed in {mod_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
+                        }
+                    )
+                    continue
+                mod_result = await set_patch_module(
+                    api_client,
+                    patch_id=patch_id,
+                    module_name=mod_name,
+                    diff=mod_diff,
+                    base_revision=mod_base,
+                    message=description or "",
+                )
+                module_results.append({"module": mod_name, **mod_result})
+
+            if module_results:
+                result["module_results"] = module_results
+                any_mod_error = any(m.get("status") == "error" for m in module_results)
+                if any_mod_error:
+                    result["warning"] = (
+                        "One or more module diffs failed. "
+                        "The patch was created but may be incomplete. "
+                        "Check module_results for details."
+                    )
+
+            # --- finalize if requested (and modules were set) ---
+            if finalize and module_repos and not any(
+                m.get("status") == "error" for m in module_results
+            ):
+                fin_result = await finalize_patch(api_client, patch_id=patch_id)
+                result["finalized"] = fin_result.get("status") == "ok"
+                if fin_result.get("status") != "ok":
+                    result["finalize_error"] = fin_result.get("error")
+
         return json.dumps(result, indent=2)
 
     @mcp.tool(
@@ -1324,7 +1518,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Attach (or replace) a module diff on an existing patch. Modules "
             "are auxiliary repositories defined by the project; submitting "
             "code changes that span multiple modules requires one call per "
-            "module. The caller captures each module's diff locally."
+            "module. Supply either `repo_path` (recommended — the server "
+            "generates the diff automatically) or explicit `diff` + "
+            "`base_revision`."
         )
     )
     async def set_patch_module_evergreen(
@@ -1332,13 +1528,27 @@ def register_tools(mcp: FastMCP) -> None:
         patch_id: Annotated[str, "Patch identifier."],
         module_name: Annotated[
             str,
-            "Module name as defined in the project's evergreen.yml modules " "section.",
+            "Module name as defined in the project's evergreen.yml modules section.",
         ],
-        diff: Annotated[str, "Unified diff for this module (captured locally)."],
+        repo_path: Annotated[
+            str | None,
+            "Absolute path to the module's local git repo. When provided, the "
+            "server runs `git diff <upstream>...HEAD` and `git merge-base` "
+            "automatically — `diff` and `base_revision` can be omitted. The "
+            "upstream branch is inferred from the repo's tracking config "
+            "(`git rev-parse --abbrev-ref @{u}`). Use this instead of passing "
+            "large diff strings inline.",
+        ] = None,
+        diff: Annotated[
+            str | None,
+            "Unified diff for this module. Required when `repo_path` is not "
+            "supplied. Capture locally with `git diff --binary <base>..HEAD`.",
+        ] = None,
         base_revision: Annotated[
-            str,
-            "Git commit SHA the module diff is based on.",
-        ],
+            str | None,
+            "Git commit SHA the module diff is based on. Required when "
+            "`repo_path` is not supplied.",
+        ] = None,
         message: Annotated[
             str,
             "Optional commit message / note attached to the module diff.",
@@ -1349,6 +1559,29 @@ def register_tools(mcp: FastMCP) -> None:
         ] = None,
     ) -> str:
         """Set a module diff on a patch."""
+        if repo_path:
+            try:
+                diff, base_revision = _git_diff_from_repo(repo_path)
+            except subprocess.CalledProcessError as exc:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "patch_id": patch_id,
+                        "error": f"git command failed in {repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
+                    },
+                    indent=2,
+                )
+        if not diff or not base_revision:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "patch_id": patch_id,
+                    "error": (
+                        "Provide either `repo_path` or both `diff` and `base_revision`."
+                    ),
+                },
+                indent=2,
+            )
         evg_ctx = ctx.request_context.lifespan_context
         async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
             client,
