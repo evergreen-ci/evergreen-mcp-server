@@ -213,6 +213,25 @@ class TestCreatePatchHappyPath(unittest.IsolatedAsyncioTestCase):
         self.assertIn("local_module_include_paths", result["warning"])
         self.assertIn("Do NOT call finalize", result["warning"])
 
+    async def test_repeat_patch_id_no_tasks_warns(self):
+        """repeat_patch_id that resolves to no tasks should surface a clear warning
+        rather than silently letting finalize fail with a 400/500."""
+        client = AsyncMock()
+        client.create_patch.return_value = {"patch": {"Id": "p8", "variants_tasks": []}}
+
+        result = await create_patch(
+            client,
+            project_id="sys-perf",
+            diff="d",
+            base_revision="abc",
+            repeat_patch_id="old-patch-id",
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("warning", result)
+        self.assertIn("repeat", result["warning"])
+        self.assertIn("Do NOT call finalize", result["warning"])
+
     async def test_no_warning_when_alias_used(self):
         """Alias-only patches have no explicit task selection — no warning needed."""
         client = AsyncMock()

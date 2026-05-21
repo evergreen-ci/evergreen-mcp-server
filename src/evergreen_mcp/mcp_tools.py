@@ -1186,13 +1186,19 @@ def register_tools(mcp: FastMCP) -> None:
         ] = None,
         variants: Annotated[
             list[str] | None,
-            "Build variants to run. Use ['all'] for every variant. Pair "
-            "with `tasks`.",
+            "Build variants to run. Evergreen schedules the cross-product of "
+            "variants × tasks — every listed task on every listed variant. "
+            "Task+variant pairs that don't exist in the resolved project config "
+            "are silently dropped (no error). Check variants_tasks in the "
+            "response to confirm what was actually registered. "
+            "Use ['all'] for every variant. Pair with `tasks`.",
         ] = None,
         tasks: Annotated[
             list[str] | None,
-            "Task names to run on the selected variants. Use ['all'] for "
-            "every task. Pair with `variants`.",
+            "Task names to run on the selected variants. Scheduled as a "
+            "cross-product with `variants`; pairs absent from the project "
+            "config are silently dropped. Use ['all'] for every task. "
+            "Pair with `variants`.",
         ] = None,
         regex_variants: Annotated[
             list[str] | None,
@@ -1485,11 +1491,13 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Fetch full details for a single Evergreen patch by its ID. "
-            "Returns the v2 APIPatch payload (status, project, variants, "
-            "tasks, etc.). Use list_user_recent_patches_evergreen to find "
-            "patch IDs, or get_patch_failed_jobs_evergreen for a "
-            "failure-focused view of the same patch."
+            "Fetch details for a single Evergreen patch by its ID. "
+            "By default returns a slim summary (status, project, description, "
+            "variants_tasks, times, URL) — safe to call in any context. "
+            "Pass full=true only when you need every raw field from the v2 "
+            "APIPatch payload; the response can be very large. "
+            "Use list_user_recent_patches_evergreen to find patch IDs, or "
+            "get_patch_failed_jobs_evergreen for a failure-focused view."
         )
     )
     async def get_patch_evergreen(
@@ -1498,6 +1506,12 @@ def register_tools(mcp: FastMCP) -> None:
             str,
             "Patch identifier.",
         ],
+        full: Annotated[
+            bool,
+            "Return the complete raw v2 APIPatch payload. "
+            "Default false (slim summary). Only set true when you need "
+            "a field not present in the slim view.",
+        ] = False,
         bearer_token: Annotated[
             str | None,
             "Override with a bearer token for this request.",
@@ -1511,6 +1525,22 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await get_patch(api_client, patch_id=patch_id)
+
+        if not full and result.get("status") == "ok":
+            raw = result.get("patch") or {}
+            result = {
+                "status": "ok",
+                "patch_id": result.get("patch_id"),
+                "url": result.get("url"),
+                "project": raw.get("project_identifier") or raw.get("project_id"),
+                "description": raw.get("description"),
+                "patch_status": raw.get("status"),
+                "activated": raw.get("activated"),
+                "create_time": raw.get("create_time"),
+                "finish_time": raw.get("finish_time"),
+                "variants_tasks": raw.get("variants_tasks") or [],
+            }
+
         return json.dumps(result, indent=2)
 
     @mcp.tool(

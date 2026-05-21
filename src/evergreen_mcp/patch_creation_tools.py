@@ -297,21 +297,37 @@ async def create_patch(
     # to wait for finalize to discover the problem.
     requested_explicit = bool(variants) and bool(tasks)
     has_tasks = bool(shaped.get("variants_tasks"))
-    if requested_explicit and not has_tasks and not alias and not repeat_patch_id and not repeat_definition and not repeat_failed:
-        result["warning"] = (
-            "No tasks were registered for the requested variant/task selection. "
-            "Finalize will fail with 'no tasks'. This usually means the selected "
-            "tasks are not configured for those variants in the resolved project "
-            "config. For projects that include task definitions from a module "
-            "(e.g. sys-perf with DSI), pass `local_module_include_paths` pointing "
-            "at the patched module file so Evergreen resolves the config against "
-            "your local changes. Do NOT call finalize_patch_evergreen on this patch."
-        )
-        logger.warning(
-            "create_patch for project %s: no tasks registered (patch_id=%s)",
-            project_id,
-            patch_id,
-        )
+    if not has_tasks:
+        if repeat_patch_id or repeat_definition or repeat_failed:
+            result["warning"] = (
+                "No tasks were registered even though a repeat option was used "
+                f"(repeat_patch_id={repeat_patch_id!r}, repeat_definition={repeat_definition}, "
+                f"repeat_failed={repeat_failed}). The referenced patch may have had no tasks, "
+                "may belong to a different project, or the repeat API call may have failed "
+                "silently. Finalize will fail with 'no tasks'. "
+                "Do NOT call finalize_patch_evergreen on this patch — "
+                "create a new one with explicit variants+tasks instead."
+            )
+            logger.warning(
+                "create_patch for project %s: repeat option produced no tasks (patch_id=%s)",
+                project_id,
+                patch_id,
+            )
+        elif requested_explicit and not alias:
+            result["warning"] = (
+                "No tasks were registered for the requested variant/task selection. "
+                "Finalize will fail with 'no tasks'. This usually means the selected "
+                "tasks are not configured for those variants in the resolved project "
+                "config. For projects that include task definitions from a module "
+                "(e.g. sys-perf with DSI), pass `local_module_include_paths` pointing "
+                "at the patched module file so Evergreen resolves the config against "
+                "your local changes. Do NOT call finalize_patch_evergreen on this patch."
+            )
+            logger.warning(
+                "create_patch for project %s: no tasks registered (patch_id=%s)",
+                project_id,
+                patch_id,
+            )
 
     return result
 
