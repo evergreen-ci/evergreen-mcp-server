@@ -90,30 +90,40 @@ async def fetch_user_recent_patches(
     }
 
 
-async def fetch_patch_failed_jobs(
+FAILED_STATUSES = ["failed", "system-failed", "task-timed-out"]
+
+STATUS_FILTER_MAP = {
+    "failed": FAILED_STATUSES,
+    "succeeded": ["succeeded"],
+    "all": [],
+}
+
+
+async def fetch_patch_jobs(
     client,
     patch_id: str,
     max_results: int = 50,
     project_id: str = None,
+    status_filter: str = "failed",
 ) -> Dict[str, Any]:
-    """Fetch failed jobs for a specific patch
+    """Fetch jobs for a specific patch, optionally filtered by status.
 
     Args:
         client: Evergreen GraphQL client
         patch_id: Patch identifier
-        max_results: Maximum number of failed tasks to return
+        max_results: Maximum number of tasks to return
         project_id: Optional project identifier to validate patch ownership
+        status_filter: One of "failed", "succeeded", or "all"
 
     Returns:
-        Dictionary containing patch info and failed jobs data,
-        or an error response if the patch is not found/invalid
+        Dictionary containing patch info and tasks data
     """
-    logger.info("Fetching failed jobs for patch %s", patch_id)
+    logger.info("Fetching %s jobs for patch %s", status_filter, patch_id)
     if project_id:
         logger.info("Project context: %s", project_id)
 
-    # Get patch with failed tasks
-    patch = await client.get_patch_failed_tasks(patch_id)
+    statuses = STATUS_FILTER_MAP.get(status_filter, FAILED_STATUSES)
+    patch = await client.get_patch_tasks(patch_id, statuses)
 
     if project_id and patch.get("projectIdentifier") != project_id:
         raise ValueError("Patch does not belong to the specified project")
@@ -145,16 +155,15 @@ async def fetch_patch_failed_jobs(
         else None
     )
 
-    # Process failed tasks
     tasks_data = version.get("tasks", {}) if version else {}
-    failed_tasks = tasks_data.get("data", [])
+    tasks = tasks_data.get("data", [])
     total_count = tasks_data.get("count", 0)
 
     processed_tasks = []
     build_variants = set()
     has_timeouts = False
 
-    for task in failed_tasks[:max_results]:  # Limit results
+    for task in tasks[:max_results]:
         # Extract key information
         task_info = {
             "task_id": task.get("id"),
@@ -212,24 +221,25 @@ async def fetch_patch_failed_jobs(
         processed_tasks.append(task_info)
         build_variants.add(task.get("buildVariant"))
 
-    # Create summary
     summary = {
-        "total_failed_tasks": total_count,
+        "total_tasks": total_count,
         "returned_tasks": len(processed_tasks),
-        "failed_build_variants": sorted(list(build_variants)),
+        "build_variants": sorted(list(build_variants)),
         "has_timeouts": has_timeouts,
+        "status_filter": status_filter,
     }
 
     logger.info(
-        "Successfully processed %s failed tasks for patch %s",
+        "Successfully processed %s tasks (%s) for patch %s",
         len(processed_tasks),
+        status_filter,
         patch_id,
     )
 
     return {
         "patch_info": patch_info,
         "version_info": version_info,
-        "failed_tasks": processed_tasks,
+        "tasks": processed_tasks,
         "summary": summary,
         "project_id": project_id,
     }

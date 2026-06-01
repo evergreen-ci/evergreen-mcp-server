@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 from evergreen_mcp.failed_jobs_tools import (
-    fetch_patch_failed_jobs,
+    fetch_patch_jobs,
     fetch_task_logs,
     fetch_task_test_results,
 )
@@ -16,7 +16,7 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
     async def test_host_metadata_included_in_task_info(self):
         """Test that host metadata fields are extracted from task data."""
         mock_client = AsyncMock()
-        mock_client.get_patch_failed_tasks.return_value = {
+        mock_client.get_patch_tasks.return_value = {
             "id": "patch123",
             "patchNumber": 1,
             "githash": "abc123",
@@ -70,13 +70,13 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        result = await fetch_patch_failed_jobs(mock_client, "patch123")
+        result = await fetch_patch_jobs(mock_client, "patch123")
 
         # Verify the result structure
-        self.assertIn("failed_tasks", result)
-        self.assertEqual(len(result["failed_tasks"]), 1)
+        self.assertIn("tasks", result)
+        self.assertEqual(len(result["tasks"]), 1)
 
-        task = result["failed_tasks"][0]
+        task = result["tasks"][0]
 
         # Verify host metadata fields are present
         self.assertEqual(task["ami"], "ami-0522af671d366e600")
@@ -87,7 +87,7 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
     async def test_host_metadata_handles_missing_values(self):
         """Test that missing host metadata fields are handled gracefully."""
         mock_client = AsyncMock()
-        mock_client.get_patch_failed_tasks.return_value = {
+        mock_client.get_patch_tasks.return_value = {
             "id": "patch123",
             "patchNumber": 1,
             "githash": "abc123",
@@ -126,9 +126,9 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        result = await fetch_patch_failed_jobs(mock_client, "patch123")
+        result = await fetch_patch_jobs(mock_client, "patch123")
 
-        task = result["failed_tasks"][0]
+        task = result["tasks"][0]
 
         # Verify host metadata fields are None when not provided
         self.assertIsNone(task["ami"])

@@ -21,7 +21,7 @@ from .failed_jobs_tools import (
     fetch_evergreen_task_logs,
     fetch_evergreen_task_test_results,
     fetch_inferred_project_ids,
-    fetch_patch_failed_jobs,
+    fetch_patch_jobs,
     fetch_task_logs,
     fetch_task_test_results,
     fetch_user_recent_patches,
@@ -300,13 +300,13 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Analyze failed CI/CD jobs for a specific patch to understand why "
-            "builds are failing. Shows detailed failure information including "
-            "failed tasks, build variants, timeout issues, log links, and test "
-            "failure counts. Essential for debugging patch failures. "
+            "Get CI/CD jobs for a specific patch. By default returns only failed jobs "
+            "to help debug patch failures; use status_filter='all' to see every task or "
+            "'succeeded' to see only passing tasks. Shows task status, build variants, "
+            "timeout info, log links, and test counts. "
             "If project_id is not specified, will automatically detect it from "
-            "your workspace directory and recent patch activity."
-            "This tool may return a list of available project_ids if it cannot determine the project_id automatically."
+            "your workspace directory and recent patch activity. "
+            "This tool may return a list of available project_ids if it cannot determine the project_id automatically. "
             "You should ask the user which project they want to use, then call this tool again with the project_id parameter set to their choice."
         )
     )
@@ -323,15 +323,20 @@ def register_tools(mcp: FastMCP) -> None:
         ] = None,
         max_results: Annotated[
             int,
-            "Maximum number of failed tasks to analyze. Use 10-20 for focused "
-            "analysis, 50+ for comprehensive failure review.",
+            "Maximum number of tasks to return. Use 10-20 for focused "
+            "analysis, 50+ for comprehensive review.",
         ] = 50,
+        status_filter: Annotated[
+            str,
+            "Which tasks to return: 'failed' (default) for failed/timed-out tasks only, "
+            "'succeeded' for passing tasks only, 'all' for every task regardless of status.",
+        ] = "failed",
         bearer_token: Annotated[
             str | None,
             "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
         ] = None,
     ) -> str:
-        """Get failed jobs for a specific patch."""
+        """Get jobs for a specific patch, filtered by status."""
         evg_ctx = ctx.request_context.lifespan_context
 
         async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
@@ -382,8 +387,12 @@ def register_tools(mcp: FastMCP) -> None:
                         indent=2,
                     )
 
-            result = await fetch_patch_failed_jobs(
-                client, patch_id, max_results, project_id=effective_project_id
+            result = await fetch_patch_jobs(
+                client,
+                patch_id,
+                max_results,
+                project_id=effective_project_id,
+                status_filter=status_filter,
             )
 
             # Include low-confidence warning if applicable

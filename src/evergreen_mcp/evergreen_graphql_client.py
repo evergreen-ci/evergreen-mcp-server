@@ -18,14 +18,14 @@ from . import USER_AGENT
 from .evergreen_queries import (
     GET_INFERRED_PROJECT_IDS,
     GET_MAINLINE_COMMITS,
-    GET_PATCH_FAILED_TASKS,
+    GET_PATCH_TASKS,
     GET_PROJECT,
     GET_PROJECT_SETTINGS,
     GET_PROJECTS,
     GET_TASK_LOGS,
     GET_TASK_TEST_RESULTS,
     GET_USER_RECENT_PATCHES,
-    GET_VERSION_WITH_FAILED_TASKS,
+    GET_VERSION_TASKS,
     GET_WATERFALL,
     RESTART_TASK,
     RESTART_VERSIONS,
@@ -292,49 +292,51 @@ class EvergreenGraphQLClient:
         )
         return patches
 
-    async def get_patch_failed_tasks(self, patch_id: str) -> Dict[str, Any]:
-        """Get failed tasks for a specific patch
+    async def get_patch_tasks(
+        self, patch_id: str, statuses: List[str]
+    ) -> Dict[str, Any]:
+        """Get tasks for a specific patch, filtered by status.
 
         Args:
             patch_id: Patch identifier
+            statuses: List of statuses to filter by. Empty list returns all tasks.
 
         Returns:
-            Patch with failed tasks dictionary
+            Patch with tasks dictionary
         """
-        variables = {"patchId": patch_id}
-        result = await self._execute_query(GET_PATCH_FAILED_TASKS, variables)
+        variables = {"patchId": patch_id, "statuses": statuses}
+        result = await self._execute_query(GET_PATCH_TASKS, variables)
         patch = result.get("patch")
 
         if not patch:
             raise Exception(f"Patch not found: {patch_id}")
 
-        # Count failed tasks
         version = patch.get("versionFull", {})
-        failed_count = version.get("tasks", {}).get("count", 0)
-
-        logger.info("Retrieved patch %s with %s failed tasks", patch_id, failed_count)
+        task_count = version.get("tasks", {}).get("count", 0)
+        logger.info("Retrieved patch %s with %s tasks", patch_id, task_count)
         return patch
 
-    async def get_version_with_failed_tasks(self, version_id: str) -> Dict[str, Any]:
-        """Get version with failed tasks only
+    async def get_version_tasks(
+        self, version_id: str, statuses: List[str]
+    ) -> Dict[str, Any]:
+        """Get tasks for a specific version, filtered by status.
 
         Args:
             version_id: Version identifier
+            statuses: List of statuses to filter by. Empty list returns all tasks.
 
         Returns:
-            Version with failed tasks dictionary
+            Version with tasks dictionary
         """
-        variables = {"versionId": version_id}
-        result = await self._execute_query(GET_VERSION_WITH_FAILED_TASKS, variables)
+        variables = {"versionId": version_id, "statuses": statuses}
+        result = await self._execute_query(GET_VERSION_TASKS, variables)
 
         version = result.get("version")
         if not version:
             raise Exception(f"Version not found: {version_id}")
 
-        failed_count = version.get("tasks", {}).get("count", 0)
-        logger.info(
-            "Retrieved version %s with %s failed tasks", version_id, failed_count
-        )
+        task_count = version.get("tasks", {}).get("count", 0)
+        logger.info("Retrieved version %s with %s tasks", version_id, task_count)
         return version
 
     async def get_task_logs(self, task_id: str, execution: int = 0) -> Dict[str, Any]:
