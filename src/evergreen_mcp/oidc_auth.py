@@ -12,6 +12,7 @@ import logging
 import os
 import tempfile
 import time
+from datetime import datetime, timezone
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -55,9 +56,16 @@ class DeviceFlowSlowDown(Exception):
 
 # HTTP timeout configurations (in seconds)
 HTTP_TIMEOUT = 30
-# File lock timeout — must be long enough for device flow (user completing
-# browser login) while still detecting stuck processes. 120s balances both.
+# File lock timeout for the fast read+refresh phase. Device flow runs outside
+# the lock, so this only needs to cover normal token refresh latency.
 FILE_LOCK_TIMEOUT = 120
+# Seconds to poll the file after a failed refresh before falling back to device
+# flow. Gives running processes and devprod-mcp-proxy time to write a fresh token.
+_DEVICE_FLOW_GRACE_S = 30
+# After "already claimed", poll the shared file at this interval for up to
+# _CLAIMED_POLL_TIMEOUT_S before giving up. The winner writes within ~1-2s.
+_CLAIMED_POLL_INTERVAL_S = 0.5
+_CLAIMED_POLL_TIMEOUT_S = 30
 
 
 def _load_oauth_config_from_evergreen_yml() -> dict:
@@ -190,7 +198,13 @@ class OIDCAuthManager:
             exp = claims.get("exp", 0)
             if exp:
                 remaining = exp - time.time()
-                return remaining > 60, int(remaining)  # 1 min buffer
+                valid = remaining > 60
+                logger.debug(
+                    "Token expiry: exp=%s remaining=%ds valid=%s",
+                    exp, int(remaining), valid,
+                )
+                return valid, int(remaining)
+            logger.debug("Token has no exp claim — treating as invalid")
             return False, 0
         except Exception as e:
             # Malformed/tampered token - treat as invalid for security
@@ -234,18 +248,25 @@ class OIDCAuthManager:
             ) from e
 
     def _normalize_token_data(self, token_data: dict) -> dict:
-        """Normalize token data by computing expires_at from expires_in if needed.
+        """Normalize token data by computing expires_at and expiry from expires_in if needed.
 
-        OAuth servers typically return expires_in (seconds until expiry) rather than
-        expires_at (absolute timestamp). This method ensures expires_at is always set
-        for token file persistence, allowing other tools that read the token file to
-        check expiry without decoding the JWT.
-
-        Note: _check_token_expiry() decodes the JWT directly and doesn't use expires_at,
-        but this normalization is kept for compatibility with external token consumers.
+        OAuth servers return expires_in (seconds until expiry). We compute:
+        - expires_at: Unix timestamp, used by this MCP server for expiry checks
+        - expiry: ISO 8601 UTC string, required by Kanopy CLI (Go). Without it,
+          Go unmarshals the missing field as the zero time (0001-01-01T00:00:00Z),
+          which Kanopy treats as expired — causing it to consume the refresh token
+          and write back a corrupted file that breaks subsequent MCP refreshes.
         """
-        if "expires_in" in token_data and "expires_at" not in token_data:
-            token_data["expires_at"] = time.time() + token_data["expires_in"]
+        if "expires_in" in token_data:
+            expires_at = time.time() + token_data["expires_in"]
+            if "expires_at" not in token_data:
+                token_data["expires_at"] = expires_at
+            if "expiry" not in token_data:
+                token_data["expiry"] = datetime.fromtimestamp(
+                    expires_at, tz=timezone.utc
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        fields = {k for k in token_data if k != "access_token"}
+        logger.debug("Normalized token fields: %s", sorted(fields))
         return token_data
 
     def _read_token_file(self) -> Optional[dict]:
@@ -267,7 +288,8 @@ class OIDCAuthManager:
             logger.exception("Failed to read token file %s", self.token_file)
             return None
 
-        logger.info("Found token file: %s", self.token_file)
+        fields = {k for k in token_data if k != "access_token"}
+        logger.debug("Token file fields: %s", sorted(fields))
         if "access_token" not in token_data:
             logger.warning("Token file missing access_token field")
             return None
@@ -298,13 +320,19 @@ class OIDCAuthManager:
             )
             return None
 
-    async def refresh_token(self) -> Optional[dict]:
+    async def refresh_token(self, min_remaining_s: int = 60) -> Optional[dict]:
         """
         Attempt to refresh the token using authlib.
 
         Acquires the cross-process file lock, then reads the refresh token
         fresh from disk. This avoids stale in-memory refresh tokens when
         another process has already rotated it.
+
+        On "already claimed" (another process took the RT first), polls the
+        shared file every _CLAIMED_POLL_INTERVAL_S for up to
+        _CLAIMED_POLL_TIMEOUT_S seconds instead of retrying the HTTP endpoint.
+        The winner writes the fresh token within ~1-2s; polling recovers it
+        without consuming additional RTs.
 
         Returns:
             Token data dict if successful, None otherwise
@@ -317,9 +345,11 @@ class OIDCAuthManager:
                     logger.warning("No token file found for refresh")
                     return None
 
-                # Another process may have already refreshed — check first
-                is_valid, _ = self._check_token_expiry(token_data)
-                if is_valid:
+                # Another process may have already refreshed — check first.
+                # Only short-circuit if remaining exceeds min_remaining_s so
+                # the proactive loop can force a real HTTP refresh early.
+                is_valid, remaining = self._check_token_expiry(token_data)
+                if is_valid and remaining > min_remaining_s:
                     logger.debug("Token already valid (refreshed by another process)")
                     self._access_token = token_data["access_token"]
                     self._user_id = self._extract_user_id(self._access_token)
@@ -330,7 +360,10 @@ class OIDCAuthManager:
                     logger.warning("No refresh token in token file")
                     return None
 
-                return await self._do_refresh_token(refresh_token_value)
+                result = await self._do_refresh_token(refresh_token_value)
+                if result is not None:
+                    return result
+                # None means "already claimed" — fall through to file polling
         except FileLockTimeout:
             logger.error(
                 "Could not acquire token lock within %ds — another process "
@@ -339,6 +372,33 @@ class OIDCAuthManager:
                 self.lock_file,
             )
             return None
+
+        # "already claimed": another process (devprod or sibling Python session)
+        # just consumed this RT and will write a fresh token within ~1-2s.
+        # Poll the file rather than retrying HTTP with a stale RT.
+        logger.warning(
+            "Refresh token already claimed — polling shared file for up to %ds",
+            _CLAIMED_POLL_TIMEOUT_S,
+        )
+        deadline = asyncio.get_event_loop().time() + _CLAIMED_POLL_TIMEOUT_S
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(_CLAIMED_POLL_INTERVAL_S)
+            token_data = self._read_token_file()
+            if token_data:
+                is_valid, remaining = self._check_token_expiry(token_data)
+                if is_valid and remaining > min_remaining_s:
+                    logger.info(
+                        "File poll: recovered fresh token (%ds remaining)", remaining
+                    )
+                    self._access_token = token_data["access_token"]
+                    self._user_id = self._extract_user_id(self._access_token)
+                    return token_data
+
+        logger.error(
+            "Refresh token claimed and file poll timed out after %ds",
+            _CLAIMED_POLL_TIMEOUT_S,
+        )
+        return None
 
     async def _do_refresh_token(self, refresh_token_value: str) -> Optional[dict]:
         """Execute the HTTP token refresh.
@@ -365,7 +425,20 @@ class OIDCAuthManager:
                 )
 
                 if response.status_code == 200:
-                    token_data = self._normalize_token_data(response.json())
+                    raw = response.json()
+                    logger.debug(
+                        "Refresh response fields: %s (has refresh_token=%s)",
+                        sorted(k for k in raw if k != "access_token"),
+                        "refresh_token" in raw,
+                    )
+                    token_data = self._normalize_token_data(raw)
+
+                    # Some OIDC servers don't rotate refresh tokens — they omit
+                    # refresh_token from the response. Preserve the one we used so
+                    # future refreshes can still work.
+                    if "refresh_token" not in token_data:
+                        logger.debug("Server omitted refresh_token — preserving existing one")
+                        token_data["refresh_token"] = refresh_token_value
 
                     # Validate token BEFORE updating state to ensure atomic updates
                     new_access_token = token_data["access_token"]
@@ -388,6 +461,14 @@ class OIDCAuthManager:
                     logger.info("Token refreshed successfully!")
                     return token_data
                 else:
+                    if response.status_code == 400:
+                        body = response.json()
+                        if "already been claimed" in body.get("error_description", ""):
+                            # Return None so refresh_token() releases the lock
+                            # and retries — the winning process needs the lock
+                            # free to write the new token file.
+                            logger.warning("Refresh token already claimed — releasing lock for retry")
+                            return None
                     logger.error(
                         "Token refresh failed with status %d: %s",
                         response.status_code,
@@ -509,15 +590,15 @@ class OIDCAuthManager:
         """
         Main authentication flow with cross-process coordination.
 
-        Fast-path check (no lock), then acquires file lock and re-checks
-        the token file after acquiring the lock — another process may have
-        completed authentication while we waited.
+        The file lock is held only during the fast read-and-refresh phase.
+        Device flow (browser authentication) runs outside the lock so other
+        processes are not blocked for the full duration of user interaction.
 
         Steps:
-        1. Check if already authenticated (fast path, no lock)
-        2. Acquire cross-process file lock
-        3. Re-check token file (another process may have written it)
-        4. Delegate to _do_authentication() if still needed
+        1. Fast path — check in-memory token (no lock)
+        2. Acquire file lock → re-check file → attempt refresh
+        3. Lock released — wait _DEVICE_FLOW_GRACE_S for another process to refresh
+        4. Trigger device flow if still no valid token
         """
         logger.info("Checking authentication status...")
 
@@ -532,11 +613,10 @@ class OIDCAuthManager:
                 )
                 return True
 
-        # Acquire cross-process file lock before doing authentication
+        # Phase 1: read + refresh under file lock (fast, typically < 2s)
+        _needs_device_flow = False
         try:
             async with AsyncFileLock(self.lock_file, timeout=FILE_LOCK_TIMEOUT):
-                # Re-check token file after acquiring lock — another process
-                # may have completed auth while we were waiting
                 token_data = self._read_token_file()
                 if token_data:
                     is_valid, remaining = self._check_token_expiry(token_data)
@@ -552,13 +632,50 @@ class OIDCAuthManager:
                         except OIDCAuthenticationError as e:
                             logger.warning("Token file malformed after lock: %s", e)
                             self._access_token = None
-
-                return await self._do_authentication()
+                if await self._do_authentication():
+                    return True
+                _needs_device_flow = True
+                # File lock released here — device flow proceeds without it
         except FileLockTimeout:
             raise OIDCAuthenticationError(
                 f"Could not acquire token lock within {FILE_LOCK_TIMEOUT}s — "
                 f"another process may be stuck. Remove {self.lock_file} and retry."
             )
+
+        if not _needs_device_flow:
+            return False
+
+        # Phase 2: grace period — poll file before triggering device flow.
+        # Another running process or devprod may write a fresh token within seconds.
+        logger.info(
+            "Refresh failed — waiting %ds for another process before device flow",
+            _DEVICE_FLOW_GRACE_S,
+        )
+        for _ in range(_DEVICE_FLOW_GRACE_S // 5):
+            await asyncio.sleep(5)
+            token_data = self._read_token_file()
+            if token_data:
+                is_valid, _ = self._check_token_expiry(token_data)
+                if is_valid:
+                    try:
+                        self._access_token = token_data["access_token"]
+                        self._user_id = self._extract_user_id(self._access_token)
+                        logger.info("Grace period: recovered from file, skipping device flow")
+                        return True
+                    except OIDCAuthenticationError:
+                        pass
+
+        # Phase 3: device flow without holding the file lock
+        logger.warning(
+            "No valid token after %ds grace — authentication required", _DEVICE_FLOW_GRACE_S
+        )
+        token_data = await self.device_flow_auth()
+        if token_data:
+            self._access_token = token_data["access_token"]
+            self._user_id = self._extract_user_id(self._access_token)
+            return True
+
+        return False
 
     async def _do_authentication(self) -> bool:
         """Execute the authentication flow (token file -> refresh -> device flow).
@@ -592,16 +709,9 @@ class OIDCAuthManager:
                     # _do_refresh_token already updated _access_token and _user_id
                     return True
 
-        # Need to authenticate
-        logger.warning("No valid token found - authentication required")
-        token_data = await self.device_flow_auth()
-        if token_data:
-            self._access_token = token_data["access_token"]
-            # If device flow returns malformed token, something is seriously wrong
-            # with the OIDC provider - let the exception propagate
-            self._user_id = self._extract_user_id(self._access_token)
-            return True
-
+        # Refresh failed and no valid token — signal to caller that device flow is needed.
+        # Device flow is handled by ensure_authenticated() outside the file lock so
+        # other processes are not blocked during the browser authentication.
         return False
 
     async def initiate_device_flow(self) -> dict:

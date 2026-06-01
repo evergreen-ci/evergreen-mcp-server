@@ -426,6 +426,71 @@ class TestTokenRefresh:
                             )
 
     @pytest.mark.asyncio
+    async def test_refresh_preserves_refresh_token_when_server_omits_it(
+        self, auth_manager_with_config, expired_jwt_claims
+    ):
+        """Servers that don't rotate refresh tokens omit refresh_token from the
+        refresh response. The existing refresh_token must be preserved so future
+        refreshes can succeed."""
+        expired_token = create_mock_jwt(expired_jwt_claims)
+        disk_token_data = {
+            "access_token": expired_token,
+            "refresh_token": "original.refresh.token",
+        }
+
+        # Server returns only a new access_token — no refresh_token (non-rotating)
+        new_token_data = {
+            "access_token": "new.access.token",
+        }
+
+        auth_manager_with_config._metadata = {
+            "token_endpoint": "https://dex.example.com/token"
+        }
+        auth_manager_with_config._client = Mock()
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = new_token_data
+
+        saved_data = {}
+
+        def capture_save(data):
+            saved_data.update(data)
+
+        with patch.object(
+            auth_manager_with_config, "_read_token_file", return_value=disk_token_data
+        ):
+            with patch(
+                "evergreen_mcp.oidc_auth.httpx.AsyncClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=None)
+                mock_client_class.return_value = mock_client
+
+                with patch.object(
+                    auth_manager_with_config, "_save_token", side_effect=capture_save
+                ):
+                    with patch.object(
+                        auth_manager_with_config,
+                        "_extract_user_id",
+                        return_value="testuser",
+                    ):
+                        with patch("evergreen_mcp.oidc_auth.AsyncFileLock") as mock_afl:
+                            async_cm = AsyncMock()
+                            async_cm.__aenter__ = AsyncMock(return_value=None)
+                            async_cm.__aexit__ = AsyncMock(return_value=False)
+                            mock_afl.return_value = async_cm
+
+                            result = await auth_manager_with_config.refresh_token()
+
+                            assert result is not None
+                            assert result["access_token"] == "new.access.token"
+                            # Original refresh_token must be preserved in saved data
+                            assert saved_data.get("refresh_token") == "original.refresh.token"
+
+    @pytest.mark.asyncio
     async def test_refresh_token_no_token_file(self, auth_manager):
         """Test token refresh when no token file exists."""
         with patch.object(auth_manager, "_read_token_file", return_value=None):

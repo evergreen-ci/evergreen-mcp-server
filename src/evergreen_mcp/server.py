@@ -5,6 +5,7 @@ It handles server lifecycle, configuration, and tool registration.
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -24,9 +25,17 @@ from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 from evergreen_mcp.mcp_tools import register_tools
 from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 
-# Set up logging
+# Set up logging — stderr at INFO, per-PID debug file for auth diagnosis
 logging.basicConfig(level=logging.INFO)
+_log_file = Path.home() / "logs" / f"evergreen-mcp-{os.getpid()}.log"
+_log_file.parent.mkdir(exist_ok=True)
+_fh = logging.FileHandler(_log_file)
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(process)d] %(name)s %(levelname)s %(message)s"))
+logging.getLogger("evergreen_mcp").addHandler(_fh)
+logging.getLogger("evergreen_mcp").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.info("Debug log: %s", _log_file)
 
 
 @dataclass
@@ -179,6 +188,102 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
     return evergreen_config, default_project_id, auth_manager
 
 
+_PROACTIVE_REFRESH_BEFORE_S = 0  # fire only after AT expires; devprod refreshes first (at 30s)
+_CONSECUTIVE_FAILURE_LIMIT = 3
+_FILE_CHECK_INTERVAL_S = 60  # how often to poll the shared file while sleeping
+
+
+async def _proactive_refresh_loop(auth_manager: "OIDCAuthManager") -> None:
+    """Background task: keep the in-memory access token up-to-date.
+
+    With _PROACTIVE_REFRESH_BEFORE_S=0 this loop sleeps for the full AT
+    lifetime and wakes up only after the AT expires. By that point
+    devprod-mcp-proxy has already refreshed (it fires at 30 s before expiry)
+    and written a fresh token to the shared file. refresh_token(0) reads the
+    file under the lock, finds a valid token, and short-circuits — no HTTP
+    call, no RT consumed, no race with devprod.
+
+    While sleeping, the loop polls the shared file every _FILE_CHECK_INTERVAL_S
+    seconds. If devprod writes a newer token mid-sleep, we pick it up and
+    extend the sleep — preventing the expiry-boundary race entirely.
+
+    If the file also has an expired token (devprod not running), refresh_token
+    makes a real HTTP call. After _CONSECUTIVE_FAILURE_LIMIT consecutive
+    failures it falls back to ensure_authenticated() which triggers device flow.
+    """
+    consecutive_failures = 0
+    while True:
+        try:
+            if auth_manager.access_token:
+                is_valid, remaining = auth_manager._check_token_expiry(
+                    {"access_token": auth_manager.access_token}
+                )
+                if remaining > _PROACTIVE_REFRESH_BEFORE_S:
+                    sleep_for = max(remaining - _PROACTIVE_REFRESH_BEFORE_S, 30)
+                    logger.debug(
+                        "Proactive refresh: %ds remaining, sleeping %ds",
+                        remaining, sleep_for,
+                    )
+                    # Sleep in chunks, picking up fresher tokens written by
+                    # devprod or other processes between cycles.
+                    while sleep_for > 0:
+                        chunk = min(_FILE_CHECK_INTERVAL_S, sleep_for)
+                        await asyncio.sleep(chunk)
+                        sleep_for -= chunk
+                        token_data = auth_manager._read_token_file()
+                        if token_data:
+                            _, new_remaining = auth_manager._check_token_expiry(token_data)
+                            if new_remaining > remaining:
+                                auth_manager._access_token = token_data["access_token"]
+                                new_sleep = max(
+                                    new_remaining - _PROACTIVE_REFRESH_BEFORE_S, 30
+                                )
+                                logger.debug(
+                                    "File watcher: newer token (%ds remaining),"
+                                    " extending sleep to %ds",
+                                    new_remaining, new_sleep,
+                                )
+                                sleep_for = new_sleep
+                                remaining = new_remaining
+                    continue
+
+            logger.info("Proactive refresh: AT expired — reading from shared file")
+            result = await auth_manager.refresh_token(min_remaining_s=_PROACTIVE_REFRESH_BEFORE_S)
+            if result:
+                consecutive_failures = 0
+                _, new_remaining = auth_manager._check_token_expiry(
+                    {"access_token": auth_manager.access_token}
+                )
+                sleep_for = max(new_remaining - _PROACTIVE_REFRESH_BEFORE_S, 30)
+                logger.debug("Proactive refresh: %ds remaining, sleeping %ds", new_remaining, sleep_for)
+                await asyncio.sleep(sleep_for)
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _CONSECUTIVE_FAILURE_LIMIT:
+                    logger.warning(
+                        "Proactive refresh: %d consecutive failures — triggering re-authentication",
+                        consecutive_failures,
+                    )
+                    auth_manager._access_token = None  # bypass ensure_authenticated fast path
+                    try:
+                        await auth_manager.ensure_authenticated()
+                        consecutive_failures = 0
+                        logger.info("Proactive refresh: re-authentication succeeded")
+                    except Exception as e:
+                        logger.error(
+                            "Proactive refresh: re-authentication failed: %s — retrying in 60s", e
+                        )
+                else:
+                    logger.warning("Proactive refresh: failed — retrying in 60s")
+                await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            logger.info("Proactive refresh task shutting down")
+            return
+        except Exception as e:
+            logger.error("Proactive refresh error: %s — retrying in 60s", e)
+            await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     """Server lifespan manager - handles GraphQL client lifecycle.
@@ -249,6 +354,12 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
             base_url=api_key_rest_url,
         )
 
+    # Start proactive token refresh background task for OIDC auth
+    refresh_task = None
+    if auth_manager is not None:
+        refresh_task = asyncio.create_task(_proactive_refresh_loop(auth_manager))
+        logger.info("Proactive token refresh task started")
+
     # In per_request mode, there are no default clients to manage.
     if client is None:
         logger.info("Per-request auth mode — no default clients to initialize")
@@ -262,7 +373,8 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
                 projects_for_directory=projects_for_directory,
             )
         finally:
-            pass
+            if refresh_task:
+                refresh_task.cancel()
     else:
         async with client:
             logger.info("Evergreen GraphQL client initialized")
@@ -291,6 +403,8 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
                     projects_for_directory=projects_for_directory,
                 )
             finally:
+                if refresh_task:
+                    refresh_task.cancel()
                 await api_client._close_session()
                 logger.info("Evergreen REST client session closed")
 

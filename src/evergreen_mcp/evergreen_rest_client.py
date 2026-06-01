@@ -122,17 +122,22 @@ class EvergreenRestClient:
 
     async def _try_refresh_token(self) -> bool:
         """Attempt to refresh the bearer token and recreate session."""
-        if not self._auth_manager or not self.bearer_token:
+        if not self._auth_manager:
+            logger.debug("_try_refresh_token: no auth_manager, skipping")
             return False
-        logger.info("Attempting token refresh...")
+        if not self.bearer_token:
+            logger.debug("_try_refresh_token: no bearer_token set, skipping")
+            return False
+        logger.info("REST client got 401 — attempting token refresh")
         try:
             token_data = await self._auth_manager.refresh_token()
             if token_data:
                 self.bearer_token = token_data["access_token"]
                 self.headers = self._get_headers()
                 await self._close_session()  # Force new session with new headers
-                logger.info("Token refreshed successfully")
+                logger.info("REST client token refreshed successfully")
                 return True
+            logger.warning("Token refresh returned None — refresh token may be expired")
         except Exception as e:
             logger.error("Token refresh failed: %s", e)
         return False
@@ -149,26 +154,21 @@ class EvergreenRestClient:
         else:
             full_url = self.base_url + url
 
-        try:
-            async with session.request(method, full_url, **kwargs) as response:
-                # Handle 401 - try token refresh
-                if (
-                    response.status == 401
-                    and _retry
-                    and await self._try_refresh_token()
-                ):
-                    return await self._request(method, url, _retry=False, **kwargs)
-                logger.debug("Response status: %s", response.status)
-                response.raise_for_status()
-                content_type = response.headers.get("Content-Type", "")
-                if "application/json" in content_type:
-                    return {"status": "success", "data": await response.json()}
-                else:
-                    return {"status": "success", "data": await response.text()}
-        except aiohttp.ClientResponseError as e:
-            if e.status == 401 and _retry and await self._try_refresh_token():
+        async with session.request(method, full_url, **kwargs) as response:
+            # Handle 401 - try token refresh
+            if (
+                response.status == 401
+                and _retry
+                and await self._try_refresh_token()
+            ):
                 return await self._request(method, url, _retry=False, **kwargs)
-            raise
+            logger.debug("Response status: %s", response.status)
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                return {"status": "success", "data": await response.json()}
+            else:
+                return {"status": "success", "data": await response.text()}
 
     async def get_task_logs(
         self, task_id: str, execution_retries: int
