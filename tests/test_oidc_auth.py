@@ -282,9 +282,9 @@ class TestNormalizeTokenData:
         assert "expiry" in result
         assert isinstance(result["expiry"], str)
         # Verify ISO 8601 format and that the time is within 1 minute of now + 599s
-        parsed = datetime.datetime.strptime(result["expiry"], "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=datetime.timezone.utc
-        )
+        parsed = datetime.datetime.strptime(
+            result["expiry"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=datetime.timezone.utc)
         expected = time.time() + 599
         assert abs(parsed.timestamp() - expected) < 60
 
