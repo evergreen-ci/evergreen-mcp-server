@@ -12,8 +12,8 @@ These tests validate the OIDCAuthManager class including:
 
 import asyncio
 import base64
-import json
 import datetime
+import json
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
