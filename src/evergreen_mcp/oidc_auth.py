@@ -254,9 +254,7 @@ class OIDCAuthManager:
                 token_data["expires_at"] = time.time() + token_data["expires_in"]
             # Add/update 'expiry' field in ISO 8601 format for Kanopy CLI compatibility
             # Kanopy CLI (Go) expects this field to exist and be in RFC3339/ISO8601 format
-            expiry_timestamp = token_data.get(
-                "expires_at", time.time() + token_data["expires_in"]
-            )
+            expiry_timestamp = token_data.get("expires_at")
             token_data["expiry"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiry_timestamp)
             )
