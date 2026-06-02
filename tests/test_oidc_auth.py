@@ -13,6 +13,7 @@ These tests validate the OIDCAuthManager class including:
 import asyncio
 import base64
 import json
+import datetime
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
@@ -280,10 +281,12 @@ class TestNormalizeTokenData:
         # Should add expiry (ISO 8601 format for Kanopy CLI compatibility)
         assert "expiry" in result
         assert isinstance(result["expiry"], str)
-        # Verify ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-        assert len(result["expiry"]) == 20
-        assert result["expiry"].endswith("Z")
-        assert "T" in result["expiry"]
+        # Verify ISO 8601 format and that the time is within 1 minute of now + 599s
+        parsed = datetime.datetime.strptime(result["expiry"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc
+        )
+        expected = time.time() + 599
+        assert abs(parsed.timestamp() - expected) < 60
 
     def test_normalize_preserves_existing_expires_at(self, auth_manager):
         """Test that existing expires_at is preserved when present."""
