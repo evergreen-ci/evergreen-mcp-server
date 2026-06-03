@@ -241,11 +241,23 @@ class OIDCAuthManager:
         for token file persistence, allowing other tools that read the token file to
         check expiry without decoding the JWT.
 
-        Note: _check_token_expiry() decodes the JWT directly and doesn't use expires_at,
+        Also adds/updates the 'expiry' field in ISO 8601 format for compatibility
+        with Kanopy CLI (Go), which expects this field for token expiration checking.
+        Without this, Kanopy CLI may write the zero-value time (0001-01-01T00:00:00Z)
+        back to the token file, corrupting it for other consumers.
+
+        Note: _check_token_expiry() decodes the JWT directly and doesn't use these fields,
         but this normalization is kept for compatibility with external token consumers.
         """
-        if "expires_in" in token_data and "expires_at" not in token_data:
-            token_data["expires_at"] = time.time() + token_data["expires_in"]
+        if "expires_in" in token_data:
+            if "expires_at" not in token_data:
+                token_data["expires_at"] = time.time() + token_data["expires_in"]
+            # Add/update 'expiry' field in ISO 8601 format for Kanopy CLI compatibility
+            # Kanopy CLI (Go) expects this field to exist and be in RFC3339/ISO8601 format
+            expiry_timestamp = token_data.get("expires_at")
+            token_data["expiry"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiry_timestamp)
+            )
         return token_data
 
     def _read_token_file(self) -> Optional[dict]:
