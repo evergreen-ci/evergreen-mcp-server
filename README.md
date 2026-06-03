@@ -39,6 +39,44 @@ This will:
 
 > **Note**: If you don't have the Evergreen CLI installed, see [Evergreen CLI Installation](https://github.com/evergreen-ci/evergreen/wiki/Using-the-Command-Line-Tool#installation).
 
+### Step 1.5: Keep Your Token Fresh (Recommended)
+
+OIDC tokens expire roughly every 10 minutes. `scripts/kanopy-token-refresh.py` runs in the background and silently refreshes your token every 9 minutes so you never hit authentication errors mid-session.
+
+**Install dependencies:**
+```bash
+pip3 install httpx pyyaml
+```
+
+**Add to `~/.zshrc` so it starts automatically with every new shell:**
+```zsh
+# Start kanopy token refresher in the background (once per login shell)
+if ! pgrep -qf "kanopy-token-refresh.py"; then
+    python3 /path/to/evergreen-mcp-server/scripts/kanopy-token-refresh.py \
+        >> /tmp/kanopy-token-refresh.log 2>&1 &
+    disown
+fi
+```
+
+Replace `/path/to/evergreen-mcp-server` with the absolute path to your clone (e.g. `~/projects/evergreen-mcp-server`).
+
+**Reload your shell to start it immediately:**
+```bash
+source ~/.zshrc
+```
+
+**Verify it's running:**
+```bash
+pgrep -qf "kanopy-token-refresh.py" && echo "running" || echo "not running"
+```
+
+**Or run it manually for a single session without adding it to zshrc:**
+```bash
+python3 scripts/kanopy-token-refresh.py &
+```
+
+Logs are written to `/tmp/kanopy-token-refresh.log`.
+
 ### Step 2: Configure Your MCP Client
 
 Add the Evergreen MCP server to your AI assistant's MCP configuration. You can use either **uv** (lightweight, no Docker needed) or **Docker**.
@@ -2010,7 +2048,7 @@ chmod 600 ~/.evergreen.yml ~/.kanopy/token-oidclogin.json
 
 ### Token refresh issues
 
-OIDC tokens expire. Re-run `evergreen login` if you see authentication errors after some time.
+OIDC tokens expire roughly every 10 minutes. Use `scripts/kanopy-token-refresh.py` to keep the token refreshed automatically in the background (see [Step 1.5](#step-15-keep-your-token-fresh-recommended)). If the refresher isn't running, re-run `evergreen login` to get a fresh token.
 
 ### MCP Server won't connect
 
