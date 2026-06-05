@@ -30,9 +30,17 @@ User wants to...
 │   └─ download_task_artifacts_evergreen (needs task_id)
 │
 ├─ Schedule a task that didn't run because it wasn't scheduled
-│   └─ get_waterfall_detailed_evergreen (statuses=["unscheduled"]) FIRST
-│       to discover the version_id and task_id values,
-│       then schedule_tasks_evergreen(version_id, task_ids)
+│   ├─ For mainline (gitter_request) versions:
+│   │   └─ get_waterfall_detailed_evergreen (statuses=["unscheduled"]) FIRST
+│   │       to discover the version_id and task_id values,
+│   │       then schedule_tasks_evergreen(version_id, task_ids)
+│   └─ For trigger_request / non-mainline versions (invisible to waterfall):
+│       └─ get_version_tasks_evergreen(version_id=..., status_filter="all") FIRST
+│           to enumerate available task_ids,
+│           then schedule_tasks_evergreen(version_id, task_ids)
+│
+├─ List tasks on any version (including trigger_request / non-patch)
+│   └─ get_version_tasks_evergreen(version_id=..., status_filter="all")
 │
 └─ Don't know their project_id
     └─ get_inferred_project_ids_evergreen FIRST
@@ -193,6 +201,65 @@ User wants to...
 3. For test failures → call get_task_test_results_evergreen(task_id)
 4. For other failures → call get_task_logs_evergreen(task_id)
 5. Look for patterns: same task failing across multiple variants = likely real code issue. Fails on one variant only = possibly platform-specific.
+
+---
+
+## Tool 3b: get_version_tasks_evergreen
+
+**Purpose**: Enumerate tasks on any Evergreen version by `version_id`, regardless of how the version was created. This is the correct tool for `trigger_request` versions and other non-mainline versions that are **silently skipped** by the waterfall tools.
+
+**When to Use**:
+- The user gives you a Spruce URL like `spruce.corp.mongodb.com/version/<id>/tasks` and you need to see what tasks exist
+- You need to schedule tasks on a `trigger_request` version (the waterfall returns nothing for these)
+- You want all tasks on a version without going through the patch graph
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| version_id | str | **required** | Version ID from a Spruce URL or any other Evergreen response |
+| max_results | int | 50 | Max tasks to return |
+| status_filter | str | `"all"` | `"all"` for every task, `"failed"` for failures only, `"succeeded"` for passing only |
+
+**Return shape**:
+```json
+{
+  "version_info": {
+    "version_id": "6a19e3b9...",
+    "revision": "9285e70f...",
+    "author": "user@mongodb.com",
+    "create_time": "2026-05-29T19:07:15.534Z",
+    "status": "success"
+  },
+  "tasks": [
+    {
+      "task_id": "sys_perf_..._taskname__<uuid>_26_05_29_19_07_15",
+      "task_name": "tpcc_majority_small",
+      "build_variant": "perf-3-node-replSet",
+      "status": "succeeded",
+      "execution": 0
+    }
+  ],
+  "summary": {
+    "total_tasks": 3,
+    "returned_tasks": 3,
+    "build_variants": ["perf-3-node-replSet"],
+    "has_timeouts": false,
+    "status_filter": "all"
+  }
+}
+```
+
+**What to do with results**:
+- Use `task_id` values to call `schedule_tasks_evergreen`, `get_task_test_results_evergreen`, or `get_task_logs_evergreen`
+- Notice the trigger_request task ID pattern: double underscore before the UUID (empty revision field)
+
+**Discovery workflow for scheduling trigger_request tasks**:
+```
+get_version_tasks_evergreen(version_id=..., status_filter="all")
+→ pick the task_id(s) of interest
+→ schedule_tasks_evergreen(version_id=..., task_ids=[...])
+```
 
 ---
 
@@ -489,10 +556,19 @@ On failure, returns an `error` key instead of `downloaded_artifacts`/`artifact_c
 2. If `missing_task_ids` is non-empty, surface the `message` so the user knows what didn't happen and why.
 3. The scheduled tasks won't have results yet — wait for them to run, then re-query with `get_waterfall_detailed_evergreen` or the test/log tools.
 
-**Discovery workflow**:
+**Discovery workflow (mainline versions)**:
 ```
 get_waterfall_detailed_evergreen(project_id=..., variants=["my-variant"], statuses=["unscheduled"])
 → pick version_id and the task_id(s) of interest
+→ schedule_tasks_evergreen(version_id=..., task_ids=[...])
+```
+
+**Discovery workflow (trigger_request / non-mainline versions)**:
+
+The waterfall tools silently skip `trigger_request` and other non-mainline versions. For these, use:
+```
+get_version_tasks_evergreen(version_id=..., status_filter="all")
+→ pick the task_id(s) of interest
 → schedule_tasks_evergreen(version_id=..., task_ids=[...])
 ```
 

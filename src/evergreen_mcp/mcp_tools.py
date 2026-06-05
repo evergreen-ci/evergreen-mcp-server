@@ -22,6 +22,7 @@ from .failed_jobs_tools import (
     fetch_evergreen_task_test_results,
     fetch_inferred_project_ids,
     fetch_patch_jobs,
+    fetch_version_jobs,
     fetch_task_logs,
     fetch_task_test_results,
     fetch_user_recent_patches,
@@ -407,6 +408,57 @@ def register_tools(mcp: FastMCP) -> None:
                 final_response.update(result)
                 return json.dumps(final_response, indent=2)
 
+            return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Get CI/CD tasks for a specific Evergreen version by version_id. "
+            "Unlike get_patch_failed_jobs_evergreen (which queries via the patch graph), "
+            "this queries the version directly — making it the right tool for "
+            "trigger_request versions and other non-patch versions that are "
+            "invisible to the waterfall tools. By default returns all tasks "
+            "(status_filter='all'); use 'failed' or 'succeeded' to filter. "
+            "The version_id can be extracted from any Spruce URL: "
+            "spruce.corp.mongodb.com/version/<version_id>/tasks."
+        )
+    )
+    async def get_version_tasks_evergreen(
+        ctx: Context,
+        version_id: Annotated[
+            str,
+            "Version identifier. Extract from a Spruce URL: "
+            "spruce.corp.mongodb.com/version/<version_id>/tasks",
+        ],
+        max_results: Annotated[
+            int,
+            "Maximum number of tasks to return. Use 10-20 for focused "
+            "analysis, 50+ for comprehensive review.",
+        ] = 50,
+        status_filter: Annotated[
+            str,
+            "Which tasks to return: 'all' (default) for every task, "
+            "'failed' for failed/timed-out tasks only, "
+            "'succeeded' for passing tasks only.",
+        ] = "all",
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Get tasks for a specific version by version_id."""
+        evg_ctx = ctx.request_context.lifespan_context
+
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            _api_client,
+            _user_id,
+        ):
+            result = await fetch_version_jobs(
+                client,
+                version_id,
+                max_results,
+                status_filter=status_filter,
+            )
             return json.dumps(result, indent=2)
 
     @mcp.tool(

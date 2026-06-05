@@ -245,6 +245,115 @@ async def fetch_patch_jobs(
     }
 
 
+async def fetch_version_jobs(
+    client,
+    version_id: str,
+    max_results: int = 50,
+    status_filter: str = "all",
+) -> Dict[str, Any]:
+    """Fetch jobs for a specific version by version_id, optionally filtered by status.
+
+    Unlike fetch_patch_jobs (which queries via the patch graph), this queries
+    the version directly — making it the right tool for trigger_request and
+    other non-patch versions that are invisible to the waterfall tools.
+
+    Args:
+        client: Evergreen GraphQL client
+        version_id: Version identifier (e.g. from a Spruce URL)
+        max_results: Maximum number of tasks to return
+        status_filter: One of "failed", "succeeded", or "all"
+
+    Returns:
+        Dictionary containing version info and tasks data
+    """
+    logger.info("Fetching %s jobs for version %s", status_filter, version_id)
+
+    statuses = STATUS_FILTER_MAP.get(status_filter, [])
+    version = await client.get_version_tasks(version_id, statuses)
+
+    version_info = {
+        "version_id": version.get("id"),
+        "revision": version.get("revision"),
+        "author": version.get("author"),
+        "create_time": version.get("createTime"),
+        "status": version.get("status"),
+    }
+
+    tasks_data = version.get("tasks", {})
+    tasks = tasks_data.get("data", [])
+    total_count = tasks_data.get("count", 0)
+
+    processed_tasks = []
+    build_variants = set()
+    has_timeouts = False
+
+    for task in tasks[:max_results]:
+        task_info = {
+            "task_id": task.get("id"),
+            "task_name": task.get("displayName"),
+            "build_variant": task.get("buildVariant"),
+            "status": task.get("status"),
+            "execution": task.get("execution", 0),
+            "finish_time": task.get("finishTime"),
+            "duration_ms": task.get("timeTaken"),
+            "ami": task.get("ami"),
+            "host_id": task.get("hostId"),
+            "distro_id": task.get("distroId"),
+            "image_id": task.get("imageId"),
+        }
+
+        details = task.get("details", {})
+        if details:
+            task_info["failure_details"] = {
+                "description": details.get("description"),
+                "timed_out": details.get("timedOut", False),
+                "timeout_type": details.get("timeoutType"),
+                "failing_command": details.get("failingCommand"),
+            }
+            if details.get("timedOut"):
+                has_timeouts = True
+
+        logs = task.get("logs", {})
+        if logs:
+            task_info["logs"] = {
+                "task_log": logs.get("taskLogLink"),
+                "agent_log": logs.get("agentLogLink"),
+                "system_log": logs.get("systemLogLink"),
+                "all_logs": logs.get("allLogLink"),
+            }
+
+        has_test_results = task.get("hasTestResults", False)
+        task_info["test_info"] = {
+            "has_test_results": has_test_results,
+            "failed_test_count": task.get("failedTestCount", 0) if has_test_results else 0,
+            "total_test_count": task.get("totalTestCount", 0) if has_test_results else 0,
+        }
+
+        processed_tasks.append(task_info)
+        build_variants.add(task.get("buildVariant"))
+
+    summary = {
+        "total_tasks": total_count,
+        "returned_tasks": len(processed_tasks),
+        "build_variants": sorted(list(build_variants)),
+        "has_timeouts": has_timeouts,
+        "status_filter": status_filter,
+    }
+
+    logger.info(
+        "Successfully processed %s tasks (%s) for version %s",
+        len(processed_tasks),
+        status_filter,
+        version_id,
+    )
+
+    return {
+        "version_info": version_info,
+        "tasks": processed_tasks,
+        "summary": summary,
+    }
+
+
 async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Fetch detailed logs for a specific task
 

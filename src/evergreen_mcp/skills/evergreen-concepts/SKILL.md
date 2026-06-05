@@ -98,6 +98,40 @@ A patch is a set of code changes submitted for CI validation **before** merging.
 
 ---
 
+## Version Types
+
+Every Evergreen version has a `requester` field that identifies how it was created:
+
+| Requester | Created by | Visible in waterfall? |
+|-----------|-----------|----------------------|
+| `gitter_request` | A merged mainline commit | Yes |
+| `patch_request` | A user-submitted patch (CLI / PR / UI) | No |
+| `trigger_request` | An automated trigger (e.g. perf regression follow-up, cross-project trigger) | **No** |
+| `github_pr_request` | A GitHub pull request | No |
+| `ad_hoc` | Manually triggered periodic build | No |
+
+**Key limitation**: `get_waterfall_summary_evergreen` and `get_waterfall_detailed_evergreen` only surface `gitter_request` (mainline) versions. They **silently skip** `trigger_request` and other non-mainline versions — meaning those versions return no tasks even though they exist and may have runnable tasks.
+
+**Workaround**: Use `get_version_tasks_evergreen(version_id=...)` to enumerate tasks on any version type. The `version_id` is visible in any Spruce URL: `spruce.corp.mongodb.com/version/<version_id>/tasks`.
+
+### Trigger request task ID format
+
+Task IDs embed the git revision. For mainline (`gitter_request`) tasks the revision is the full 40-char SHA:
+```
+project_variant_taskname_9285e70fa03b5a67fc2970d7ed208301d2d9584f_20260101_120000
+```
+
+For `trigger_request` tasks the version has no source revision, so the revision field is empty — producing a **double underscore**:
+```
+project_variant_taskname__<uuid>_20260101_120000
+                         ^^
+                         empty revision → double underscore
+```
+
+This format is non-obvious. If you need to construct or match trigger_request task IDs, ask the user for one example task URL (from Spruce or Parsley) and derive the pattern from it rather than guessing.
+
+---
+
 ## The Waterfall
 
 The waterfall is Evergreen's visualization of mainline (post-merge) commits and their CI status. It shows:

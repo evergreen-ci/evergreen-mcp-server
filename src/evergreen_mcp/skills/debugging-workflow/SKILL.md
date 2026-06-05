@@ -186,3 +186,5 @@ Use this to categorize failures and advise the user:
 4. **Use the right tool for the failure type**: Test results for test failures, logs for everything else.
 5. **When retrying log fetches**: Start with `filter_errors=True` (fast, focused). Fall back to `filter_errors=False` if needed.
 6. **Execution numbers**: If a task was retried, `execution=0` is the first run, `execution=1` is the retry. Check both if the failure is intermittent.
+7. **Try first, ask for an example second**: When a task ID format or version type is opaque (e.g. trigger_request versions), attempt the operation with what you have and let Evergreen tell you the answer. Only ask the user for a concrete example (e.g. a Spruce or Parsley URL) if the tool call fails or returns nothing — never reason yourself into giving up before trying.
+8. **Waterfall tools are mainline-only**: `get_waterfall_summary_evergreen` and `get_waterfall_detailed_evergreen` silently return no tasks for `trigger_request` versions. If the waterfall returns nothing for a version the user knows exists, use `get_version_tasks_evergreen(version_id=...)` instead.
