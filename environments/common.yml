@@ -1,15 +1,20 @@
 # Shared values for evergreen-mcp-server in the devprod-evergreen namespace.
 # Layered with environments/staging.yml or environments/production.yml.
 # Chart: mongodb/web-app (https://10gen.github.io/helm-charts)
+#
+# Pattern modeled on evergreen-ci/lumber, which deploys the same chart in
+# the same namespace family. Single container, streamable-http transport.
+# If SSE is ever needed, deploy a second helm release with --transport sse
+# rather than complicating this chart with sidecarContainers.
 
 image:
-  # Image is built and published by .github/workflows/docker-build.yml on every
-  # push to the `deploy` branch. The `:deploy` tag always points at the latest
-  # commit on that branch.
+  # Image is built and published by .github/workflows/docker-build.yml on
+  # every push to the `deploy` branch. The `:deploy` tag always points at
+  # the latest commit on that branch.
   repository: ghcr.io/evergreen-ci/evergreen-mcp-server
   tag: deploy
 
-# Main container: streamable-http on :8080 (path /mcp)
+# CLI args for the main container — serve streamable-http on :8080.
 args:
   - "--transport"
   - "streamable-http"
@@ -18,47 +23,22 @@ args:
   - "--port"
   - "8080"
 
-# Sidecar: SSE transport on :8081 (path /sse)
-sidecars:
-  sse:
-    image: ghcr.io/evergreen-ci/evergreen-mcp-server:deploy
-    args:
-      - "--transport"
-      - "sse"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8081"
-    ports:
-      - containerPort: 8081
-        name: sse
-    env:
-      - name: EVERGREEN_USER
-        valueFrom:
-          secretKeyRef:
-            name: evergreen-mcp-server-secrets
-            key: EVERGREEN_USER
-      - name: EVERGREEN_API_KEY
-        valueFrom:
-          secretKeyRef:
-            name: evergreen-mcp-server-secrets
-            key: EVERGREEN_API_KEY
-      - name: SENTRY_ENABLED
-        value: "true"
-
 services:
-  - name: streamable-http
-    port: 8080
+  - name: http
+    ingress: true
+    port: 80
     targetPort: 8080
-    ingress: true
-    probes: true
-  - name: sse
-    port: 8081
-    targetPort: 8081
-    ingress: true
+    protocol: TCP
+    type: ClusterIP
     probes: true
 
-# Secret `evergreen-mcp-server-secrets` is provisioned out-of-band per namespace:
+ingress:
+  enabled: true
+  path: /
+  # hosts list is set per-env in staging.yml / production.yml
+
+# Secret `evergreen-mcp-server-secrets` is provisioned out-of-band per
+# namespace:
 #   helm ksec set evergreen-mcp-server-secrets \
 #     EVERGREEN_USER=<user> EVERGREEN_API_KEY=<key> -n devprod-evergreen
 envSecrets:
@@ -70,10 +50,14 @@ env:
 
 mesh:
   enabled: true
+  permissive: true
+
+serviceAccount:
+  enabled: true
 
 ownership:
   # TODO: swap to a team-alias email once the service has a clear owner
   driEmail: shreeven.kommireddy@mongodb.com
 
 security:
-  dataClassification: internal
+  dataClassification: "Internal"

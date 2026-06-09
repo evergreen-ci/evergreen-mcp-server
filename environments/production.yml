@@ -1,13 +1,9 @@
 replicaCount: 2
 
 ingress:
+  enabled: true
   hosts:
-    - host: evergreen-mcp-server.devprod-evergreen.prod.corp.mongodb.com
-      paths:
-        - path: /mcp
-          serviceName: streamable-http
-        - path: /sse
-          serviceName: sse
+    - evergreen-mcp-server.devprod-evergreen.prod.corp.mongodb.com
 
 resources:
   requests:
