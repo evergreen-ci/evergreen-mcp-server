@@ -1,0 +1,76 @@
+# Shared values for evergreen-mcp-server in the devprod-evergreen namespace.
+# Layered with environments/staging.yml or environments/production.yml.
+# Chart: mongodb/web-app (https://10gen.github.io/helm-charts)
+
+image:
+  repository: 795250896452.dkr.ecr.us-east-1.amazonaws.com/devprod-evergreen/evergreen-mcp-server
+  # tag is injected per-deploy via `--set image.tag=<sha>` in .drone.yml
+
+# Main container: streamable-http on :8080 (path /mcp)
+args:
+  - "--transport"
+  - "streamable-http"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8080"
+
+# Sidecar: SSE transport on :8081 (path /sse)
+sidecars:
+  sse:
+    image: 795250896452.dkr.ecr.us-east-1.amazonaws.com/devprod-evergreen/evergreen-mcp-server
+    args:
+      - "--transport"
+      - "sse"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8081"
+    ports:
+      - containerPort: 8081
+        name: sse
+    env:
+      - name: EVERGREEN_USER
+        valueFrom:
+          secretKeyRef:
+            name: evergreen-mcp-server-secrets
+            key: EVERGREEN_USER
+      - name: EVERGREEN_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: evergreen-mcp-server-secrets
+            key: EVERGREEN_API_KEY
+      - name: SENTRY_ENABLED
+        value: "true"
+
+services:
+  - name: streamable-http
+    port: 8080
+    targetPort: 8080
+    ingress: true
+    probes: true
+  - name: sse
+    port: 8081
+    targetPort: 8081
+    ingress: true
+    probes: true
+
+# Secret `evergreen-mcp-server-secrets` is provisioned out-of-band per namespace:
+#   helm ksec set evergreen-mcp-server-secrets \
+#     EVERGREEN_USER=<user> EVERGREEN_API_KEY=<key> -n devprod-evergreen
+envSecrets:
+  EVERGREEN_USER: evergreen-mcp-server-secrets
+  EVERGREEN_API_KEY: evergreen-mcp-server-secrets
+
+env:
+  SENTRY_ENABLED: "true"
+
+mesh:
+  enabled: true
+
+ownership:
+  # TODO: swap to a team-alias email once the service has a clear owner
+  driEmail: shreeven.kommireddy@mongodb.com
+
+security:
+  dataClassification: internal

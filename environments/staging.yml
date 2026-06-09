@@ -1,0 +1,18 @@
+replicaCount: 1
+
+ingress:
+  hosts:
+    - host: evergreen-mcp-server.devprod-evergreen.staging.corp.mongodb.com
+      paths:
+        - path: /mcp
+          serviceName: streamable-http
+        - path: /sse
+          serviceName: sse
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

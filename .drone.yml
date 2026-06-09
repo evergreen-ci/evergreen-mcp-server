@@ -1,0 +1,96 @@
+---
+kind: pipeline
+type: kubernetes
+name: build-and-publish
+
+trigger:
+  branch:
+    - deploy
+  event:
+    - push
+
+steps:
+  - name: build-and-publish
+    image: plugins/kaniko-ecr
+    settings:
+      registry: 795250896452.dkr.ecr.us-east-1.amazonaws.com
+      repo: devprod-evergreen/evergreen-mcp-server
+      region: us-east-1
+      tags:
+        - ${DRONE_COMMIT_SHA:0:7}
+      access_key:
+        from_secret: ecr_access_key
+      secret_key:
+        from_secret: ecr_secret_key
+
+---
+kind: pipeline
+type: kubernetes
+name: publish-to-staging
+
+trigger:
+  branch:
+    - deploy
+  event:
+    - promote
+  target:
+    - staging
+
+depends_on:
+  - build-and-publish
+
+steps:
+  - name: deploy
+    image: quay.io/mongodb/drone-helm:v3
+    settings:
+      mode: upgrade
+      chart: mongodb/web-app
+      chart_version: 4.34.3
+      release: evergreen-mcp-server
+      namespace: devprod-evergreen
+      api_server: https://api.staging.corp.mongodb.com
+      kubernetes_token:
+        from_secret: staging_kubernetes_token
+      add_repos:
+        - mongodb=https://10gen.github.io/helm-charts
+      values_files:
+        - environments/common.yml
+        - environments/staging.yml
+      values: image.tag=${DRONE_COMMIT_SHA:0:7}
+      wait_for_upgrade: true
+
+---
+kind: pipeline
+type: kubernetes
+name: publish-to-production
+
+trigger:
+  branch:
+    - deploy
+  event:
+    - promote
+  target:
+    - production
+
+depends_on:
+  - build-and-publish
+
+steps:
+  - name: deploy
+    image: quay.io/mongodb/drone-helm:v3
+    settings:
+      mode: upgrade
+      chart: mongodb/web-app
+      chart_version: 4.34.3
+      release: evergreen-mcp-server
+      namespace: devprod-evergreen
+      api_server: https://api.prod.corp.mongodb.com
+      kubernetes_token:
+        from_secret: prod_kubernetes_token
+      add_repos:
+        - mongodb=https://10gen.github.io/helm-charts
+      values_files:
+        - environments/common.yml
+        - environments/production.yml
+      values: image.tag=${DRONE_COMMIT_SHA:0:7}
+      wait_for_upgrade: true
