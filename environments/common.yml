@@ -3,8 +3,11 @@
 # Chart: mongodb/web-app (https://10gen.github.io/helm-charts)
 
 image:
-  repository: 795250896452.dkr.ecr.us-east-1.amazonaws.com/devprod-evergreen/evergreen-mcp-server
-  # tag is injected per-deploy via `--set image.tag=<sha>` in .drone.yml
+  # Image is built and published by .github/workflows/docker-build.yml on every
+  # push to the `deploy` branch. The `:deploy` tag always points at the latest
+  # commit on that branch.
+  repository: ghcr.io/evergreen-ci/evergreen-mcp-server
+  tag: deploy
 
 # Main container: streamable-http on :8080 (path /mcp)
 args:
@@ -18,7 +21,7 @@ args:
 # Sidecar: SSE transport on :8081 (path /sse)
 sidecars:
   sse:
-    image: 795250896452.dkr.ecr.us-east-1.amazonaws.com/devprod-evergreen/evergreen-mcp-server
+    image: ghcr.io/evergreen-ci/evergreen-mcp-server:deploy
     args:
       - "--transport"
       - "sse"

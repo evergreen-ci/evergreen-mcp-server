@@ -2,6 +2,8 @@ name: Build and Push Docker Image
 
 on:
   push:
+    branches:
+      - deploy
     tags:
       - 'v*'
   # Manual trigger for testing
@@ -67,7 +69,7 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Push Docker image
-      if: github.event_name != 'pull_request' && (github.event.inputs.push_image == 'true' || github.ref_type == 'tag')
+      if: github.event_name != 'pull_request' && (github.event.inputs.push_image == 'true' || github.ref_type == 'tag' || github.ref == 'refs/heads/deploy')
       uses: docker/build-push-action@v5
       with:
         context: .

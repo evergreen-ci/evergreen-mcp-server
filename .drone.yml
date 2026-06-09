@@ -1,27 +1,15 @@
----
-kind: pipeline
-type: kubernetes
-name: build-and-publish
-
-trigger:
-  branch:
-    - deploy
-  event:
-    - push
-
-steps:
-  - name: build-and-publish
-    image: plugins/kaniko-ecr
-    settings:
-      registry: 795250896452.dkr.ecr.us-east-1.amazonaws.com
-      repo: devprod-evergreen/evergreen-mcp-server
-      region: us-east-1
-      tags:
-        - ${DRONE_COMMIT_SHA:0:7}
-      access_key:
-        from_secret: ecr_access_key
-      secret_key:
-        from_secret: ecr_secret_key
+# Drone deploy pipelines for the devprod-evergreen Kanopy namespace.
+#
+# The container image is built and published by the GitHub Action
+# .github/workflows/docker-build.yml on every push to the `deploy` branch,
+# producing ghcr.io/evergreen-ci/evergreen-mcp-server:deploy (floating tag).
+# Drone only deploys — it does not build images.
+#
+# Triggers:
+#   * push to `deploy` → auto-deploy to staging
+#   * `drone build promote <build> production` → deploy to prod
+#
+# All pipelines are gated on branch=deploy so other branches never deploy.
 
 ---
 kind: pipeline
@@ -32,12 +20,7 @@ trigger:
   branch:
     - deploy
   event:
-    - promote
-  target:
-    - staging
-
-depends_on:
-  - build-and-publish
+    - push
 
 steps:
   - name: deploy
@@ -56,7 +39,6 @@ steps:
       values_files:
         - environments/common.yml
         - environments/staging.yml
-      values: image.tag=${DRONE_COMMIT_SHA:0:7}
       wait_for_upgrade: true
 
 ---
@@ -71,9 +53,6 @@ trigger:
     - promote
   target:
     - production
-
-depends_on:
-  - build-and-publish
 
 steps:
   - name: deploy
@@ -92,5 +71,4 @@ steps:
       values_files:
         - environments/common.yml
         - environments/production.yml
-      values: image.tag=${DRONE_COMMIT_SHA:0:7}
       wait_for_upgrade: true
