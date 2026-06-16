@@ -9,10 +9,10 @@
 
 image:
   # Image is built and published by .github/workflows/docker-build.yml on
-  # every push to the `deploy` branch. The `:deploy` tag always points at
+  # every push to the `main` branch. The `:main` tag always points at
   # the latest commit on that branch.
   repository: ghcr.io/evergreen-ci/evergreen-mcp-server
-  tag: deploy
+  tag: main
 
 # CLI args for the main container — serve streamable-http on :8080.
 args:
