@@ -38,6 +38,7 @@ from .patch_creation_tools import (
     remove_patch_module,
     set_patch_module,
 )
+from .priority_tools import set_patch_priority, set_task_priority
 from .restart_tools import restart_task, restart_version
 from .schedule_tools import schedule_unscheduled_tasks
 from .waterfall_tools import (
@@ -1797,4 +1798,89 @@ def register_tools(mcp: FastMCP) -> None:
             )
         return json.dumps(result, indent=2)
 
-    logger.info("Registered %d tools with FastMCP server", 23)
+    @mcp.tool(
+        description=(
+            "Set the priority for a single Evergreen task. Higher priority "
+            "tasks are scheduled before lower priority ones. Non-admin users "
+            "can set priority up to 100 (MaxTaskPriority); values above 100 "
+            "require project admin permission. Setting priority to -1 "
+            "(DisabledTaskPriority) deactivates the task. "
+            "Obtain task_id from get_patch_failed_jobs_evergreen, "
+            "get_version_tasks_evergreen, or a Spruce task URL "
+            "(https://spruce.corp.mongodb.com/task/<task_id>). "
+            "To boost all tasks in a patch at once, use "
+            "set_patch_priority_evergreen instead."
+        )
+    )
+    async def set_task_priority_evergreen(
+        ctx: Context,
+        task_id: Annotated[
+            str,
+            "Task identifier to reprioritize.",
+        ],
+        priority: Annotated[
+            int,
+            "New priority value. Use -1 to disable the task. "
+            "Non-admin users are limited to values <= 100.",
+        ],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Set priority for a single Evergreen task."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await set_task_priority(
+                api_client, task_id=task_id, priority=priority
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Set the priority for all tasks in an Evergreen patch or version. "
+            "Higher priority tasks are scheduled before lower priority ones. "
+            "Non-admin users can set priority up to 100 (MaxTaskPriority); "
+            "values above 100 require project admin permission. Setting "
+            "priority to -1 deactivates all tasks in the patch. "
+            "Obtain patch_id from list_user_recent_patches_evergreen or a "
+            "Spruce version URL "
+            "(https://spruce.corp.mongodb.com/version/<patch_id>/tasks). "
+            "To change priority for a single task only, use "
+            "set_task_priority_evergreen instead."
+        )
+    )
+    async def set_patch_priority_evergreen(
+        ctx: Context,
+        patch_id: Annotated[
+            str,
+            "Patch (version) identifier. All tasks in this patch will have "
+            "their priority updated.",
+        ],
+        priority: Annotated[
+            int,
+            "New priority value. Use -1 to disable all tasks. "
+            "Non-admin users are limited to values <= 100.",
+        ],
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request.",
+        ] = None,
+    ) -> str:
+        """Set priority for all tasks in an Evergreen patch."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await set_patch_priority(
+                api_client, patch_id=patch_id, priority=priority
+            )
+        return json.dumps(result, indent=2)
+
+    logger.info("Registered %d tools with FastMCP server", 25)

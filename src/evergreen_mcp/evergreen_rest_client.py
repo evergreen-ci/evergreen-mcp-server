@@ -429,6 +429,22 @@ class EvergreenRestClient:
                     f"body={text[:500]}"
                 )
 
+    async def set_task_priority(self, task_id: str, priority: int) -> Dict[str, Any]:
+        """Set priority for a task via PATCH /rest/v2/tasks/{task_id}."""
+        endpoint = f"tasks/{task_id}"
+        response = await self._request("PATCH", endpoint, json={"priority": priority})
+        if response.get("status") != "success":
+            raise RuntimeError(f"set_task_priority({task_id}) failed: {response}")
+        return response.get("data", {})
+
+    async def set_patch_priority(self, patch_id: str, priority: int) -> Dict[str, Any]:
+        """Set priority for all tasks in a patch via PATCH /rest/v2/patches/{patch_id}."""
+        endpoint = f"patches/{patch_id}"
+        response = await self._request("PATCH", endpoint, json={"priority": priority})
+        if response.get("status") != "success":
+            raise RuntimeError(f"set_patch_priority({patch_id}) failed: {response}")
+        return response.get("data", {})
+
     async def list_project_patch_aliases(
         self, project_id: str, include_project_config: bool = False
     ) -> List[Dict[str, Any]]:
