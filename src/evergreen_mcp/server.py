@@ -514,6 +514,24 @@ def main() -> None:
         type=str,
         help="Workspace directory for auto-detecting project ID (optional)",
     )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http", "http"],
+        default=os.getenv("EVERGREEN_MCP_TRANSPORT", "stdio"),
+        help="Transport protocol (default: stdio). Env: EVERGREEN_MCP_TRANSPORT.",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=os.getenv("EVERGREEN_MCP_HOST", "127.0.0.1"),
+        help="Host to bind for HTTP transports. Env: EVERGREEN_MCP_HOST.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("EVERGREEN_MCP_PORT", "8000")),
+        help="Port to bind for HTTP transports. Env: EVERGREEN_MCP_PORT.",
+    )
 
     args = parser.parse_args()
 
@@ -527,8 +545,11 @@ def main() -> None:
         os.environ["EVERGREEN_PROJECT"] = args.project_id
         logger.info("Using explicit project ID: %s", args.project_id)
 
-    logger.info("Starting FastMCP server...")
-    mcp.run()
+    logger.info("Starting FastMCP server (transport=%s)...", args.transport)
+    if args.transport == "stdio":
+        mcp.run()
+    else:
+        mcp.run(transport=args.transport, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

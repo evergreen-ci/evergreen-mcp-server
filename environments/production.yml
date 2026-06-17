@@ -1,0 +1,14 @@
+replicaCount: 2
+
+ingress:
+  enabled: true
+  hosts:
+    - evergreen-mcp-server.devprod-evergreen.prod.corp.mongodb.com
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
