@@ -600,11 +600,10 @@ get_task_log_detailed(task_id=...)
 
 ## Patch creation & lifecycle
 
-These tools let an agent submit a new patch directly from a local diff,
-and manage its lifecycle. They are the MCP equivalent of the
-`evergreen patch` CLI command. The diff itself must be captured by the
-caller (e.g., Claude Code via the `Bash` tool running `git diff`); the
-server only forwards it.
+These tools let an agent submit a new patch and manage its lifecycle.
+They are the MCP equivalent of the `evergreen patch` CLI command.
+The server generates all diffs automatically from local repo paths —
+no need to run `git diff` manually.
 
 ### Tool: create_patch_evergreen
 
@@ -613,21 +612,72 @@ id and a Spruce URL. By default the patch is **not** finalized — call
 `finalize_patch_evergreen` after, or pass `finalize=true`.
 
 **Required parameters**:
-- `diff` — unified diff string. Capture with `git diff --binary <merge-base>..HEAD`.
-- `base_revision` — git commit SHA the diff is based on.
+- `server_repo_path` — absolute (or `~`-expanded) path to the local server
+  git checkout. The server runs `git diff --binary <upstream>...HEAD` and
+  `git merge-base` automatically. For module-only patches (no server changes),
+  still pass this — the diff will be empty but the base_revision is required.
 - One task selection: `variants`+`tasks`, or `regex_variants`+`regex_tasks`,
   or `alias`, or a repeat option (`repeat_patch_id`, `repeat_definition`,
   `repeat_failed`).
 
-**Optional**: `description`, `parameters`, `trigger_aliases`, test selection
-regexes, `git_metadata` (`{author, email, git_version}`), `finalize` (default
-`false`).
+**Optional**: `module_repos` (list of `{module, repo_path}` dicts — server
+generates and attaches each module diff automatically), `description`,
+`parameters`, `trigger_aliases`, test selection regexes,
+`git_metadata` (`{author, email, git_version}`), `finalize` (default `false`).
 
-**Common flow**:
+### `local_module_include_paths` — required for sys-perf / DSI patches
+
+Some projects (including **sys-perf**) generate their task and variant
+definitions from YAML files that live inside a module repo (DSI). If you
+submit a patch without passing these files, Evergreen resolves the task
+list against the **unpatched** module files — your DSI changes will not
+be reflected in the running tasks even though the module diff is attached.
+
+Pass `local_module_include_paths` as a list of `{module, filename, path}`
+entries where `path` points to the **full raw file** on disk (not a diff).
+The server reads each file and bundles it with the patch at creation time.
+
+**For sys-perf + DSI**, always include these 5 files:
 ```
-git diff --binary $(git merge-base @ origin/main)..HEAD   (locally)
-→ create_patch_evergreen(diff=..., base_revision=..., project_id=..., variants=[...], tasks=[...])
-→ finalize_patch_evergreen(patch_id=...)
+[
+  {"module": "dsi", "filename": "evergreen/system_perf/master/base.yml",
+   "path": "~/dsi/<branch>/evergreen/system_perf/master/base.yml"},
+  {"module": "dsi", "filename": "evergreen/system_perf/master/compiles.yml",
+   "path": "~/dsi/<branch>/evergreen/system_perf/master/compiles.yml"},
+  {"module": "dsi", "filename": "evergreen/system_perf/master/variants.yml",
+   "path": "~/dsi/<branch>/evergreen/system_perf/master/variants.yml"},
+  {"module": "dsi", "filename": "evergreen/system_perf/master/master_variants.yml",
+   "path": "~/dsi/<branch>/evergreen/system_perf/master/master_variants.yml"},
+  {"module": "dsi", "filename": "evergreen/system_perf/shared_tasks.yml",
+   "path": "~/dsi/<branch>/evergreen/system_perf/shared_tasks.yml"}
+]
+```
+
+**Warning sign**: if you create a patch without these and the `variants_tasks`
+response looks correct, the patch will still run with the unpatched config.
+Always include them for sys-perf patches with DSI changes.
+
+**Common flow (sys-perf)**:
+```
+create_patch_evergreen(
+  server_repo_path="~/mongo/master",
+  module_repos=[{"module": "dsi", "repo_path": "~/dsi/<branch>"}],
+  local_module_include_paths=[
+    {"module": "dsi", "filename": "evergreen/system_perf/master/base.yml",
+     "path": "~/dsi/<branch>/evergreen/system_perf/master/base.yml"},
+    {"module": "dsi", "filename": "evergreen/system_perf/master/compiles.yml",
+     "path": "~/dsi/<branch>/evergreen/system_perf/master/compiles.yml"},
+    {"module": "dsi", "filename": "evergreen/system_perf/master/variants.yml",
+     "path": "~/dsi/<branch>/evergreen/system_perf/master/variants.yml"},
+    {"module": "dsi", "filename": "evergreen/system_perf/master/master_variants.yml",
+     "path": "~/dsi/<branch>/evergreen/system_perf/master/master_variants.yml"},
+    {"module": "dsi", "filename": "evergreen/system_perf/shared_tasks.yml",
+     "path": "~/dsi/<branch>/evergreen/system_perf/shared_tasks.yml"},
+  ],
+  project_id="sys-perf",
+  alias="...",
+  finalize=true
+)
 ```
 
 ### Tool: finalize_patch_evergreen
@@ -647,7 +697,9 @@ gap between `list_user_recent_patches_evergreen` (lists) and
 Attach (or remove) a module diff on an existing patch. Modules are
 auxiliary repositories defined by the project; submitting code changes
 that span multiple modules requires one `set_patch_module_evergreen` call
-per module.
+per module. Pass `repo_path` — the server generates the diff automatically.
+Note: prefer using `module_repos` in `create_patch_evergreen` to attach all
+modules in a single call rather than calling this separately per module.
 
 ### Tool: list_project_tasks_evergreen
 List the unique task names that ran on the most recent waterfall version

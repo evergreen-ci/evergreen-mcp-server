@@ -1189,14 +1189,12 @@ def register_tools(mcp: FastMCP) -> None:
     @mcp.tool(
         description=(
             "Submit a new Evergreen patch. "
-            "PREFERRED: pass `server_repo_path` (path to the server's local git "
-            "checkout) and optionally `module_repos` (list of "
-            "{module, repo_path} dicts for each module). The server generates "
-            "the diffs automatically — no need to run git commands yourself. "
+            "Pass `server_repo_path` (path to the server's local git checkout) "
+            "and optionally `module_repos` (list of {module, repo_path} dicts "
+            "for each module with local changes). The server generates all diffs "
+            "automatically — no need to run git commands. "
             "After creating the patch the server calls set_patch_module for "
             "each entry in module_repos, then finalizes if finalize=true. "
-            "ALTERNATIVE: omit server_repo_path and pass `diff` + "
-            "`base_revision` directly (legacy behavior). "
             "At least one task-selection mode is required: variants+tasks, "
             "regex_variants+regex_tasks, alias, or a repeat option "
             "(repeat_patch_id, repeat_definition, repeat_failed). "
@@ -1209,14 +1207,14 @@ def register_tools(mcp: FastMCP) -> None:
     async def create_patch_evergreen(
         ctx: Context,
         server_repo_path: Annotated[
-            str | None,
+            str,
             "Absolute (or ~-expanded) path to the server's local git repo. "
-            "When provided, the server runs `git diff --binary <upstream>...HEAD` "
-            "and `git merge-base` automatically. `diff` and `base_revision` can "
-            "be omitted. Upstream is inferred as origin/master > origin/main > "
-            "@{u}. For module-only patches (no server changes) leave this unset "
-            "and pass an empty string for `diff`.",
-        ] = None,
+            "The server runs `git diff --binary <upstream>...HEAD` and "
+            "`git merge-base` automatically. Upstream is inferred as "
+            "origin/master > origin/main > @{u}. For module-only patches "
+            "(no server changes), still pass this path — the diff will be "
+            "empty but the base_revision is still required.",
+        ],
         module_repos: Annotated[
             list[dict] | None,
             "List of {module, repo_path} dicts, one per module to attach. "
@@ -1225,19 +1223,6 @@ def register_tools(mcp: FastMCP) -> None:
             '[{"module": "dsi", "repo_path": "~/dsi/my-branch"}]. '
             "After all modules are set, the patch is finalized if finalize=true.",
         ] = None,
-        base_revision: Annotated[
-            str,
-            "Git commit SHA the diff is based on. Use `git merge-base "
-            "<upstream> HEAD` and pass that SHA. Optional when server_repo_path "
-            "is provided.",
-        ] = "",
-        diff: Annotated[
-            str,
-            "Unified diff content. Capture locally with `git diff --binary "
-            "<merge-base>..HEAD`. Pass an empty string for module-only "
-            "patches where the server repo has no local changes. Optional "
-            "when server_repo_path is provided.",
-        ] = "",
         project_id: Annotated[
             str | None,
             "Evergreen project identifier. If omitted, auto-detected from " "context.",
@@ -1353,22 +1338,19 @@ def register_tools(mcp: FastMCP) -> None:
         """Submit a new patch."""
         import os as _os
 
-        # --- auto-generate diff from server repo path ---
-        effective_diff = diff
-        effective_base_revision = base_revision
-        if server_repo_path:
-            try:
-                effective_diff, effective_base_revision = _git_diff_from_repo(
-                    server_repo_path
-                )
-            except subprocess.CalledProcessError as exc:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "error": f"git command failed in {server_repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
-                    },
-                    indent=2,
-                )
+        # --- generate diff from server repo path ---
+        try:
+            effective_diff, effective_base_revision = _git_diff_from_repo(
+                server_repo_path
+            )
+        except subprocess.CalledProcessError as exc:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"git command failed in {server_repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
+                },
+                indent=2,
+            )
 
         # --- expand local_module_include_paths ---
         combined_includes = list(local_module_includes or [])
@@ -1610,9 +1592,8 @@ def register_tools(mcp: FastMCP) -> None:
             "Attach (or replace) a module diff on an existing patch. Modules "
             "are auxiliary repositories defined by the project; submitting "
             "code changes that span multiple modules requires one call per "
-            "module. Supply either `repo_path` (recommended — the server "
-            "generates the diff automatically) or explicit `diff` + "
-            "`base_revision`."
+            "module. The server generates the diff automatically from the "
+            "module's local git repo."
         )
     )
     async def set_patch_module_evergreen(
@@ -1623,24 +1604,11 @@ def register_tools(mcp: FastMCP) -> None:
             "Module name as defined in the project's evergreen.yml modules section.",
         ],
         repo_path: Annotated[
-            str | None,
-            "Absolute path to the module's local git repo. When provided, the "
-            "server runs `git diff <upstream>...HEAD` and `git merge-base` "
-            "automatically — `diff` and `base_revision` can be omitted. The "
-            "upstream branch is inferred from the repo's tracking config "
-            "(`git rev-parse --abbrev-ref @{u}`). Use this instead of passing "
-            "large diff strings inline.",
-        ] = None,
-        diff: Annotated[
-            str | None,
-            "Unified diff for this module. Required when `repo_path` is not "
-            "supplied. Capture locally with `git diff --binary <base>..HEAD`.",
-        ] = None,
-        base_revision: Annotated[
-            str | None,
-            "Git commit SHA the module diff is based on. Required when "
-            "`repo_path` is not supplied.",
-        ] = None,
+            str,
+            "Absolute path to the module's local git repo. The server runs "
+            "`git diff <upstream>...HEAD` and `git merge-base` automatically. "
+            "Upstream is inferred as origin/master > origin/main > @{u}.",
+        ],
         message: Annotated[
             str,
             "Optional commit message / note attached to the module diff.",
@@ -1651,26 +1619,14 @@ def register_tools(mcp: FastMCP) -> None:
         ] = None,
     ) -> str:
         """Set a module diff on a patch."""
-        if repo_path:
-            try:
-                diff, base_revision = _git_diff_from_repo(repo_path)
-            except subprocess.CalledProcessError as exc:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "patch_id": patch_id,
-                        "error": f"git command failed in {repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
-                    },
-                    indent=2,
-                )
-        if not diff or not base_revision:
+        try:
+            diff, base_revision = _git_diff_from_repo(repo_path)
+        except subprocess.CalledProcessError as exc:
             return json.dumps(
                 {
                     "status": "error",
                     "patch_id": patch_id,
-                    "error": (
-                        "Provide either `repo_path` or both `diff` and `base_revision`."
-                    ),
+                    "error": f"git command failed in {repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
                 },
                 indent=2,
             )
