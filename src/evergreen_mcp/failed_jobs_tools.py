@@ -51,7 +51,8 @@ async def fetch_user_recent_patches(
     # Process and format patches
     processed_patches = []
     for patch in patches:
-        if project_id and patch.get("projectIdentifier") != project_id:
+        project_identifier = (patch.get("projectMetadata") or {}).get("identifier")
+        if project_id and project_identifier != project_id:
             continue
         patch_info = {
             "patch_id": patch.get("id"),
@@ -62,7 +63,7 @@ async def fetch_user_recent_patches(
             "author_display_name": patch.get("authorDisplayName"),
             "status": patch.get("status"),
             "create_time": patch.get("createTime"),
-            "project_identifier": patch.get("projectIdentifier"),
+            "project_identifier": project_identifier,
             "has_version": patch.get("versionFull") is not None,
             "version_status": (
                 patch.get("versionFull", {}).get("status")
@@ -115,7 +116,8 @@ async def fetch_patch_failed_jobs(
     # Get patch with failed tasks
     patch = await client.get_patch_failed_tasks(patch_id)
 
-    if project_id and patch.get("projectIdentifier") != project_id:
+    project_identifier = (patch.get("projectMetadata") or {}).get("identifier")
+    if project_id and project_identifier != project_id:
         raise ValueError("Patch does not belong to the specified project")
 
     # Extract patch information
@@ -128,7 +130,7 @@ async def fetch_patch_failed_jobs(
         "author_display_name": patch.get("authorDisplayName"),
         "status": patch.get("status"),
         "create_time": patch.get("createTime"),
-        "project_identifier": patch.get("projectIdentifier"),
+        "project_identifier": project_identifier,
     }
 
     # Extract version and tasks information
@@ -456,7 +458,7 @@ async def fetch_inferred_project_ids(
     latest_patch_times: Dict[str, str] = {}
 
     for patch in patches:
-        project_id = patch.get("projectIdentifier")
+        project_id = (patch.get("projectMetadata") or {}).get("identifier")
         create_time = patch.get("createTime")
 
         if project_id:
