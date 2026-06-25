@@ -25,7 +25,7 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
             "authorDisplayName": "Test User",
             "status": "failed",
             "createTime": "2025-01-01T12:00:00Z",
-            "projectIdentifier": "test-project",
+            "projectMetadata": {"identifier": "test-project"},
             "versionFull": {
                 "id": "version123",
                 "revision": "abc123",
@@ -96,7 +96,7 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
             "authorDisplayName": "Test User",
             "status": "failed",
             "createTime": "2025-01-01T12:00:00Z",
-            "projectIdentifier": "test-project",
+            "projectMetadata": {"identifier": "test-project"},
             "versionFull": {
                 "id": "version123",
                 "revision": "abc123",
