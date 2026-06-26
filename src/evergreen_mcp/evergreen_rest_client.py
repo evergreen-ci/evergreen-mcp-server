@@ -6,14 +6,12 @@ It handles authentication, connection management and query execution.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import aiohttp
 
 from evergreen_mcp.models import TaskResponse
 from evergreen_mcp.utils import scan_log_for_errors
-
-from .oidc_auth import OIDCAuthManager
 
 # from . import __version__
 __version__ = "0.1.0"
@@ -35,7 +33,7 @@ class EvergreenRestClient:
         base_url: str = "https://evergreen.corp.mongodb.com/rest/v2/",
         api_key: Optional[str] = None,
         bearer_token: Optional[str] = None,
-        auth_manager: Optional["OIDCAuthManager"] = None,
+        token_getter: Optional[Callable] = None,
     ):
         """
         Initialize the EvergreenRestClient.
@@ -43,42 +41,37 @@ class EvergreenRestClient:
         Args:
             user: Evergreen username (for API key auth)
             api_key: The API key to use for authentication.
-            bearer_token: OAuth/OIDC bearer token (for token auth)
+            bearer_token: Static OAuth/OIDC bearer token (for token auth)
             base_url: The base URL of the Evergreen API.
-            auth_manager: OIDCAuthManager instance for automatic token refresh
+            token_getter: Async callable that returns a fresh bearer token on each call.
+                          Takes precedence over bearer_token and handles expiry automatically.
         """
 
         self.user = user
         self.base_url = base_url
         self.api_key = api_key
         self.bearer_token = bearer_token
-        self._auth_manager = auth_manager
+        self._token_getter = token_getter
 
-        if not bearer_token and not (user and api_key) and not auth_manager:
+        if not token_getter and not bearer_token and not (user and api_key):
             raise ValueError(
-                "Either bearer_token, (user and api_key), or auth_manager must be provided"
+                "Either token_getter, bearer_token, or (user and api_key) must be provided"
             )
 
-        # If auth_manager provided, use its token
-        if auth_manager and not bearer_token:
-            self.bearer_token = auth_manager.access_token
-
-        self.headers = self._get_headers()
         self.session = None  # Created lazily in _request
 
-    def _get_headers(self) -> Dict[str, str]:
-        """
-        Get the headers for the API request.
-        """
-        headers = {
+    async def _get_auth_headers(self) -> Dict[str, str]:
+        """Build auth headers, calling token_getter if set."""
+        headers: Dict[str, str] = {
             "User-Agent": f"evergreen-mcp/{__version__}",
             "Accept": "application/json",
         }
-        if self.bearer_token:
+        if self._token_getter:
+            logger.debug("Using Bearer token for authenticating HTTP requests")
+            headers["Authorization"] = f"Bearer {await self._token_getter()}"
+        elif self.bearer_token:
             logger.debug("Using Bearer token for authenticating HTTP requests")
             headers["Authorization"] = f"Bearer {self.bearer_token}"
-            # Also set the Kanopy internal header for mesh-to-mesh communication
-            headers["x-kanopy-internal-authorization"] = f"Bearer {self.bearer_token}"
         elif self.user and self.api_key:
             logger.debug("Using API key for authenticating HTTP requests")
             headers["Api-User"] = self.user
@@ -92,7 +85,7 @@ class EvergreenRestClient:
         Get the session for the API request.
         """
         if self.session is None:
-            self.session = aiohttp.ClientSession(headers=self.headers)
+            self.session = aiohttp.ClientSession()
         return self.session
 
     async def _close_session(self):
@@ -103,55 +96,27 @@ class EvergreenRestClient:
             await self.session.close()
             self.session = None
 
-    async def _try_refresh_token(self) -> bool:
-        """Attempt to refresh the bearer token and recreate session."""
-        if not self._auth_manager or not self.bearer_token:
-            return False
-        logger.info("Attempting token refresh...")
-        try:
-            token_data = await self._auth_manager.refresh_token()
-            if token_data:
-                self.bearer_token = token_data["access_token"]
-                self.headers = self._get_headers()
-                await self._close_session()  # Force new session with new headers
-                logger.info("Token refreshed successfully")
-                return True
-        except Exception as e:
-            logger.error("Token refresh failed: %s", e)
-        return False
-
     async def _request(
-        self, method: str, url: str, _retry: bool = True, **kwargs
+        self, method: str, url: str, **kwargs
     ) -> Any:
         """
         Make a request to the API.
         """
+        headers = await self._get_auth_headers()
         session = self._get_session()
         if url.startswith("http"):
             full_url = url
         else:
             full_url = self.base_url + url
 
-        try:
-            async with session.request(method, full_url, **kwargs) as response:
-                # Handle 401 - try token refresh
-                if (
-                    response.status == 401
-                    and _retry
-                    and await self._try_refresh_token()
-                ):
-                    return await self._request(method, url, _retry=False, **kwargs)
-                logger.debug("Response status: %s", response.status)
-                response.raise_for_status()
-                content_type = response.headers.get("Content-Type", "")
-                if "application/json" in content_type:
-                    return {"status": "success", "data": await response.json()}
-                else:
-                    return {"status": "success", "data": await response.text()}
-        except aiohttp.ClientResponseError as e:
-            if e.status == 401 and _retry and await self._try_refresh_token():
-                return await self._request(method, url, _retry=False, **kwargs)
-            raise
+        async with session.request(method, full_url, headers=headers, **kwargs) as response:
+            logger.debug("Response status: %s", response.status)
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                return {"status": "success", "data": await response.json()}
+            else:
+                return {"status": "success", "data": await response.text()}
 
     async def get_task_logs(
         self, task_id: str, execution_retries: int
