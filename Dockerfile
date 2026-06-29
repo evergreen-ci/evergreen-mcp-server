@@ -23,7 +23,7 @@ USER evergreen
 # This overrides the path in ~/.evergreen.yml which has host paths
 ENV EVERGREEN_TOKEN_FILE=/home/evergreen/.kanopy/token-oidclogin.json
 
-# Run via uv so the venv is on PATH
+# Run the app via uv to ensure it uses the synced virtualenv
 ENTRYPOINT ["uv", "run", "evergreen-mcp-server"]
 
 # Labels
