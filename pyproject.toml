@@ -32,7 +32,7 @@ known_first_party = ["evergreen_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
-version = "0.4.2"
+version = "0.5.0"
 description = "A server for interacting with the Evergreen API."
 requires-python = ">=3.13"
 authors = [
