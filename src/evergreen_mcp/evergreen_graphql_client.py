@@ -12,7 +12,6 @@ from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportError
 
 from . import USER_AGENT
-from .oauth_token import get_oauth_token as _get_oauth_token
 from .evergreen_queries import (
     GET_INFERRED_PROJECT_IDS,
     GET_PATCH_FAILED_TASKS,
@@ -72,7 +71,7 @@ class EvergreenGraphQLClient:
     async def connect(self):
         """Initialize GraphQL client connection"""
         if self._token_getter:
-            token = await _get_oauth_token()
+            token = await self._token_getter()
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -135,7 +134,7 @@ class EvergreenGraphQLClient:
 
         if self._token_getter:
             self._session.transport.session.headers.update(
-                {"Authorization": f"Bearer {await _get_oauth_token()}"}
+                {"Authorization": f"Bearer {await self._token_getter()}"}
             )
 
         try:

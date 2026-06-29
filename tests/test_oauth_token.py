@@ -96,6 +96,22 @@ async def test_near_expiry_re_shells():
 
 
 @pytest.mark.asyncio
+async def test_missing_exp_raises():
+    """Token without an exp claim should raise RuntimeError rather than silently re-shelling."""
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"sub": "user"}).encode()).decode().rstrip("=")
+    )
+    token_no_exp = f"{header}.{payload}.sig"
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=await _fake_subprocess(token_no_exp),
+    ):
+        with pytest.raises(RuntimeError, match="missing the 'exp' claim"):
+            await get_oauth_token()
+
+
+@pytest.mark.asyncio
 async def test_subprocess_failure_raises():
     proc = MagicMock()
     proc.returncode = 1
