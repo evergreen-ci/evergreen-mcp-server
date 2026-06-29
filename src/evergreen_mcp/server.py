@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
 
+import jwt as pyjwt
 import yaml
 from fastmcp import Context, FastMCP
 from fastmcp.server.providers.skills import SkillsDirectoryProvider
@@ -21,8 +22,6 @@ from fastmcp.server.providers.skills import SkillsDirectoryProvider
 from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
-import jwt as pyjwt
-
 from evergreen_mcp.mcp_tools import register_tools
 from evergreen_mcp.oauth_token import get_oauth_token
 
