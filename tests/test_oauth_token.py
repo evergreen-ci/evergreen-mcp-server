@@ -100,7 +100,9 @@ async def test_missing_exp_raises():
     """Token without an exp claim should raise RuntimeError rather than silently re-shelling."""
     header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
     payload = (
-        base64.urlsafe_b64encode(json.dumps({"sub": "user"}).encode()).decode().rstrip("=")
+        base64.urlsafe_b64encode(json.dumps({"sub": "user"}).encode())
+        .decode()
+        .rstrip("=")
     )
     token_no_exp = f"{header}.{payload}.sig"
     with patch(
