@@ -3,7 +3,7 @@
 This is the upgraded version of the Evergreen MCP Server using FastMCP.
 """
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("evergreen-mcp-server")
