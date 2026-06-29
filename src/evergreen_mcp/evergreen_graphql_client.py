@@ -147,7 +147,9 @@ class EvergreenGraphQLClient:
             return result
         except TransportError as e:
             error_str = str(e).lower()
-            if ("401" in error_str or "unauthorized" in error_str) and self._token_getter:
+            if (
+                "401" in error_str or "unauthorized" in error_str
+            ) and self._token_getter:
                 # Token expired — reconnect so connect() fetches a fresh token.
                 logger.info("Got 401 on GraphQL query, reconnecting with fresh token")
                 await self.close()
@@ -157,7 +159,9 @@ class EvergreenGraphQLClient:
                         gql(query_string), variable_values=variables
                     )
                 except Exception as retry_e:
-                    raise Exception("Failed to execute GraphQL query after token refresh") from retry_e
+                    raise Exception(
+                        "Failed to execute GraphQL query after token refresh"
+                    ) from retry_e
             logger.warning("GraphQL transport error")
             raise Exception("Failed to execute GraphQL query") from e
         except Exception:

@@ -96,9 +96,7 @@ class EvergreenRestClient:
             await self.session.close()
             self.session = None
 
-    async def _request(
-        self, method: str, url: str, **kwargs
-    ) -> Any:
+    async def _request(self, method: str, url: str, **kwargs) -> Any:
         """
         Make a request to the API.
         """
@@ -109,7 +107,9 @@ class EvergreenRestClient:
         else:
             full_url = self.base_url + url
 
-        async with session.request(method, full_url, headers=headers, **kwargs) as response:
+        async with session.request(
+            method, full_url, headers=headers, **kwargs
+        ) as response:
             logger.debug("Response status: %s", response.status)
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "")

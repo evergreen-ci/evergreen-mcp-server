@@ -148,7 +148,9 @@ async def load_evergreen_config() -> tuple[dict, str | None]:
     elif full_yml_config.get("oauth"):
         # ~/.evergreen.yml has an oauth section — delegate token acquisition to
         # the Evergreen CLI rather than doing any OAuth flow ourselves.
-        logger.info("OAuth section found in ~/.evergreen.yml, using evergreen CLI for token")
+        logger.info(
+            "OAuth section found in ~/.evergreen.yml, using evergreen CLI for token"
+        )
         token = await get_oauth_token()
         claims = pyjwt.decode(
             token, options={"verify_signature": False, "verify_exp": False}

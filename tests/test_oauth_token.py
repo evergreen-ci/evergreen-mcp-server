@@ -13,9 +13,11 @@ from evergreen_mcp.oauth_token import get_oauth_token
 
 def _make_jwt(exp: float) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
-    payload = base64.urlsafe_b64encode(
-        json.dumps({"sub": "user", "exp": int(exp)}).encode()
-    ).decode().rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"sub": "user", "exp": int(exp)}).encode())
+        .decode()
+        .rstrip("=")
+    )
     return f"{header}.{payload}.sig"
 
 
@@ -42,7 +44,9 @@ async def _fake_subprocess(token: str):
 @pytest.mark.asyncio
 async def test_shells_out_on_first_call():
     token = _make_jwt(time.time() + 3600)
-    with patch("asyncio.create_subprocess_exec", return_value=await _fake_subprocess(token)):
+    with patch(
+        "asyncio.create_subprocess_exec", return_value=await _fake_subprocess(token)
+    ):
         result = await get_oauth_token()
     assert result == token
 
@@ -50,7 +54,9 @@ async def test_shells_out_on_first_call():
 @pytest.mark.asyncio
 async def test_cache_hit_skips_subprocess():
     token = _make_jwt(time.time() + 3600)
-    with patch("asyncio.create_subprocess_exec", return_value=await _fake_subprocess(token)) as mock_exec:
+    with patch(
+        "asyncio.create_subprocess_exec", return_value=await _fake_subprocess(token)
+    ) as mock_exec:
         await get_oauth_token()
         await get_oauth_token()
         # subprocess called only once
@@ -66,7 +72,9 @@ async def test_expired_cache_re_shells():
     oauth_module._cached_token = old_token
     oauth_module._token_exp = time.time() - 1  # expired
 
-    with patch("asyncio.create_subprocess_exec", return_value=await _fake_subprocess(new_token)):
+    with patch(
+        "asyncio.create_subprocess_exec", return_value=await _fake_subprocess(new_token)
+    ):
         result = await get_oauth_token()
     assert result == new_token
 
@@ -80,7 +88,9 @@ async def test_near_expiry_re_shells():
     oauth_module._token_exp = time.time() + 30
 
     new_token = _make_jwt(time.time() + 3600)
-    with patch("asyncio.create_subprocess_exec", return_value=await _fake_subprocess(new_token)):
+    with patch(
+        "asyncio.create_subprocess_exec", return_value=await _fake_subprocess(new_token)
+    ):
         result = await get_oauth_token()
     assert result == new_token
 
@@ -91,5 +101,7 @@ async def test_subprocess_failure_raises():
     proc.returncode = 1
     proc.communicate = AsyncMock(return_value=(b"", b"auth error"))
     with patch("asyncio.create_subprocess_exec", return_value=proc):
-        with pytest.raises(RuntimeError, match="evergreen client get-oauth-token failed"):
+        with pytest.raises(
+            RuntimeError, match="evergreen client get-oauth-token failed"
+        ):
             await get_oauth_token()

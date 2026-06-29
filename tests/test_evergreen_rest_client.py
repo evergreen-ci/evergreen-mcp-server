@@ -36,7 +36,9 @@ class TestInit(unittest.TestCase):
             EvergreenRestClient(user="admin")
 
     def test_custom_base_url(self):
-        client = EvergreenRestClient(bearer_token="tok", base_url="https://custom.api/v1/")
+        client = EvergreenRestClient(
+            bearer_token="tok", base_url="https://custom.api/v1/"
+        )
         assert client.base_url == "https://custom.api/v1/"
 
 
@@ -99,9 +101,13 @@ class TestSessionManagement(unittest.IsolatedAsyncioTestCase):
 
 class TestRequest(unittest.IsolatedAsyncioTestCase):
     def _make_client(self):
-        return EvergreenRestClient(bearer_token="tok", base_url="https://api.example.com/v2/")
+        return EvergreenRestClient(
+            bearer_token="tok", base_url="https://api.example.com/v2/"
+        )
 
-    def _mock_response(self, status=200, json_data=None, text_data="", content_type="application/json"):
+    def _mock_response(
+        self, status=200, json_data=None, text_data="", content_type="application/json"
+    ):
         resp = AsyncMock()
         resp.status = status
         resp.headers = {"Content-Type": content_type}
@@ -144,7 +150,9 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
 
     async def test_request_text_response(self):
         client = self._make_client()
-        resp = self._mock_response(text_data="plain text log", content_type="text/plain")
+        resp = self._mock_response(
+            text_data="plain text log", content_type="text/plain"
+        )
         mock_session = MagicMock()
         mock_session.request = MagicMock(
             return_value=AsyncMock(
@@ -160,10 +168,14 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
 class TestGetTaskLogs(unittest.IsolatedAsyncioTestCase):
     async def test_get_task_logs_success(self):
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(return_value={"status": "success", "data": "log line 1\nlog line 2"})
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": "log line 1\nlog line 2"}
+        )
         result = await client.get_task_logs("task-abc", 0)
         assert result == "log line 1\nlog line 2"
-        client._request.assert_called_once_with("GET", "tasks/task-abc/build/TaskLogs?type=task_log&execution=0")
+        client._request.assert_called_once_with(
+            "GET", "tasks/task-abc/build/TaskLogs?type=task_log&execution=0"
+        )
 
     async def test_get_task_logs_failure(self):
         client = EvergreenRestClient(bearer_token="tok")
@@ -176,7 +188,10 @@ class TestGetTaskTestResults(unittest.IsolatedAsyncioTestCase):
     async def test_get_test_results_success(self):
         client = EvergreenRestClient(bearer_token="tok")
         client._request = AsyncMock(
-            return_value={"status": "success", "data": "FAIL: TestSomething\npanic: oops"}
+            return_value={
+                "status": "success",
+                "data": "FAIL: TestSomething\npanic: oops",
+            }
         )
         result = await client.get_task_test_results("task-abc", 0, "Job0")
         assert "Log scan: 2/2 lines matched" in result
@@ -214,7 +229,9 @@ _TASK_RESPONSE_DATA = {
 class TestGetTaskDetails(unittest.IsolatedAsyncioTestCase):
     async def test_returns_task_response_on_success(self):
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(return_value={"status": "success", "data": _TASK_RESPONSE_DATA})
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": _TASK_RESPONSE_DATA}
+        )
         result = await client.get_task_details("task-abc")
         assert result.task_id == "task-abc"
         assert result.display_name == "compile"
@@ -222,7 +239,9 @@ class TestGetTaskDetails(unittest.IsolatedAsyncioTestCase):
 
     async def test_includes_fetch_all_executions_param(self):
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(return_value={"status": "success", "data": _TASK_RESPONSE_DATA})
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": _TASK_RESPONSE_DATA}
+        )
         await client.get_task_details("task-abc", fetch_all_executions=True)
         call_url = client._request.call_args[0][1]
         assert "fetch_all_executions=true" in call_url
@@ -241,20 +260,28 @@ class TestGetTaskDetails(unittest.IsolatedAsyncioTestCase):
 
     async def test_raises_validation_error_on_bad_schema(self):
         from pydantic import ValidationError
+
         client = EvergreenRestClient(bearer_token="tok")
-        client._request = AsyncMock(return_value={"status": "success", "data": {"unexpected": "shape"}})
+        client._request = AsyncMock(
+            return_value={"status": "success", "data": {"unexpected": "shape"}}
+        )
         with pytest.raises(ValidationError):
             await client.get_task_details("task-abc")
 
 
-from evergreen_mcp.failed_jobs_tools import fetch_evergreen_task_logs, fetch_evergreen_task_test_results
+from evergreen_mcp.failed_jobs_tools import (
+    fetch_evergreen_task_logs,
+    fetch_evergreen_task_test_results,
+)
 
 
 class TestFetchEvergreenTaskLogs(unittest.IsolatedAsyncioTestCase):
     async def test_delegates_to_client(self):
         mock_client = AsyncMock()
         mock_client.get_task_logs.return_value = "raw log output"
-        result = await fetch_evergreen_task_logs(mock_client, {"task_id": "t1", "execution_retries": 1})
+        result = await fetch_evergreen_task_logs(
+            mock_client, {"task_id": "t1", "execution_retries": 1}
+        )
         assert result == {"logs": "raw log output"}
         mock_client.get_task_logs.assert_called_once_with("t1", 1)
 
@@ -270,13 +297,25 @@ class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
         mock_client = AsyncMock()
         mock_client.get_task_test_results.return_value = "test output"
         result = await fetch_evergreen_task_test_results(
-            mock_client, {"task_id": "t1", "execution_retries": 0, "test_name": "Job0", "tail_limit": 500}
+            mock_client,
+            {
+                "task_id": "t1",
+                "execution_retries": 0,
+                "test_name": "Job0",
+                "tail_limit": 500,
+            },
         )
         assert result == {"logs": "test output"}
-        mock_client.get_task_test_results.assert_called_once_with("t1", 0, "Job0", tail_limit=500)
+        mock_client.get_task_test_results.assert_called_once_with(
+            "t1", 0, "Job0", tail_limit=500
+        )
 
     async def test_defaults(self):
         mock_client = AsyncMock()
         mock_client.get_task_test_results.return_value = "output"
-        await fetch_evergreen_task_test_results(mock_client, {"task_id": "t1", "test_name": "Job0"})
-        mock_client.get_task_test_results.assert_called_once_with("t1", 0, "Job0", tail_limit=100000)
+        await fetch_evergreen_task_test_results(
+            mock_client, {"task_id": "t1", "test_name": "Job0"}
+        )
+        mock_client.get_task_test_results.assert_called_once_with(
+            "t1", 0, "Job0", tail_limit=100000
+        )
