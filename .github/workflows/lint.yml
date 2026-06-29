@@ -17,6 +17,6 @@ jobs:
       with:
         python-version: "3.13"
 
-    - run: uv sync --extra dev
+    - run: uv sync --frozen --extra dev
 
     - uses: pre-commit/action@v3.0.1
