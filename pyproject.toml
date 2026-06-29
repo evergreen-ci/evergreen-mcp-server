@@ -34,6 +34,7 @@ known_first_party = ["evergreen_mcp"]
 name = "evergreen-mcp-server"
 version = "0.4.2"
 description = "A server for interacting with the Evergreen API."
+requires-python = ">=3.13"
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
 ]
