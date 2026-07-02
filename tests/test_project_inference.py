@@ -19,16 +19,16 @@ class TestFetchInferredProjectIds(unittest.IsolatedAsyncioTestCase):
         mock_client.get_inferred_project_ids.return_value = [
             # Project A: 2 patches, latest today
             {
-                "projectIdentifier": "project-a",
+                "projectMetadata": {"identifier": "project-a"},
                 "createTime": "2025-01-02T12:00:00Z",
             },
             {
-                "projectIdentifier": "project-a",
+                "projectMetadata": {"identifier": "project-a"},
                 "createTime": "2025-01-01T12:00:00Z",
             },
             # Project B: 1 patch, older
             {
-                "projectIdentifier": "project-b",
+                "projectMetadata": {"identifier": "project-b"},
                 "createTime": "2024-12-31T12:00:00Z",
             },
         ]

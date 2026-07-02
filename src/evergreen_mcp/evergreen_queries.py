@@ -122,7 +122,9 @@ query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
         status
         createTime
         patchNumber
-        projectIdentifier
+        projectMetadata {
+          identifier
+        }
         versionFull {
           id
           status
@@ -145,7 +147,9 @@ query GetPatchTasks($patchId: String!, $statuses: [String!]!, $limit: Int = 100)
     status
     createTime
     patchNumber
-    projectIdentifier
+    projectMetadata {
+      identifier
+    }
     versionFull {
       id
       revision
@@ -454,7 +458,9 @@ query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {
       patches {
         id
         createTime
-        projectIdentifier
+        projectMetadata {
+          identifier
+        }
       }
     }
   }
