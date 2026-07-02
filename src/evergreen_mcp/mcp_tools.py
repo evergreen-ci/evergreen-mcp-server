@@ -203,10 +203,10 @@ def register_tools(mcp: FastMCP) -> None:
     async def list_user_recent_patches_evergreen(
         ctx: Context,
         project_id: Annotated[
-            str,
+            str | None,
             "Evergreen project identifier (e.g., 'mongodb-mongo-master', 'mms') to "
             "filter patches. If not provided, will auto-detect from recent activity.",
-        ],
+        ] = None,
         limit: Annotated[
             int,
             "Number of recent patches to return. Use smaller numbers (3-5) for "
@@ -432,8 +432,9 @@ def register_tools(mcp: FastMCP) -> None:
         ],
         max_results: Annotated[
             int,
-            "Maximum number of tasks to return. Use 10-20 for focused "
-            "analysis, 50+ for comprehensive review.",
+            "Maximum number of tasks to fetch and return. Use 10-20 for focused "
+            "analysis, 50-200 for comprehensive review. Versions with thousands "
+            "of tasks (e.g. mainline commits) may need 500+ to see all variants.",
         ] = 50,
         status_filter: Annotated[
             str,

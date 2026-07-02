@@ -293,18 +293,19 @@ class EvergreenGraphQLClient:
         return patches
 
     async def get_patch_tasks(
-        self, patch_id: str, statuses: List[str]
+        self, patch_id: str, statuses: List[str], limit: int = 100
     ) -> Dict[str, Any]:
         """Get tasks for a specific patch, filtered by status.
 
         Args:
             patch_id: Patch identifier
             statuses: List of statuses to filter by. Empty list returns all tasks.
+            limit: Maximum number of tasks to fetch from the API.
 
         Returns:
             Patch with tasks dictionary
         """
-        variables = {"patchId": patch_id, "statuses": statuses}
+        variables = {"patchId": patch_id, "statuses": statuses, "limit": limit}
         result = await self._execute_query(GET_PATCH_TASKS, variables)
         patch = result.get("patch")
 
@@ -317,18 +318,19 @@ class EvergreenGraphQLClient:
         return patch
 
     async def get_version_tasks(
-        self, version_id: str, statuses: List[str]
+        self, version_id: str, statuses: List[str], limit: int = 100
     ) -> Dict[str, Any]:
         """Get tasks for a specific version, filtered by status.
 
         Args:
             version_id: Version identifier
             statuses: List of statuses to filter by. Empty list returns all tasks.
+            limit: Maximum number of tasks to fetch from the API.
 
         Returns:
             Version with tasks dictionary
         """
-        variables = {"versionId": version_id, "statuses": statuses}
+        variables = {"versionId": version_id, "statuses": statuses, "limit": limit}
         result = await self._execute_query(GET_VERSION_TASKS, variables)
 
         version = result.get("version")

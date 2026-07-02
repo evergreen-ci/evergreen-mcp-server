@@ -123,7 +123,7 @@ async def fetch_patch_jobs(
         logger.info("Project context: %s", project_id)
 
     statuses = STATUS_FILTER_MAP.get(status_filter, FAILED_STATUSES)
-    patch = await client.get_patch_tasks(patch_id, statuses)
+    patch = await client.get_patch_tasks(patch_id, statuses, limit=max_results)
 
     if project_id and patch.get("projectIdentifier") != project_id:
         raise ValueError("Patch does not belong to the specified project")
@@ -269,7 +269,7 @@ async def fetch_version_jobs(
     logger.info("Fetching %s jobs for version %s", status_filter, version_id)
 
     statuses = STATUS_FILTER_MAP.get(status_filter, [])
-    version = await client.get_version_tasks(version_id, statuses)
+    version = await client.get_version_tasks(version_id, statuses, limit=max_results)
 
     version_info = {
         "version_id": version.get("id"),

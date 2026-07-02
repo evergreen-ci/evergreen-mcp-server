@@ -135,7 +135,7 @@ query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
 
 # Get failed tasks for a specific patch
 GET_PATCH_TASKS = """
-query GetPatchTasks($patchId: String!, $statuses: [String!]!) {
+query GetPatchTasks($patchId: String!, $statuses: [String!]!, $limit: Int = 100) {
   patch(patchId: $patchId) {
     id
     githash
@@ -154,7 +154,7 @@ query GetPatchTasks($patchId: String!, $statuses: [String!]!) {
       status
       tasks(options: {
         statuses: $statuses
-        limit: 100
+        limit: $limit
       }) {
         count
         data {
@@ -194,7 +194,7 @@ query GetPatchTasks($patchId: String!, $statuses: [String!]!) {
 
 # Get version with tasks filtered by status
 GET_VERSION_TASKS = """
-query GetVersionTasks($versionId: String!, $statuses: [String!]!) {
+query GetVersionTasks($versionId: String!, $statuses: [String!]!, $limit: Int = 100) {
   version(versionId: $versionId) {
     id
     revision
@@ -203,7 +203,7 @@ query GetVersionTasks($versionId: String!, $statuses: [String!]!) {
     status
     tasks(options: {
       statuses: $statuses
-      limit: 100
+      limit: $limit
     }) {
       count
       data {
