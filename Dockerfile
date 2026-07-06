@@ -8,13 +8,19 @@ RUN addgroup -S evergreen && adduser -S evergreen -G evergreen
 
 WORKDIR /app
 
-# Install dependencies before copying source for better layer caching
+# Install dependencies before copying source for better layer caching.
+# The cache mount keeps uv's download/build cache across builds, so even when a
+# version bump changes pyproject.toml/uv.lock and invalidates this layer, deps
+# are served from cache instead of re-downloaded (UV_LINK_MODE=copy above is set
+# for exactly this mount).
 COPY pyproject.toml uv.lock /app/
-RUN uv sync --frozen --no-dev --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
 # Copy source and install the local package
 COPY src /app/src
-RUN uv sync --frozen --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable
 
 USER evergreen
 
