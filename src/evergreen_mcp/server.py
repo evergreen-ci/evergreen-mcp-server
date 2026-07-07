@@ -24,6 +24,7 @@ from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 from evergreen_mcp.mcp_tools import register_tools
 from evergreen_mcp.oauth_token import get_oauth_token
+from evergreen_mcp.utils import load_evergreen_config as config_loader_util
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -115,15 +116,8 @@ async def load_evergreen_config() -> tuple[dict, str | None]:
 
     # Load projects_for_directory from ~/.evergreen.yml for auto-detection
     # This is needed regardless of auth method
-    projects_for_directory = {}
-    evergreen_yml_path = os.path.expanduser("~/.evergreen.yml")
-    full_yml_config: dict = {}
-    try:
-        with open(evergreen_yml_path) as f:
-            full_yml_config = yaml.safe_load(f) or {}
-            projects_for_directory = full_yml_config.get("projects_for_directory", {})
-    except Exception:
-        pass  # Config file may not exist or be readable
+    full_yml_config: dict = config_loader_util()
+    projects_for_directory = full_yml_config.get("projects_for_directory", {})
 
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
