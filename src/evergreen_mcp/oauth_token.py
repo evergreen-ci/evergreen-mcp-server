@@ -32,15 +32,15 @@ def _token_is_valid() -> bool:
     return bool(_cached_token) and time.time() < _token_exp - _EXPIRY_BUFFER
 
 
-async def get_oauth_token() -> str:
+async def get_oauth_token(force_refresh: bool = False) -> str:
     """Return the current valid token, re-shelling if needed."""
-    if _token_is_valid():
+    if _token_is_valid() and not force_refresh:
         return _cached_token  # type: ignore[return-value]
-    await ensure_oauth_token(on_refresh=lambda _: None)
+    await ensure_oauth_token(force_refresh=force_refresh)
     return _cached_token  # type: ignore[return-value]
 
 
-async def ensure_oauth_token(on_refresh: Callable[[str], None]) -> None:
+async def ensure_oauth_token(force_refresh: bool = False) -> None:
     """Ensure the cached OAuth token is valid, re-shelling if needed.
 
     on_refresh is called with the new token only when a re-shell actually
@@ -49,12 +49,12 @@ async def ensure_oauth_token(on_refresh: Callable[[str], None]) -> None:
     """
     global _cached_token, _token_exp
 
-    if _token_is_valid():
+    if _token_is_valid() and not force_refresh:
         return
 
     async with _get_lock():
         # Re-check after acquiring lock — another coroutine may have already refreshed.
-        if _token_is_valid():
+        if _token_is_valid() and not force_refresh:
             return
 
         proc = await asyncio.create_subprocess_exec(
@@ -84,4 +84,3 @@ async def ensure_oauth_token(on_refresh: Callable[[str], None]) -> None:
         _token_exp = float(exp)
         _cached_token = token
         logger.debug("OAuth token refreshed, expires at %s", _token_exp)
-        on_refresh(token)

@@ -68,10 +68,10 @@ class EvergreenGraphQLClient:
                 "Either token_getter, bearer_token, or both user and api_key must be provided"
             )
 
-    async def connect(self):
+    async def connect(self, force_refresh: bool = False):
         """Initialize GraphQL client connection"""
         if self._token_getter:
-            token = await self._token_getter()
+            token = await self._token_getter(force_refresh=force_refresh)
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -152,7 +152,7 @@ class EvergreenGraphQLClient:
                 # Token expired — reconnect so connect() fetches a fresh token.
                 logger.info("Got 401 on GraphQL query, reconnecting with fresh token")
                 await self.close()
-                await self.connect()
+                await self.connect(force_refresh=True)
                 try:
                     return await self._session.execute(
                         gql(query_string), variable_values=variables
