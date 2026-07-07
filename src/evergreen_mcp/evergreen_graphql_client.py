@@ -4,6 +4,7 @@ This module provides a GraphQL client for interacting with the Evergreen CI/CD p
 It handles authentication, connection management, and query execution.
 """
 
+import asyncio
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
@@ -60,6 +61,7 @@ class EvergreenGraphQLClient:
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
         self._session = None
+        self._retry_reconnect_lock = asyncio.Lock()
         self._token_getter = token_getter
 
         # Validate that we have some form of authentication
@@ -156,8 +158,9 @@ class EvergreenGraphQLClient:
             ) and self._token_getter:
                 # Token expired — reconnect so connect() fetches a fresh token.
                 logger.info("Got 401 on GraphQL query, reconnecting with fresh token")
-                await self.close()
-                await self.connect(force_refresh=True)
+                async with self._retry_reconnect_lock:
+                    await self.close()
+                    await self.connect(force_refresh=True)
                 try:
                     return await self._session.execute(
                         gql(query_string), variable_values=variables
