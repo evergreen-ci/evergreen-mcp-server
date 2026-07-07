@@ -57,30 +57,41 @@ async def ensure_oauth_token(force_refresh: bool = False) -> None:
         if _token_is_valid() and not force_refresh:
             return
 
-        proc = await asyncio.create_subprocess_exec(
-            "evergreen",
-            "client",
-            "get-oauth-token",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "evergreen",
+                "client",
+                "get-oauth-token",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to run 'evergreen client get-oauth-token': {e}. Is it installed and working?"
+            ) from e
+
         if proc.returncode != 0:
             raise RuntimeError(
                 f"evergreen client get-oauth-token failed (exit {proc.returncode}): "
                 f"{stderr.decode().strip()}"
             )
 
-        token = stdout.decode().strip()
-        claims = pyjwt.decode(
-            token, options={"verify_signature": False, "verify_exp": False}
-        )
-        exp = claims.get("exp")
-        if not exp:
-            raise RuntimeError(
-                "OAuth token from 'evergreen client get-oauth-token' is missing the "
-                "'exp' claim; cannot cache token. Check that the CLI returns a valid JWT."
+        try:
+            token = stdout.decode().strip()
+            claims = pyjwt.decode(
+                token, options={"verify_signature": False, "verify_exp": False}
             )
-        _token_exp = float(exp)
-        _cached_token = token
-        logger.debug("OAuth token refreshed, expires at %s", _token_exp)
+            exp = claims.get("exp")
+            if not exp:
+                raise RuntimeError(
+                    "OAuth token from 'evergreen client get-oauth-token' is missing the "
+                    "'exp' claim; cannot cache token. Check that the CLI returns a valid JWT."
+                )
+            _token_exp = float(exp)
+            _cached_token = token
+            logger.debug("OAuth token refreshed, expires at %s", _token_exp)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to decode OAuth token from 'evergreen client get-oauth-token': {e}. Check the output yourself and/or report to #ask-devprod"
+            ) from e
