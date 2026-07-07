@@ -133,9 +133,14 @@ class EvergreenGraphQLClient:
             raise RuntimeError("Client not connected. Call connect() first.")
 
         if self._token_getter:
-            self._session.transport.session.headers.update(
-                {"Authorization": f"Bearer {await self._token_getter()}"}
-            )
+            if self._session.transport.session is not None:
+                self._session.transport.session.headers.update(
+                    {"Authorization": f"Bearer {await self._token_getter()}"}
+                )
+            else:
+                logger.warning(
+                    "GraphQL session transport session is None; cannot update Authorization header"
+                )
 
         try:
             query = gql(query_string)
