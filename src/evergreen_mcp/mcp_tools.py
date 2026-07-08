@@ -40,7 +40,7 @@ from .patch_creation_tools import (
 )
 from .priority_tools import set_patch_priority, set_task_priority
 from .restart_tools import restart_task, restart_version
-from .schedule_tools import schedule_unscheduled_tasks
+from .schedule_tools import configure_patch, schedule_unscheduled_tasks
 from .waterfall_tools import (
     fetch_mainline_commits_between,
     fetch_project_build_variants,
@@ -1081,6 +1081,73 @@ def register_tools(mcp: FastMCP) -> None:
                 client,
                 version_id=version_id,
                 task_ids=task_ids,
+            )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
+            "Add build-variant/task pairs to an EXISTING Evergreen patch — the "
+            "MCP equivalent of Spruce's 'Configure Patch' / 'Add tasks to a "
+            "patch' flow. This is a write/mutation: it changes shared CI state. "
+            "Requires PATCHES:EDIT permission on the project. "
+            "Use this when a patch was already created (even finalized) and you "
+            "want to run an ADDITIONAL variant/task on it while REUSING its "
+            "existing compile artifacts, instead of creating a brand-new patch "
+            "that recompiles. The variant/task pair must exist in the patch's "
+            "resolved project config. "
+            "Unlike schedule_tasks_evergreen (which only activates tasks that "
+            "already exist on the version in an unscheduled state), this creates "
+            "the variant's build and tasks if they weren't in the patch yet. "
+            "Already-scheduled tasks are preserved (the tool resends the full "
+            "union of existing + new selections). Any required compile "
+            "dependency the patch didn't already build will run; the rest are "
+            "reused. "
+            "Note: display-task selections cannot be read back from Evergreen, "
+            "so if the patch had display tasks selected they are not preserved "
+            "by this call. "
+            "Returns the patch's resulting full variant/task selection."
+        )
+    )
+    async def configure_patch_evergreen(
+        ctx: Context,
+        patch_id: Annotated[
+            str,
+            "Patch identifier to reconfigure (as returned by "
+            "create_patch_evergreen or list_user_recent_patches_evergreen).",
+        ],
+        add_variants_tasks: Annotated[
+            list[dict],
+            "Variant/task pairs to add, as a list of "
+            '{"variant": <build-variant name>, "tasks": [<task name>, ...]} '
+            "dicts. Example: "
+            '[{"variant": "disagg-m8g-perf-11-node.arm.aws", '
+            '"tasks": ["data_handle_locust"]}]. '
+            "Each variant/task pair must exist in the patch's resolved project "
+            "config, else Evergreen silently drops it.",
+        ],
+        description: Annotated[
+            str | None,
+            "Optional new patch description. If omitted, the patch's current "
+            "description is preserved.",
+        ] = None,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, "
+            "uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Add variant/task pairs to an existing patch (reusing compiles)."""
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            result = await configure_patch(
+                client,
+                patch_id=patch_id,
+                add_variants_tasks=add_variants_tasks,
+                description=description,
             )
         return json.dumps(result, indent=2)
 

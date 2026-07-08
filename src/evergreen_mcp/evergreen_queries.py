@@ -404,6 +404,53 @@ mutation ScheduleTasks($versionId: String!, $taskIds: [String!]!) {
 """
 
 
+# Read a patch's current configuration relevant to reconfiguring it:
+# its description, parameters, and the variant/task pairs already selected.
+# Used by configure_patch_evergreen to build the full union before calling
+# schedulePatch (which replaces, rather than merges, `variantsTasks`).
+# NOTE: the output `VariantTask` type exposes only `name` and `tasks` (no
+# display tasks), so display-task selections can't be read back or preserved.
+GET_PATCH_CONFIGURE = """
+query GetPatchConfigure($patchId: String!) {
+  patch(patchId: $patchId) {
+    id
+    description
+    status
+    activated
+    variantsTasks {
+      name
+      tasks
+    }
+    parameters {
+      key
+      value
+    }
+  }
+}
+"""
+
+
+# Reconfigure an existing patch (the mutation Spruce's "Configure Patch" fires).
+# On an already-finalized patch this creates any new variant's build/tasks —
+# reusing existing compile artifacts — and activates them, without removing
+# what's already scheduled. `configure.variantsTasks` REPLACES the patch's
+# recorded selection, so callers must pass the full union. Requires
+# PATCHES:EDIT permission on the project.
+SCHEDULE_PATCH = """
+mutation SchedulePatch($patchId: String!, $configure: PatchConfigure!) {
+  schedulePatch(patchId: $patchId, configure: $configure) {
+    id
+    status
+    activated
+    variantsTasks {
+      name
+      tasks
+    }
+  }
+}
+"""
+
+
 # Restart a single task. `failedOnly` only affects display tasks (restart
 # only failed execution tasks vs all of them). Requires TASKS:EDIT.
 RESTART_TASK = """

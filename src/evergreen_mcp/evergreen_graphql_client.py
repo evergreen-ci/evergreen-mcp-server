@@ -18,6 +18,7 @@ from . import USER_AGENT
 from .evergreen_queries import (
     GET_INFERRED_PROJECT_IDS,
     GET_MAINLINE_COMMITS,
+    GET_PATCH_CONFIGURE,
     GET_PATCH_TASKS,
     GET_PROJECT,
     GET_PROJECT_SETTINGS,
@@ -29,6 +30,7 @@ from .evergreen_queries import (
     GET_WATERFALL,
     RESTART_TASK,
     RESTART_VERSIONS,
+    SCHEDULE_PATCH,
     SCHEDULE_TASKS,
 )
 
@@ -500,6 +502,50 @@ class EvergreenGraphQLClient:
             version_id,
         )
         return scheduled
+
+    async def get_patch_configure(self, patch_id: str) -> Dict[str, Any]:
+        """Read a patch's current description, parameters, and variant/task pairs.
+
+        Used before schedulePatch to compute the full union of variant/task
+        selections (the mutation replaces `variantsTasks` rather than merging).
+
+        Args:
+            patch_id: The patch (version) identifier.
+
+        Returns:
+            The `patch` dict with `description`, `status`, `activated`,
+            `variantsTasks` ([{name, tasks}]), and `parameters` ([{key, value}]).
+        """
+        variables = {"patchId": patch_id}
+        result = await self._execute_query(GET_PATCH_CONFIGURE, variables)
+        return result.get("patch") or {}
+
+    async def schedule_patch(
+        self, patch_id: str, configure: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Reconfigure an existing patch, adding/scheduling variant/task pairs.
+
+        Wraps the `schedulePatch(patchId, configure)` mutation used by Spruce's
+        "Configure Patch" flow. Requires PATCHES:EDIT permission.
+
+        Args:
+            patch_id: The patch (version) to reconfigure.
+            configure: A `PatchConfigure` input dict (`description`,
+                `variantsTasks`, optional `parameters`/`patchTriggerAliases`).
+
+        Returns:
+            The resulting Patch dict (`id`, `status`, `activated`,
+            `variantsTasks`).
+        """
+        variables = {"patchId": patch_id, "configure": configure}
+        result = await self._execute_query(SCHEDULE_PATCH, variables)
+        patch = result.get("schedulePatch") or {}
+        logger.info(
+            "Reconfigured patch %s with %s variant/task group(s)",
+            patch_id,
+            len(configure.get("variantsTasks") or []),
+        )
+        return patch
 
     async def restart_task(
         self, task_id: str, failed_only: bool
