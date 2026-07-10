@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import jwt as pyjwt
-import yaml
 from fastmcp import Context, FastMCP
 from fastmcp.server.providers.skills import SkillsDirectoryProvider
 

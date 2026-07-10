@@ -9,7 +9,7 @@ re-shells on the next request.
 import asyncio
 import logging
 import time
-from typing import Callable, Optional
+from typing import Optional
 
 import jwt as pyjwt
 
@@ -41,12 +41,7 @@ async def get_oauth_token(force_refresh: bool = False) -> str:
 
 
 async def ensure_oauth_token(force_refresh: bool = False) -> None:
-    """Ensure the cached OAuth token is valid, re-shelling if needed.
-
-    on_refresh is called with the new token only when a re-shell actually
-    occurs (cache hit → no call). Use it to update transport headers or
-    any other state that depends on the current token value.
-    """
+    """Ensure the cached OAuth token is valid, re-shelling if needed."""
     global _cached_token, _token_exp
 
     if _token_is_valid() and not force_refresh:
