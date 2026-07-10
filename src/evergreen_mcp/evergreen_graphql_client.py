@@ -6,7 +6,7 @@ It handles authentication, connection management, and query execution.
 
 import asyncio
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
@@ -44,7 +44,7 @@ class EvergreenGraphQLClient:
         api_key: str = None,
         bearer_token: str = None,
         endpoint: str = None,
-        token_getter: Optional[Callable] = None,
+        token_getter: Optional[Callable[[bool], Awaitable[str]]] = None,
     ):
         """Initialize the GraphQL client
 
@@ -73,7 +73,7 @@ class EvergreenGraphQLClient:
     async def connect(self, force_refresh: bool = False):
         """Initialize GraphQL client connection"""
         if self._token_getter:
-            token = await self._token_getter(force_refresh=force_refresh)
+            token = await self._token_getter(force_refresh)
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
