@@ -77,12 +77,7 @@ async def ensure_oauth_token(force_refresh: bool = False) -> None:
             claims = pyjwt.decode(
                 token, options={"verify_signature": False, "verify_exp": False}
             )
-            exp = claims.get("exp")
-            if not exp:
-                raise RuntimeError(
-                    "OAuth token from 'evergreen client get-oauth-token' is missing the "
-                    "'exp' claim; cannot cache token. Check that the CLI returns a valid JWT."
-                )
+            exp = claims["exp"]
             _token_exp = float(exp)
             _cached_token = token
             logger.debug("OAuth token refreshed, expires at %s", _token_exp)
