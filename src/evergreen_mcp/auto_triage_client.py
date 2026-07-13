@@ -42,7 +42,11 @@ def auto_triage_base_url() -> str:
 
 def auto_triage_enabled() -> bool:
     """Whether auto-triage routing is enabled (default on; opt out via env)."""
-    return os.environ.get("AUTO_TRIAGE_ENABLED", "1").lower() not in ("0", "false", "no")
+    return os.environ.get("AUTO_TRIAGE_ENABLED", "1").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
 
 async def _post(path: str, bearer_token: str, params: Dict[str, Any]) -> Dict[str, Any]:
