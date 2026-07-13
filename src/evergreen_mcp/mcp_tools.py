@@ -13,6 +13,12 @@ from typing import Annotated, Any, AsyncIterator, Dict, Optional, Tuple
 from fastmcp import Context, FastMCP
 
 from .artifact_download_tools import fetch_task_artifacts
+from .auto_triage_client import (
+    AutoTriageError,
+    analyze_task_log,
+    analyze_task_test,
+    auto_triage_enabled,
+)
 from .evergreen_graphql_client import EvergreenGraphQLClient
 from .evergreen_rest_client import EvergreenRestClient
 from .failed_jobs_tools import (
@@ -448,14 +454,15 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get the complete raw task logs via REST API. Returns the full "
-            "untruncated task execution log including timeout handler output, "
-            "process dumps, and stdout/stderr — content that the GraphQL "
-            "get_task_log_summary tool cannot access. Automatically scans for "
-            "error patterns and returns a structured summary with top error "
-            "terms and example lines when errors are found. Best for debugging "
-            "non-test failures (setup errors, timeouts, compilation failures). "
-            "Use task_id from get_patch_failed_jobs results."
+            "Triage a task's logs to find the root cause of a failure. Routes the "
+            "task log through the auto-triage service, which runs a multi-stage "
+            "pipeline (error-template discovery, causation graph, and LLM triage) "
+            "and returns a structured root-cause analysis with a triage summary, "
+            "failure classification, and suggested ARR regex. If auto-triage is "
+            "unavailable it transparently falls back to fetching the complete raw "
+            "task log via REST and scanning it for error patterns. Best for "
+            "debugging non-test failures (setup errors, timeouts, compilation "
+            "failures). Use task_id from get_patch_failed_jobs results."
         )
     )
     async def get_task_log_detailed(
@@ -486,17 +493,42 @@ def register_tools(mcp: FastMCP) -> None:
             api_client,
             user_id,
         ):
+            # Forward the OIDC bearer token so auto-triage can fetch the logs from
+            # Evergreen on the user's behalf. Fall back to the raw REST scan on any
+            # auto-triage failure so this tool always returns something usable.
+            token = bearer_token or getattr(api_client, "bearer_token", None)
+            if auto_triage_enabled():
+                try:
+                    triage = await analyze_task_log(
+                        task_id, execution_retries, token, log_type="task_log"
+                    )
+                    return json.dumps(
+                        {"source": "auto-triage", "task_id": task_id, "triage": triage},
+                        indent=2,
+                    )
+                except AutoTriageError as e:
+                    logger.info(
+                        "auto-triage unavailable for task %s, falling back to "
+                        "REST log scan: %s",
+                        task_id,
+                        e,
+                    )
+
             result = await fetch_evergreen_task_logs(api_client, arguments)
+            result["source"] = "rest-scan"
         return json.dumps(result, indent=2)
 
     @mcp.tool(
         description=(
-            "Get raw test log content via REST API. "
-            "Fetches actual test output (stored in S3, not accessible via GraphQL). "
-            "Automatically scans for error patterns and returns a structured "
-            "summary with top error terms and example lines when errors are found. "
-            "Use this to understand WHY a test failed, not just that it failed. "
-            "Requires task_id and test_name from get_patch_failed_jobs results."
+            "Triage a failed test's log to find the root cause. Routes the test "
+            "log through the auto-triage service, which runs a multi-stage pipeline "
+            "(error-template discovery, causation graph, and LLM triage) and returns "
+            "a structured root-cause analysis with a triage summary, failure "
+            "classification, and suggested ARR regex. If auto-triage is unavailable "
+            "it transparently falls back to fetching the raw test log via REST "
+            "(stored in S3, not accessible via GraphQL) and scanning it for error "
+            "patterns. Use this to understand WHY a test failed, not just that it "
+            "failed. Requires task_id and test_name from get_patch_failed_jobs results."
         )
     )
     async def get_test_results_detailed(
@@ -540,7 +572,35 @@ def register_tools(mcp: FastMCP) -> None:
             api_client,
             user_id,
         ):
+            # Forward the OIDC bearer token so auto-triage can fetch the test log
+            # from Evergreen on the user's behalf. Fall back to the raw REST scan
+            # on any auto-triage failure.
+            token = bearer_token or getattr(api_client, "bearer_token", None)
+            if auto_triage_enabled():
+                try:
+                    triage = await analyze_task_test(
+                        task_id, execution_retries, test_name, token
+                    )
+                    return json.dumps(
+                        {
+                            "source": "auto-triage",
+                            "task_id": task_id,
+                            "test_name": test_name,
+                            "triage": triage,
+                        },
+                        indent=2,
+                    )
+                except AutoTriageError as e:
+                    logger.info(
+                        "auto-triage unavailable for test %s in task %s, falling "
+                        "back to REST log scan: %s",
+                        test_name,
+                        task_id,
+                        e,
+                    )
+
             result = await fetch_evergreen_task_test_results(api_client, arguments)
+            result["source"] = "rest-scan"
         return json.dumps(result, indent=2)
 
     @mcp.tool(
