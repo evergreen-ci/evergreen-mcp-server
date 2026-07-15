@@ -22,15 +22,12 @@ from .evergreen_queries import (
     GET_USER_RECENT_PATCHES,
     GET_VERSION_WITH_FAILED_TASKS,
 )
-
-# _MAX_RECONNECT_ATTEMPTS is re-exported here for backwards compatibility with
-# callers/tests that reference it via this module.
-from .reconnect import _MAX_RECONNECT_ATTEMPTS, ReconnectMixin
+from .reconnect import ReconnectMixin
 
 # Constants for test status values
 FAILED_TEST_STATUSES = ["fail", "failed"]
 
-__all__ = ["EvergreenGraphQLClient", "_MAX_RECONNECT_ATTEMPTS"]
+__all__ = ["EvergreenGraphQLClient"]
 
 logger = logging.getLogger(__name__)
 

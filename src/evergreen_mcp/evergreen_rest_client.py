@@ -6,7 +6,7 @@ It handles authentication, connection management and query execution.
 """
 
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
 
@@ -34,7 +34,7 @@ class EvergreenRestClient(ReconnectMixin):
         base_url: str = "https://evergreen.corp.mongodb.com/rest/v2/",
         api_key: Optional[str] = None,
         bearer_token: Optional[str] = None,
-        token_getter: Optional[Callable] = None,
+        token_getter: Optional[Callable[[bool], Awaitable[str]]] = None,
     ):
         """
         Initialize the EvergreenRestClient.
