@@ -4,13 +4,11 @@ This module provides a GraphQL client for interacting with the Evergreen CI/CD p
 It handles authentication, connection management, and query execution.
 """
 
-import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
-from gql.transport.exceptions import TransportError
 
 from . import USER_AGENT
 from .evergreen_queries import (
@@ -25,17 +23,19 @@ from .evergreen_queries import (
     GET_VERSION_WITH_FAILED_TASKS,
 )
 
+# _MAX_RECONNECT_ATTEMPTS is re-exported here for backwards compatibility with
+# callers/tests that reference it via this module.
+from .reconnect import _MAX_RECONNECT_ATTEMPTS, ReconnectMixin
+
 # Constants for test status values
 FAILED_TEST_STATUSES = ["fail", "failed"]
 
-# Maximum number of times _execute_query will reconnect and retry on a 401
-# before giving up. Bounds thrashing when a fresh token is immediately stale.
-_MAX_RECONNECT_ATTEMPTS = 2
+__all__ = ["EvergreenGraphQLClient", "_MAX_RECONNECT_ATTEMPTS"]
 
 logger = logging.getLogger(__name__)
 
 
-class EvergreenGraphQLClient:
+class EvergreenGraphQLClient(ReconnectMixin):
     """GraphQL client for Evergreen API
 
     This client provides async methods for querying the Evergreen GraphQL API.
@@ -65,17 +65,8 @@ class EvergreenGraphQLClient:
         self.endpoint = endpoint or "https://evergreen.mongodb.com/graphql/query"
         self._client = None
         self._session = None
-        # Held only while tearing down and rebuilding the connection, never
-        # while executing a query.
-        self._reconnect_lock = asyncio.Lock()
-        # Set when the connection is healthy; cleared during a reconnect so
-        # callers park until the connection is back up. Set() when healthy
-        # returns immediately from wait(), so normal queries are not serialized.
-        self._connected_event = asyncio.Event()
-        # Incremented on each successful reconnect. Lets a caller detect that
-        # another task already reconnected (single-flight) and that its own
-        # observed connection is stale.
-        self._generation = 0
+        # The event is set by connect(); this client is not usable until then.
+        self._init_reconnect_state(start_ready=False)
         self._token_getter = token_getter
 
         # Validate that we have some form of authentication
@@ -149,18 +140,7 @@ class EvergreenGraphQLClient:
         """
         query = gql(query_string)
 
-        for _ in range(_MAX_RECONNECT_ATTEMPTS):
-            # Park until the connection is healthy. When it already is, this
-            # returns immediately without holding any lock, so concurrent
-            # queries are not serialized. During a reconnect the event is
-            # cleared and callers wait here instead of firing at a torn-down
-            # session or each starting their own reconnect.
-            await self._connected_event.wait()
-
-            # Capture the connection we are about to use. gen lets us detect a
-            # reconnect that happens underneath us; using the local session
-            # avoids touching a reference another task may swap mid-flight.
-            gen = self._generation
+        async def attempt(_generation: int) -> Dict[str, Any]:
             session = self._session
             if session is None:
                 raise RuntimeError("Client not connected. Call connect() first.")
@@ -168,76 +148,31 @@ class EvergreenGraphQLClient:
             if self._token_getter and session.transport.session is not None:
                 # Proactively refresh the auth header from the (cached) token so
                 # ordinary token rotation never even reaches a 401. The heavy
-                # teardown in _reconnect() is reserved for genuine auth failures.
+                # teardown in _reestablish_connection() is reserved for genuine
+                # auth failures.
                 session.transport.session.headers.update(
                     {"Authorization": f"Bearer {await self._token_getter()}"}
                 )
 
-            try:
-                result = await session.execute(query, variable_values=variables)
-                logger.debug(
-                    "Query executed successfully: %s chars returned", len(str(result))
-                )
-                return result
-            except TransportError as e:
-                if self._generation != gen or not self._connected_event.is_set():
-                    # Another task is reconnecting (event cleared) or already
-                    # reconnected (generation advanced) while we were in flight;
-                    # our failure is likely collateral from that teardown. Loop
-                    # to park on the event and retry on the fresh connection
-                    # instead of surfacing the error.
-                    logger.debug("Connection changing during query; retrying")
-                    continue
-                if self._is_auth_error(e) and self._token_getter:
-                    logger.info(
-                        "Got 401 on GraphQL query, reconnecting with fresh token"
-                    )
-                    await self._reconnect(gen)
-                    continue
-                logger.warning("GraphQL transport error")
-                raise Exception("Failed to execute GraphQL query") from e
-            except Exception:
-                logger.warning("GraphQL query execution error")
-                raise
+            result = await session.execute(query, variable_values=variables)
+            logger.debug(
+                "Query executed successfully: %s chars returned", len(str(result))
+            )
+            return result
 
-        raise Exception("Failed to execute GraphQL query after repeated token refresh")
+        return await self._run_with_reconnect(attempt)
 
-    @staticmethod
-    def _is_auth_error(error: Exception) -> bool:
-        """Return True if the transport error looks like an auth failure (401)."""
+    def _is_auth_error(self, error: Exception) -> bool:
+        """Return True if the transport error is a 401 and we can refresh."""
+        if not self._token_getter:
+            return False
         error_str = str(error).lower()
         return "401" in error_str or "unauthorized" in error_str
 
-    async def _reconnect(self, observed_generation: int):
-        """Tear down and rebuild the connection, at most once per generation.
-
-        Only the first caller to observe a given generation performs the
-        teardown/connect (single-flight); concurrent callers that observed the
-        same generation return immediately and let their caller retry against
-        the new connection.
-
-        Args:
-            observed_generation: The generation the caller used when its query
-                failed. If the current generation has already advanced past it,
-                someone else has reconnected and this call is a no-op.
-        """
-        async with self._reconnect_lock:
-            if self._generation != observed_generation:
-                # A reconnect already happened since the caller's query; nothing
-                # to do. The caller will loop and retry on the new connection.
-                return
-
-            # Gate off new/retrying queries while we rebuild the connection.
-            self._connected_event.clear()
-            try:
-                await self.close()
-                await self.connect(force_refresh=True)
-                self._generation += 1
-            finally:
-                # close()/connect() manage the event too, but set it here
-                # unconditionally so a failed connect() can never deadlock
-                # waiters. On failure the session is None and they raise instead.
-                self._connected_event.set()
+    async def _reestablish_connection(self) -> None:
+        """Tear down the session and reconnect with a freshly fetched token."""
+        await self.close()
+        await self.connect(force_refresh=True)
 
     async def get_projects(self) -> List[Dict[str, Any]]:
         """Get all projects from Evergreen

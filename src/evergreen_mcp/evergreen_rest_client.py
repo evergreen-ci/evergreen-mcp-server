@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Optional
 import aiohttp
 
 from evergreen_mcp.models import TaskResponse
+from evergreen_mcp.reconnect import ReconnectMixin
 from evergreen_mcp.utils import scan_log_for_errors
 
 # from . import __version__
@@ -19,7 +20,7 @@ __version__ = "0.1.0"
 logger = logging.getLogger(__name__)
 
 
-class EvergreenRestClient:
+class EvergreenRestClient(ReconnectMixin):
     """
     REST API client for the Evergreen API.
 
@@ -59,6 +60,9 @@ class EvergreenRestClient:
             )
 
         self.session = None  # Created lazily in _request
+        # No explicit connect(): the session is created lazily, so the client
+        # is usable immediately.
+        self._init_reconnect_state(start_ready=True)
 
     async def _get_auth_headers(self) -> Dict[str, str]:
         """Build auth headers, calling token_getter if set."""
@@ -99,24 +103,47 @@ class EvergreenRestClient:
     async def _request(self, method: str, url: str, **kwargs) -> Any:
         """
         Make a request to the API.
+
+        On a 401 the token is refreshed and the request is retried, coordinated
+        across concurrent callers by ReconnectMixin (single-flight).
         """
-        headers = await self._get_auth_headers()
-        session = self._get_session()
         if url.startswith("http"):
             full_url = url
         else:
             full_url = self.base_url + url
 
-        async with session.request(
-            method, full_url, headers=headers, **kwargs
-        ) as response:
-            logger.debug("Response status: %s", response.status)
-            response.raise_for_status()
-            content_type = response.headers.get("Content-Type", "")
-            if "application/json" in content_type:
-                return {"status": "success", "data": await response.json()}
-            else:
+        async def attempt(_generation: int) -> Any:
+            # Rebuild headers each attempt so a token refreshed by a reconnect
+            # is picked up on retry.
+            headers = await self._get_auth_headers()
+            session = self._get_session()
+            async with session.request(
+                method, full_url, headers=headers, **kwargs
+            ) as response:
+                logger.debug("Response status: %s", response.status)
+                response.raise_for_status()
+                content_type = response.headers.get("Content-Type", "")
+                if "application/json" in content_type:
+                    return {"status": "success", "data": await response.json()}
                 return {"status": "success", "data": await response.text()}
+
+        return await self._run_with_reconnect(attempt)
+
+    def _is_auth_error(self, error: Exception) -> bool:
+        """Return True for a 401 response when we can refresh the token."""
+        return (
+            self._token_getter is not None
+            and isinstance(error, aiohttp.ClientResponseError)
+            and error.status == 401
+        )
+
+    async def _reestablish_connection(self) -> None:
+        """Drop the session and force a fresh token for the next request."""
+        await self._close_session()
+        if self._token_getter:
+            # Prime the shared token cache; the next _get_auth_headers() call
+            # (on retry) picks up the refreshed token.
+            await self._token_getter(force_refresh=True)
 
     async def get_task_logs(
         self, task_id: str, execution_retries: int

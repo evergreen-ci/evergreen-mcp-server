@@ -165,6 +165,52 @@ class TestRequest(unittest.IsolatedAsyncioTestCase):
         assert result == {"status": "success", "data": "plain text log"}
 
 
+class TestRequestReconnect(unittest.IsolatedAsyncioTestCase):
+    """A 401 refreshes the token via the reconnect machinery and retries."""
+
+    def _mock_response(self, *, status, raises=None):
+        resp = AsyncMock()
+        resp.status = status
+        resp.headers = {"Content-Type": "application/json"}
+        resp.json = AsyncMock(return_value={"ok": True})
+        resp.text = AsyncMock(return_value="")
+        resp.raise_for_status = MagicMock(side_effect=raises)
+        return resp
+
+    async def test_401_refreshes_token_and_retries(self):
+        getter = AsyncMock(return_value="tok")
+        client = EvergreenRestClient(
+            token_getter=getter, base_url="https://api.example.com/v2/"
+        )
+
+        unauthorized = aiohttp.ClientResponseError(
+            request_info=MagicMock(), history=(), status=401
+        )
+        first = self._mock_response(status=401, raises=unauthorized)
+        second = self._mock_response(status=200)
+
+        responses = iter([first, second])
+
+        def request(method, url, **kwargs):
+            resp = next(responses)
+            return AsyncMock(
+                __aenter__=AsyncMock(return_value=resp),
+                __aexit__=AsyncMock(return_value=False),
+            )
+
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(side_effect=request)
+        client.session = mock_session
+        client._close_session = AsyncMock()
+
+        result = await client._request("GET", "tasks/123")
+
+        assert result == {"status": "success", "data": {"ok": True}}
+        client._close_session.assert_awaited_once()
+        getter.assert_any_await(force_refresh=True)
+        assert client._generation == 1
+
+
 class TestGetTaskLogs(unittest.IsolatedAsyncioTestCase):
     async def test_get_task_logs_success(self):
         client = EvergreenRestClient(bearer_token="tok")
