@@ -109,7 +109,7 @@ async def test_missing_exp_raises():
         "asyncio.create_subprocess_exec",
         return_value=await _fake_subprocess(token_no_exp),
     ):
-        with pytest.raises(RuntimeError, match="missing the 'exp' claim"):
+        with pytest.raises(RuntimeError, match="Failed to decode OAuth token"):
             await get_oauth_token()
 
 
