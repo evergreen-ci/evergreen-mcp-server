@@ -454,6 +454,68 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
+            "Get recent AMI (Amazon Machine Image) changes for an Evergreen distro. "
+            "Inspects the distro's event log and returns any events where the distro's "
+            "base AMI was rotated (before -> after AMI IDs, timestamp, and who made the "
+            "change). A recent AMI change is a common cause of sudden task regressions "
+            "that have no corresponding project code change, so use this when a task "
+            "started failing with environmental symptoms. Get the distro_id from a "
+            "task's 'distro_id' field in get_patch_failed_jobs results. Requires "
+            "DistroSettingsView permission on the distro; if the caller lacks it the "
+            "response includes a permission error and no AMI data."
+        )
+    )
+    async def get_distro_ami_changes_evergreen(
+        ctx: Context,
+        distro_id: Annotated[
+            str,
+            "Distro identifier to inspect, e.g. 'ubuntu2204-large'. Found in the "
+            "'distro_id' field of a task from get_patch_failed_jobs.",
+        ],
+        limit: Annotated[
+            int,
+            "Maximum number of recent distro events to scan for AMI changes. "
+            "Default is 20.",
+        ] = 20,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Get recent AMI changes for a distro."""
+        evg_ctx = ctx.request_context.lifespan_context
+
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            try:
+                result = await client.get_distro_events(distro_id, limit)
+            except Exception as e:
+                # The distroEvents directive returns a GraphQL error (not an empty
+                # result) when the caller lacks DistroSettingsView. Surface it
+                # instead of failing, so callers can note "AMI check skipped".
+                message = str(e)
+                logger.info(
+                    "Could not fetch distro events for %s: %s", distro_id, message
+                )
+                return json.dumps(
+                    {
+                        "distro_id": distro_id,
+                        "status": "error",
+                        "message": message,
+                        "hint": (
+                            "This may be a permissions issue - fetching distro events "
+                            "requires DistroSettingsView on the distro."
+                        ),
+                    },
+                    indent=2,
+                )
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        description=(
             "Triage a task's logs to find the root cause of a failure. Routes the "
             "task log through the auto-triage service, which runs a multi-stage "
             "pipeline (error-template discovery, causation graph, and LLM triage) "
