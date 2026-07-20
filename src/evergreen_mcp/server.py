@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
 
-import yaml
+import jwt as pyjwt
 from fastmcp import Context, FastMCP
 from fastmcp.server.providers.skills import SkillsDirectoryProvider
 
@@ -22,7 +22,8 @@ from evergreen_mcp import __version__
 from evergreen_mcp.evergreen_graphql_client import EvergreenGraphQLClient
 from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 from evergreen_mcp.mcp_tools import register_tools
-from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
+from evergreen_mcp.oauth_token import get_oauth_token
+from evergreen_mcp.utils import load_evergreen_config as config_loader_util
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -98,11 +99,11 @@ def detect_project_from_workspace(
     return None
 
 
-async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | None]:
+async def load_evergreen_config() -> tuple[dict, str | None]:
     """Load Evergreen configuration from environment or config file.
 
     Returns:
-        Tuple of (config dict, default project ID, auth_manager if using OIDC)
+        Tuple of (config dict, default project ID)
     """
     # Check for environment variables first (Docker setup)
     evergreen_user = os.getenv("EVERGREEN_USER")
@@ -110,19 +111,12 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
     evergreen_project = os.getenv("EVERGREEN_PROJECT")
     workspace_dir = os.getenv("WORKSPACE_PATH")
 
-    auth_manager = None
     evergreen_config = {}
 
     # Load projects_for_directory from ~/.evergreen.yml for auto-detection
     # This is needed regardless of auth method
-    projects_for_directory = {}
-    evergreen_yml_path = os.path.expanduser("~/.evergreen.yml")
-    try:
-        with open(evergreen_yml_path) as f:
-            full_config = yaml.safe_load(f) or {}
-            projects_for_directory = full_config.get("projects_for_directory", {})
-    except Exception:
-        pass  # Config file may not exist or be readable
+    full_yml_config: dict = config_loader_util()
+    projects_for_directory = full_yml_config.get("projects_for_directory", {})
 
     if evergreen_user and evergreen_api_key:
         # Use environment variables (Docker setup)
@@ -143,24 +137,33 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
             "auth_method": "per_request",
             "projects_for_directory": projects_for_directory,
         }
-    else:
-        # OIDC Authentication (always - no API key fallback)
-        logger.info("Using OIDC authentication...")
-        auth_manager = OIDCAuthManager()
-
-        # Use ensure_authenticated() which handles the full flow:
-        # token file check → refresh → device flow
-        if not await auth_manager.ensure_authenticated():
-            raise OIDCAuthenticationError("OIDC authentication failed")
-
-        logger.info("Authenticated as: %s", auth_manager.user_id)
-
+    elif full_yml_config.get("oauth"):
+        # ~/.evergreen.yml has an oauth section — delegate token acquisition to
+        # the Evergreen CLI rather than doing any OAuth flow ourselves.
+        logger.info(
+            "OAuth section found in ~/.evergreen.yml, using evergreen CLI for token"
+        )
+        token = await get_oauth_token()
+        claims = pyjwt.decode(
+            token, options={"verify_signature": False, "verify_exp": False}
+        )
+        email = claims.get("email", "")
+        user_id = (
+            email.split("@")[0]
+            if "@" in email
+            else (claims.get("preferred_username") or claims.get("sub") or "unknown")
+        )
+        logger.info("Authenticated as: %s", user_id)
         evergreen_config = {
-            "user": auth_manager.user_id,
-            "bearer_token": auth_manager.access_token,
+            "user": user_id,
             "auth_method": "oidc",
             "projects_for_directory": projects_for_directory,
         }
+    else:
+        raise RuntimeError(
+            "No Evergreen credentials found. Set EVERGREEN_USER and EVERGREEN_API_KEY, "
+            "set EVERGREEN_AUTH_MODE=per_request, or add an 'oauth' section to ~/.evergreen.yml."
+        )
 
     # Determine default project ID
     default_project_id = None
@@ -176,7 +179,7 @@ async def load_evergreen_config() -> tuple[dict, str | None, OIDCAuthManager | N
         default_project_id = evergreen_project
         logger.info("Using project ID from environment: %s", default_project_id)
 
-    return evergreen_config, default_project_id, auth_manager
+    return evergreen_config, default_project_id
 
 
 @asynccontextmanager
@@ -186,7 +189,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
     This context manager initializes the Evergreen GraphQL client on startup
     and ensures proper cleanup on shutdown.
     """
-    evergreen_config, default_project_id, auth_manager = await load_evergreen_config()
+    evergreen_config, default_project_id = await load_evergreen_config()
 
     # Configurable endpoint URLs — per auth method, with defaults
     oidc_rest_url = os.getenv(
@@ -217,17 +220,13 @@ async def lifespan(server: FastMCP) -> AsyncIterator[EvergreenContext]:
 
     if auth_method == "oidc":
         logger.info("Initializing GraphQL client with OIDC Bearer token")
-        # Use corp endpoint for OIDC authentication
-        # Pass auth_manager to enable automatic token refresh
         client = EvergreenGraphQLClient(
-            bearer_token=evergreen_config["bearer_token"],
+            token_getter=get_oauth_token,
             endpoint=oidc_graphql_url,
-            auth_manager=auth_manager,
         )
         api_client = EvergreenRestClient(
-            bearer_token=evergreen_config["bearer_token"],
+            token_getter=get_oauth_token,
             base_url=oidc_rest_url,
-            auth_manager=auth_manager,
         )
     elif auth_method == "per_request":
         logger.info(

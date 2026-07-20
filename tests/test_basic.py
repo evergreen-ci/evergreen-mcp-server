@@ -87,16 +87,16 @@ class TestImports(unittest.TestCase):
         except ImportError as e:
             self.fail(f"Failed to import failed_jobs_tools: {e}")
 
-    def test_import_oidc_auth(self):
-        """Test that OIDC auth module can be imported"""
+    def test_import_oauth_token(self):
+        """Test that oauth_token module can be imported"""
         try:
-            from evergreen_mcp.oidc_auth import OIDCAuthManager
+            from evergreen_mcp.oauth_token import get_oauth_token
 
             self.assertIsNotNone(
-                OIDCAuthManager, "OIDCAuthManager should be importable"
+                get_oauth_token, "get_oauth_token should be importable"
             )
         except ImportError as e:
-            self.fail(f"Failed to import OIDCAuthManager: {e}")
+            self.fail(f"Failed to import get_oauth_token: {e}")
 
 
 class TestVersion(unittest.TestCase):
@@ -220,15 +220,11 @@ class TestUserAgentConstant(unittest.TestCase):
         )
         self.assertEqual(evergreen_graphql_client.USER_AGENT, USER_AGENT)
 
-    def test_oidc_auth_uses_shared_constant(self):
-        """Test that the OIDC auth module imports USER_AGENT from the package"""
-        from evergreen_mcp import USER_AGENT, oidc_auth
+    def test_oauth_token_module_importable(self):
+        """Test that the oauth_token module can be imported"""
+        from evergreen_mcp import oauth_token
 
-        self.assertTrue(
-            hasattr(oidc_auth, "USER_AGENT"),
-            "oidc_auth should import USER_AGENT",
-        )
-        self.assertEqual(oidc_auth.USER_AGENT, USER_AGENT)
+        self.assertIsNotNone(oauth_token)
 
 
 class TestServerComponents(unittest.TestCase):
