@@ -453,16 +453,24 @@ class EvergreenGraphQLClient:
     async def get_distro_events(
         self, distro_id: str, limit: int = 20
     ) -> Dict[str, Any]:
-        """Get a distro's event log and surface any AMI changes.
+        """Get a distro's event log, newest first.
+
+        Returns the full event entries (not just AMI changes) so callers can
+        see any environmental change — AMI rotations, toolchain updates (which
+        can happen without an image rebuild), and other distro-setting changes.
+        A derived `ami_changes` list is included as a convenience for the
+        common "did the AMI rotate?" question, but it does not filter what
+        `events` contains.
 
         Args:
             distro_id: Distro identifier (e.g. task's distroId)
             limit: Maximum number of recent events to scan (default: 20)
 
         Returns:
-            Dictionary with the raw event count, all event entries, and a
-            filtered list of AMI changes (entries where the AMI differs
-            between the before/after snapshots), newest first.
+            Dictionary with the raw event count, all event entries (each with
+            timestamp/user/before/after/data), and a derived `ami_changes`
+            list (entries where the AMI differs between the before/after
+            snapshots).
         """
         variables = {"opts": {"distroId": distro_id, "limit": limit}}
         result = await self._execute_query(GET_DISTRO_EVENTS, variables)
@@ -470,8 +478,19 @@ class EvergreenGraphQLClient:
         payload = result.get("distroEvents") or {}
         entries = payload.get("eventLogEntries") or []
 
+        events = []
         ami_changes = []
         for entry in entries:
+            events.append(
+                {
+                    "timestamp": entry.get("timestamp"),
+                    "user": entry.get("user"),
+                    "before": entry.get("before"),
+                    "after": entry.get("after"),
+                    "data": entry.get("data"),
+                }
+            )
+
             before_ami = self._extract_ami(entry.get("before"))
             after_ami = self._extract_ami(entry.get("after"))
             if before_ami and after_ami and before_ami != after_ami:
@@ -493,6 +512,7 @@ class EvergreenGraphQLClient:
         return {
             "distro_id": distro_id,
             "event_count": payload.get("count", len(entries)),
+            "events": events,
             "ami_changes": ami_changes,
         }
 

@@ -454,15 +454,19 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get recent AMI (Amazon Machine Image) changes for an Evergreen distro. "
-            "Inspects the distro's event log and returns any events where the distro's "
-            "base AMI was rotated (before -> after AMI IDs, timestamp, and who made the "
-            "change). A recent AMI change is a common cause of sudden task regressions "
-            "that have no corresponding project code change, so use this when a task "
-            "started failing with environmental symptoms. Get the distro_id from a "
-            "task's 'distro_id' field in get_patch_failed_jobs results. Requires "
-            "DistroSettingsView permission on the distro; if the caller lacks it the "
-            "response includes a permission error and no AMI data."
+            "Get the recent event log for an Evergreen distro, newest first. "
+            "Returns the full change history (each event's before/after distro "
+            "snapshot) so you can spot any environmental change: AMI (Amazon "
+            "Machine Image) rotations, toolchain updates that happen without an "
+            "image rebuild, and other distro-setting changes. Also includes a "
+            "derived 'ami_changes' list for the common 'did the base AMI rotate?' "
+            "question (before -> after AMI IDs, timestamp, who changed it). A "
+            "recent distro change is a common cause of sudden task regressions "
+            "that have no corresponding project code change, so use this when a "
+            "task started failing with environmental symptoms. Get the distro_id "
+            "from a task's 'distro_id' field in get_patch_failed_jobs results. "
+            "Requires DistroSettingsView permission on the distro; if the caller "
+            "lacks it the response includes a permission error and no event data."
         )
     )
     async def get_distro_ami_changes_evergreen(
@@ -482,7 +486,7 @@ def register_tools(mcp: FastMCP) -> None:
             "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
         ] = None,
     ) -> str:
-        """Get recent AMI changes for a distro."""
+        """Get the recent event log (incl. AMI changes) for a distro."""
         evg_ctx = ctx.request_context.lifespan_context
 
         async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
