@@ -29,6 +29,9 @@ User wants to...
 ├─ Download build outputs / artifacts from a task
 │   └─ download_task_artifacts_evergreen (needs task_id)
 │
+├─ Check if a task's distro changed (AMI rotation, toolchain update)
+│   └─ get_distro_ami_changes_evergreen (needs distro_id)
+│
 └─ Don't know their project_id
     └─ get_inferred_project_ids_evergreen FIRST
         then use the project_id in subsequent calls
@@ -442,6 +445,62 @@ On failure, returns an `error` key instead of `downloaded_artifacts`/`artifact_c
 
 ---
 
+## Tool 9: get_distro_ami_changes_evergreen
+
+**Purpose**: Fetch the recent event log for an Evergreen distro (newest first) so you can spot environmental changes that broke a task without any project code change. Returns the full change history — AMI (Amazon Machine Image) rotations, toolchain updates that happen *without* an image rebuild, and other distro-setting changes — plus a derived `ami_changes` list for the common "did the base AMI rotate?" question.
+
+**When to Use**:
+- A task started failing with environmental symptoms (missing binary, changed path, unexpected OS/library behavior, `system`-type failures) and Phase-7-style code review found nothing in the project's own commits
+- To confirm or rule out a recent distro/AMI rotation as the cause of a regression
+- Get the `distro_id` from a failed task's `distro_id` field in get_patch_failed_jobs_evergreen results
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| distro_id | str | **required** | Distro identifier, e.g. "ubuntu2204-large". From a task's `distro_id`. |
+| limit | int | 20 | Max recent distro events to scan. |
+
+**Return shape**:
+```json
+{
+  "distro_id": "ubuntu2204-large",
+  "event_count": 12,
+  "events": [
+    {
+      "timestamp": "2025-01-14T08:00:00Z",
+      "user": "system",
+      "before": { "...serialized distro doc..." },
+      "after": { "...serialized distro doc..." },
+      "data": { "...": "..." }
+    }
+  ],
+  "ami_changes": [
+    {
+      "timestamp": "2025-01-14T08:00:00Z",
+      "user": "system",
+      "before_ami": "ami-0abc...",
+      "after_ami": "ami-0def..."
+    }
+  ]
+}
+```
+
+On a permissions/other error the response is `{ "distro_id": ..., "status": "error", "message": ..., "hint": ... }` instead.
+
+**Key fields**:
+- `ami_changes` — the base AMI was rotated at these timestamps; the strongest single signal
+- `events[].before` / `events[].after` — full serialized distro snapshots; diff these for non-AMI changes (toolchain, provider settings) that `ami_changes` won't capture
+- `status == "error"` — usually a missing `DistroSettingsView` permission; do **not** treat absence of data as evidence there was no change
+
+**What to do with results**:
+1. If `ami_changes` has an entry within ~14 days before the task's `start_time`, that's a strong signal — the base image rotated under the task.
+2. If no AMI change but `events` shows a toolchain/setting change in the regression window, that can still explain an environmental failure — diff `before`/`after`.
+3. If `status == "error"`, note "distro check skipped (no DistroSettingsView)" rather than ruling the cause out.
+4. AMI IDs are opaque; to see *what* changed inside an image (package/apt/yum/pip diffs), pair this with the Evergreen image APIs (follow-up tooling).
+
+---
+
 ## Common Tool Chains (Updated)
 
 ### "Why is my patch failing?" (Full Investigation)
@@ -454,6 +513,8 @@ list_user_recent_patches_evergreen(project_id=..., limit=5)
     → get_test_results_detailed(task_id=..., test_name=...)  (why they failed)
 → For tasks without test results:
     → get_task_log_detailed(task_id=...)  (full logs with error scan)
+→ For regressions with no code change / environmental symptoms:
+    → get_distro_ami_changes_evergreen(distro_id=...)  (recent AMI/distro changes)
 → Synthesize findings and present root cause
 ```
 

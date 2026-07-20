@@ -16,6 +16,7 @@ from gql.transport.exceptions import TransportError
 
 from . import USER_AGENT
 from .evergreen_queries import (
+    GET_DISTRO_EVENTS,
     GET_INFERRED_PROJECT_IDS,
     GET_PATCH_FAILED_TASKS,
     GET_PROJECT,
@@ -422,6 +423,98 @@ class EvergreenGraphQLClient:
             user_id,
         )
         return patches
+
+    @staticmethod
+    def _extract_ami(distro_doc: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Pull the AMI out of a serialized distro document.
+
+        The distro event `before`/`after` payloads are generic maps of the
+        serialized distro. The AMI lives inside the provider settings list.
+        Different serializations use snake_case or camelCase keys, so check
+        both, then fall back to a top-level `ami`/`imageId` if present.
+        """
+        if not isinstance(distro_doc, dict):
+            return None
+
+        provider_settings = (
+            distro_doc.get("provider_settings_list")
+            or distro_doc.get("providerSettingsList")
+            or distro_doc.get("provider_settings")
+        )
+        if isinstance(provider_settings, list) and provider_settings:
+            first = provider_settings[0]
+            if isinstance(first, dict):
+                ami = first.get("ami") or first.get("AMI")
+                if ami:
+                    return ami
+
+        return distro_doc.get("ami") or distro_doc.get("imageId")
+
+    async def get_distro_events(
+        self, distro_id: str, limit: int = 20
+    ) -> Dict[str, Any]:
+        """Get a distro's event log, newest first.
+
+        Returns the full event entries (not just AMI changes) so callers can
+        see any environmental change — AMI rotations, toolchain updates (which
+        can happen without an image rebuild), and other distro-setting changes.
+        A derived `ami_changes` list is included as a convenience for the
+        common "did the AMI rotate?" question, but it does not filter what
+        `events` contains.
+
+        Args:
+            distro_id: Distro identifier (e.g. task's distroId)
+            limit: Maximum number of recent events to scan (default: 20)
+
+        Returns:
+            Dictionary with the raw event count, all event entries (each with
+            timestamp/user/before/after/data), and a derived `ami_changes`
+            list (entries where the AMI differs between the before/after
+            snapshots).
+        """
+        variables = {"opts": {"distroId": distro_id, "limit": limit}}
+        result = await self._execute_query(GET_DISTRO_EVENTS, variables)
+
+        payload = result.get("distroEvents") or {}
+        entries = payload.get("eventLogEntries") or []
+
+        events = []
+        ami_changes = []
+        for entry in entries:
+            events.append(
+                {
+                    "timestamp": entry.get("timestamp"),
+                    "user": entry.get("user"),
+                    "before": entry.get("before"),
+                    "after": entry.get("after"),
+                    "data": entry.get("data"),
+                }
+            )
+
+            before_ami = self._extract_ami(entry.get("before"))
+            after_ami = self._extract_ami(entry.get("after"))
+            if before_ami and after_ami and before_ami != after_ami:
+                ami_changes.append(
+                    {
+                        "timestamp": entry.get("timestamp"),
+                        "user": entry.get("user"),
+                        "before_ami": before_ami,
+                        "after_ami": after_ami,
+                    }
+                )
+
+        logger.info(
+            "Retrieved %s events (%s AMI changes) for distro %s",
+            len(entries),
+            len(ami_changes),
+            distro_id,
+        )
+        return {
+            "distro_id": distro_id,
+            "event_count": payload.get("count", len(entries)),
+            "events": events,
+            "ami_changes": ami_changes,
+        }
 
     async def __aenter__(self):
         """Async context manager entry"""

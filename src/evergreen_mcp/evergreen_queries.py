@@ -315,6 +315,25 @@ query GetTaskTestResults(
 }
 """
 
+# Get distro event log entries (used to detect recent AMI changes on a distro).
+# `before`/`after` are generic Map (serialized distro documents); the AMI lives
+# inside the provider settings list. Requires DistroSettingsView permission on
+# the distro — the API returns a GraphQL error (not an empty result) otherwise.
+GET_DISTRO_EVENTS = """
+query DistroEvents($opts: DistroEventsInput!) {
+  distroEvents(opts: $opts) {
+    count
+    eventLogEntries {
+      timestamp
+      user
+      before
+      after
+      data
+    }
+  }
+}
+"""
+
 # Get inferred project identifiers from user's patches
 GET_INFERRED_PROJECT_IDS = """
 query InferredProjectIds($userId: String!, $limit: Int = 50, $page: Int = 0) {
