@@ -94,6 +94,23 @@ If `filter_errors=True` returns too few results, retry with full output:
 Call: get_task_logs_evergreen(task_id="...", filter_errors=False, max_lines=500)
 ```
 
+### Step 4c: Rule Out a Recent Distro / AMI Change
+
+If a task was passing consistently and suddenly started failing with *environmental* symptoms (missing binary, changed path, unexpected OS/library behavior, or a `system`-type failure) and Step 4a/4b turned up nothing in the project's own code, check whether the task's distro changed underneath it:
+
+```
+Call: get_distro_ami_changes_evergreen(distro_id="...")
+```
+
+Use the `distro_id` from the failed task (get_patch_failed_jobs returns it). Interpret the result:
+
+- **`ami_changes` entry within ~14 days before the task's `start_time`** → strong signal; the base AMI rotated. Carry it into the report.
+- **No AMI change, but `events` shows a toolchain / setting change in the regression window** → diff `before`/`after`; can still explain an environmental failure without an image rebuild.
+- **`ami_changes` older than the regression, or empty** → weak/no signal; note it but don't lead with it.
+- **`status == "error"`** → usually a missing `DistroSettingsView` permission. Report "distro check skipped (no DistroSettingsView)" — do **not** treat absence of data as proof nothing changed.
+
+AMI IDs are opaque strings; to see *what* actually changed inside the image (package/apt/yum/pip diffs) pair this with the Evergreen image APIs.
+
 ### Step 5: Synthesize and Report
 
 Present a clear diagnosis to the user:
@@ -138,6 +155,9 @@ When the user already has a task_id (e.g., from a Spruce/Parsley URL):
    → Get the raw test log with automatic error scanning to understand WHY
 3. get_task_log_detailed(task_id="...", execution_retries=0)
    → Get full task logs with error scanning for non-test failures
+4. If the failure looks environmental and no code change explains it:
+   get_distro_ami_changes_evergreen(distro_id="...")
+   → Check for a recent AMI rotation / toolchain change on the task's distro
 ```
 
 ---
@@ -175,6 +195,12 @@ Use this to categorize failures and advise the user:
 - **Cause**: Syntax errors, missing includes, type errors
 - **User action**: Fix the compilation error shown in logs.
 - **Pattern**: Check logs for the first error — subsequent errors are often cascading.
+
+### Distro / AMI Changes (environmental regression)
+- **Indicator**: A previously-passing task starts failing with environmental symptoms (missing binary, changed path, unexpected OS/library behavior, `system`-type failure) and no relevant project code change in the regression window
+- **Cause**: The distro's base AMI was rotated, or a toolchain/setting changed underneath the task. The new image may differ in OS packages, kernel, or default config.
+- **User action**: Run `get_distro_ami_changes_evergreen(distro_id=...)`. If the AMI/toolchain changed near the regression onset, pin the dependency or update the task to work with the new image; file a DEVPROD ticket only if the change broke something explicitly supported.
+- **Pattern**: AMI change 0–14 days before the task's `start_time` correlates with the pass→fail transition, with no code commit that explains it.
 
 ---
 
