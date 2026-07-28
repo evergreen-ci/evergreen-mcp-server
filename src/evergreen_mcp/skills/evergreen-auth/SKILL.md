@@ -1,57 +1,36 @@
 ---
-description: Install and configure the Evergreen MCP server — handles auth prerequisites and common failure fixes.
+description: Force-refresh Evergreen OIDC tokens via CLI. Run this BEFORE any MCP tool call if you get authentication errors (401, expired token, unauthorized).
 ---
 
-# Evergreen MCP Setup & Auth
+# Evergreen Auth — Token Refresh
 
-## Prerequisite (must do first)
+## Core rule
 
-The MCP server reads credentials from the Evergreen CLI. Run this once on your host:
+**If any Evergreen MCP tool returns an auth error (401, expired token, unauthorized), do NOT retry the tool. Refresh tokens first.**
+
+The Evergreen MCP server reads credentials from `~/.evergreen.yml` and `~/.kanopy/token-oidclogin.json`. OIDC tokens expire frequently — the MCP server may still be running but its cached token is stale. Refreshing via CLI writes a fresh token to disk that the server picks up on the next request.
+
+## Force-refresh tokens
+
+Run this on the host before attempting MCP work:
 
 ```bash
 evergreen login
 ```
 
-This creates `~/.evergreen.yml` and `~/.kanopy/token-oidclogin.json` — the server reads these automatically.
+This re-authenticates with OIDC and writes fresh tokens to `~/.evergreen.yml` and `~/.kanopy/token-oidclogin.json`.
 
-If CLI not installed: `brew install mongodb/brew/evergreen` or [GitHub releases](https://github.com/evergreen-ci/evergreen/releases).
-
-## Install MCP server
-
-**uvx (simplest)**:
-```json
-{
-  "command": "uvx",
-  "args": ["--from=git+https://github.com/evergreen-ci/evergreen-mcp-server", "evergreen-mcp-server"]
-}
+If the CLI is not installed:
+```bash
+brew install mongodb/brew/evergreen
 ```
+Alternative: [GitHub releases](https://github.com/evergreen-ci/evergreen/releases).
 
-**Docker** (mounts credentials as read-only):
-```json
-{
-  "command": "docker",
-  "args": [
-    "run", "--rm", "-i",
-    "-v", "${HOME}/.kanopy/token-oidclogin.json:/home/evergreen/.kanopy/token-oidclogin.json:ro",
-    "-v", "${HOME}/.evergreen.yml:/home/evergreen/.evergreen.yml:ro",
-    "ghcr.io/evergreen-ci/evergreen-mcp-server:latest"
-  ]
-}
-```
+## When to refresh
 
-## Auth not working?
-
-The fix is almost always just re-running `evergreen login` to refresh expired tokens.
-
-Other causes:
-
-| Problem | Fix |
+| Symptom | Action |
 |---|---|
-| `evergreen login` needed | Run `evergreen login` |
-| Docker can't read files | Permissions need `600` or `644` |
-| VS Code can't find files | Use `${userHome}` not `${HOME}` |
-| Docker test | `docker run --rm -it -v ~/.kanopy/token-oidclogin.json:... -v ~/.evergreen.yml:... ghcr.io/evergreen-ci/evergreen-mcp-server:latest --help` |
-| uvx can't find creds | Files at `~/.evergreen.yml` and `~/.kanopy/token-oidclogin.json`? Run `evergreen login` |
-| Docker API key mode | Both `EVERGREEN_USER` and `EVERGREEN_API_KEY` env vars required |
-| Per-request mode | `EVERGREEN_AUTH_MODE=per_request` — gateway must inject `bearer_token` per tool call |
-| Intermittent 401 | Multiple sessions sharing token file. Use API key auth instead |
+| 401 / Unauthorized from any MCP tool | Run `evergreen login`, then retry |
+| "token expired" in error message | Run `evergreen login`, then retry |
+| MCP tools return empty/generic errors | Run `evergreen login`, then retry |
+| Intermittent auth failures across sessions | Consider API key auth instead (`EVERGREEN_USER` + `EVERGREEN_API_KEY` env vars) |
