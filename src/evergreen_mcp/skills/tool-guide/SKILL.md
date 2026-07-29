@@ -14,14 +14,18 @@ User wants to...
 ├─ See their recent CI patches/commits
 │   └─ list_user_recent_patches_evergreen
 │
-├─ Understand why a patch is failing
+├─ Check whether a patch/version has finished yet, and what failed
+│   └─ get_status_summary_evergreen (needs patch_id OR version_id)
+│      Poll several patches with PARALLEL calls in ONE turn, not one per turn.
+│
+├─ Understand why a patch is failing (needs task_id to drill in)
 │   └─ get_patch_failed_jobs_evergreen (needs patch_id)
 │
 ├─ See which specific tests failed in a task
-│   └─ get_task_test_results_evergreen (needs task_id)
+│   └─ get_test_results_summary (needs task_id)
 │
 ├─ Read error logs from a failed task
-│   └─ get_task_logs_evergreen (needs task_id)
+│   └─ get_task_log_summary (needs task_id)
 │
 ├─ Know which Evergreen projects they work on
 │   └─ get_inferred_project_ids_evergreen
@@ -136,9 +140,59 @@ User wants to...
 
 ---
 
+## Tool 2b: get_status_summary_evergreen
+
+**Purpose**: Answer "is it done, and what failed?" in a compact fixed schema.
+Accepts exactly one of `patch_id` or `version_id`.
+
+Returns: `version_status`, `done` (explicit boolean), `in_flight`,
+`counts.by_status` / `counts.buckets`, `eta`, `failed_task_count`, and
+`failed_tasks[{task_name, build_variant, status, description}]`.
+
+**When to Use**:
+- Any status poll. This is the default tool for "did my patch finish?"
+- Watching several patches at once during a bisection or A/B experiment.
+
+**Why it matters**: 20-50x smaller than get_patch_failed_jobs_evergreen /
+get_version_tasks_evergreen, and its size does not grow with task count
+(status counts are a server-side aggregate). Tool responses stay in the
+conversation and are re-sent on every later turn, so an oversized poll response
+keeps costing tokens long after you have read it.
+
+**Polling discipline** — the response size is only half the cost:
+- Poll several patches with **parallel calls in a single turn**. One call per
+  turn is the most expensive way to do it, because each turn re-sends the whole
+  conversation.
+- Use the returned `eta` to decide when to check back instead of a fixed timer.
+- Delegate long watch loops to a subagent, which polls against a much smaller
+  context than the main thread.
+
+**What it deliberately omits**: `task_id`, host metadata (ami/host_id/distro_id),
+timing, and test counts.
+
+**Note on `known-issue`**: a failed task that carries an annotation displays as
+`known-issue` (Evergreen checks HasAnnotations first, so it masks the underlying
+failure status). It is counted under the `failed` bucket and IS listed in
+`failed_tasks`, because Evergreen's own definition treats it as a failure that
+only counts as success when a caller explicitly opts in. Its verbatim count stays
+in `counts.by_status`, so you can still tell a triaged failure from a fresh one.
+
+**Note on host metadata**: the detailed task listings now return
+ami/host_id/distro_id/image_id only for FAILED tasks. To check which distro or
+AMI a *passing* task ran on (e.g. verifying hardware sizing for a perf
+baseline), call `get_task_log_summary` with that task's `task_id` — it returns
+full host metadata regardless of status. When you need those — i.e. you know which task to
+investigate — call get_patch_failed_jobs_evergreen or
+get_version_tasks_evergreen for that patch/version.
+
+---
+
 ## Tool 3: get_patch_failed_jobs_evergreen
 
-**Purpose**: Analyze why a patch is failing. Returns all failed tasks with failure details, build variants, timeout info, log links, and test failure counts.
+**Purpose**: Analyze why a patch is failing. Returns all failed tasks with failure details, build variants, timeout info, host metadata, task_id, and test failure counts.
+
+Prefer `get_status_summary_evergreen` for plain status checks; come here once
+you need a `task_id` to drill into logs or test results.
 
 **When to Use**:
 - After finding a failed patch via list_user_recent_patches_evergreen
@@ -151,7 +205,7 @@ User wants to...
 |-----------|------|---------|-------------|
 | patch_id | str | **required** | Patch ID from list_user_recent_patches results |
 | project_id | str or None | auto-detect | Optional project identifier for validation |
-| max_results | int | 50 | Max failed tasks. 10-20 focused, 50+ comprehensive. |
+| max_results | int | 50 | Max failed tasks, capped at 500. 10-20 focused, 50+ comprehensive. |
 
 **Return shape**:
 ```json
@@ -174,7 +228,7 @@ User wants to...
         "failed_test_count": 3,
         "total_test_count": 150
       },
-      "logs": { "task_log": "https://...", "all_logs": "https://..." }
+      "failure_details": { "description": "..." }
     }
   ],
   "summary": {
@@ -198,8 +252,8 @@ User wants to...
    - `failed_test_count > 0` → Test failures (most common, most actionable)
    - `timed_out: true` → Timeout issues
    - `failed_test_count == 0` and no timeout → Infrastructure/setup failure
-3. For test failures → call get_task_test_results_evergreen(task_id)
-4. For other failures → call get_task_logs_evergreen(task_id)
+3. For test failures → call get_test_results_summary(task_id)
+4. For other failures → call get_task_log_summary(task_id)
 5. Look for patterns: same task failing across multiple variants = likely real code issue. Fails on one variant only = possibly platform-specific.
 
 ---
@@ -218,7 +272,7 @@ User wants to...
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | version_id | str | **required** | Version ID from a Spruce URL or any other Evergreen response |
-| max_results | int | 50 | Max tasks to return |
+| max_results | int | 50 | Max tasks to return, capped at 500. Pair large values with status_filter='failed'. |
 | status_filter | str | `"all"` | `"all"` for every task, `"failed"` for failures only, `"succeeded"` for passing only |
 
 **Return shape**:
@@ -251,7 +305,7 @@ User wants to...
 ```
 
 **What to do with results**:
-- Use `task_id` values to call `schedule_tasks_evergreen`, `get_task_test_results_evergreen`, or `get_task_logs_evergreen`
+- Use `task_id` values to call `schedule_tasks_evergreen`, `get_test_results_summary`, or `get_task_log_summary`
 - Notice the trigger_request task ID pattern: double underscore before the UUID (empty revision field)
 
 **Discovery workflow for scheduling trigger_request tasks**:
@@ -263,7 +317,7 @@ get_version_tasks_evergreen(version_id=..., status_filter="all")
 
 ---
 
-## Tool 4: get_task_test_results_evergreen
+## Tool 4: get_test_results_summary
 
 **Purpose**: Get the specific test cases that failed within a task. Shows individual test names, statuses, durations, and links to test-specific logs.
 
@@ -295,7 +349,7 @@ get_version_tasks_evergreen(version_id=..., status_filter="all")
       "test_file": "jstests/auth/test_login_expired_token.js",
       "status": "fail",
       "duration": 5.2,
-      "logs": { "url": "https://...", "url_parsley": "https://..." }
+      "log_url": "https://parsley.corp.mongodb.com/test/..."
     }
   ],
   "summary": { "returned_tests": 3, "failed_tests_in_results": 3 }
@@ -304,17 +358,17 @@ get_version_tasks_evergreen(version_id=..., status_filter="all")
 
 **Key fields**:
 - `test_results[].test_file` — The failing test name. This tells the user exactly what to look at.
-- `test_results[].logs.url_parsley` — Link to AI-powered log viewer for this specific test.
+- `test_results[].log_url` — Parsley log-viewer link for this test. One URL is returned, not three renderings of the same log.
 
 **What to do with results**:
 1. List the failing tests: "3 tests failed: test_login_expired_token, test_session_refresh, test_oauth_callback"
 2. If test names suggest a pattern, point it out: "All 3 failures are auth-related — likely connected to your changes."
 3. Share Parsley links if available for deeper analysis
-4. If you need more detail, call get_task_logs_evergreen on the same task_id
+4. If you need more detail, call get_task_log_summary on the same task_id
 
 ---
 
-## Tool 5: get_task_logs_evergreen
+## Tool 5: get_task_log_summary
 
 **Purpose**: Fetch raw log output from a task execution. By default filters for error/failure messages to surface what went wrong.
 
@@ -379,9 +433,9 @@ list_user_recent_patches_evergreen(project_id=..., limit=5)
 → Find failed patch → get patch_id
 → get_patch_failed_jobs_evergreen(patch_id=...)
 → For tasks with failed_test_count > 0:
-    → get_task_test_results_evergreen(task_id=...)
+    → get_test_results_summary(task_id=...)
 → For tasks without test results:
-    → get_task_logs_evergreen(task_id=...)
+    → get_task_log_summary(task_id=...)
 → Synthesize findings and present root cause
 ```
 
@@ -389,13 +443,13 @@ list_user_recent_patches_evergreen(project_id=..., limit=5)
 ```
 get_patch_failed_jobs_evergreen(patch_id=...)
 → Find tasks with failed_test_count > 0
-→ get_task_test_results_evergreen(task_id=...)
+→ get_test_results_summary(task_id=...)
 → List failing test names and patterns
 ```
 
 ### "Show me the error logs" (Direct Log Access)
 ```
-get_task_logs_evergreen(task_id=..., filter_errors=True)
+get_task_log_summary(task_id=..., filter_errors=True)
 → If not enough context: retry with filter_errors=False
 → Present error summary
 ```
@@ -407,7 +461,7 @@ get_task_logs_evergreen(task_id=..., filter_errors=True)
 **Purpose**: Fetch the complete, untruncated task logs via REST API. Returns the full task execution log including timeout handler output, process dumps, and stdout/stderr — content the GraphQL tool cannot access. Automatically scans for error patterns and returns a structured summary when errors are found.
 
 **When to Use**:
-- When get_task_logs_evergreen (GraphQL) returns truncated or incomplete logs
+- When get_task_log_summary (GraphQL) returns truncated or incomplete logs
 - Debugging non-test failures (setup errors, timeouts, compilation failures)
 - When you need the full raw log with error analysis
 
@@ -452,7 +506,7 @@ If no error keywords are found, returns the raw log text unchanged.
 **Purpose**: Fetch raw test log content via REST API (stored in S3, not accessible via GraphQL). Use this to understand WHY a test failed, not just that it failed. Automatically scans for error patterns and returns a structured summary.
 
 **When to Use**:
-- After get_task_test_results_evergreen shows which tests failed, to understand the actual failure output
+- After get_test_results_summary shows which tests failed, to understand the actual failure output
 - When you need the raw test execution log with error analysis
 - For resmoke tests where the test name is Job0, Job1, etc.
 
@@ -470,7 +524,7 @@ If no error keywords are found, returns the raw log text unchanged.
 **What to do with results**:
 1. Check "Top error terms" for the dominant failure type (panic, assertion, timeout, etc.)
 2. Read "Example lines per term" for the actual error messages
-3. Use this together with get_task_test_results_evergreen — the GraphQL tool tells you WHICH tests failed, this tool tells you WHY
+3. Use this together with get_test_results_summary — the GraphQL tool tells you WHICH tests failed, this tool tells you WHY
 
 ---
 
@@ -582,7 +636,7 @@ list_user_recent_patches_evergreen(project_id=..., limit=5)
 → Find failed patch → get patch_id
 → get_patch_failed_jobs_evergreen(patch_id=...)
 → For tasks with failed_test_count > 0:
-    → get_task_test_results_evergreen(task_id=...)  (which tests failed)
+    → get_test_results_summary(task_id=...)  (which tests failed)
     → get_test_results_detailed(task_id=..., test_name=...)  (why they failed)
 → For tasks without test results:
     → get_task_log_detailed(task_id=...)  (full logs with error scan)

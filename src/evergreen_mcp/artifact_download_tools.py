@@ -190,16 +190,12 @@ async def fetch_task_artifacts(
         )
     except Exception as exc:
         return {
-            "task_id": task_id,
-            "artifact_filter": artifact_filter,
-            "work_dir": work_dir,
+            "status": "error",
             "error": f"{type(exc).__name__}: {exc}",
         }
 
     return {
-        "task_id": task_id,
-        "artifact_filter": artifact_filter,
-        "work_dir": work_dir,
+        "status": "ok",
         "downloaded_artifacts": {name: str(path) for name, path in result.items()},
         "artifact_count": len(result),
     }

@@ -19,13 +19,13 @@ from .evergreen_queries import (
     GET_INFERRED_PROJECT_IDS,
     GET_MAINLINE_COMMITS,
     GET_PATCH_CONFIGURE,
+    GET_PATCH_STATUS_SUMMARY,
     GET_PATCH_TASKS,
-    GET_PROJECT,
-    GET_PROJECT_SETTINGS,
     GET_PROJECTS,
     GET_TASK_LOGS,
     GET_TASK_TEST_RESULTS,
     GET_USER_RECENT_PATCHES,
+    GET_VERSION_STATUS_SUMMARY,
     GET_VERSION_TASKS,
     GET_WATERFALL,
     RESTART_TASK,
@@ -38,6 +38,35 @@ from .evergreen_queries import (
 FAILED_TEST_STATUSES = ["fail", "failed"]
 
 logger = logging.getLogger(__name__)
+
+
+def _describe_transport_error(e: Exception) -> str:
+    """Build an actionable one-line description of a GraphQL transport failure.
+
+    The previous messages ("Failed to execute GraphQL query") discarded every
+    detail, including the HTTP status. An expired OIDC token surfaced as that
+    opaque string with the real 401 buried in a traceback, which invites blind
+    retries of a call that cannot succeed until the caller re-authenticates.
+    """
+    status = getattr(e, "code", None)
+    text = str(e)
+    hint = ""
+    if status == 401 or "401" in text or "unauthorized" in text.lower():
+        hint = (
+            " The Evergreen credentials are rejected — the OIDC token has most "
+            "likely expired. Re-authenticate (refresh the token file, or run "
+            "/mcp to reconnect this server) before retrying; retrying as-is "
+            "will fail the same way."
+        )
+    elif status == 403 or "forbidden" in text.lower():
+        hint = (
+            " Authenticated but not authorized for this resource — check the "
+            "project/patch belongs to you or that you have access."
+        )
+    elif status in (502, 503, 504) or "gateway" in text.lower():
+        hint = " Evergreen appears to be unavailable; this is likely transient."
+    status_part = f"HTTP {status}: " if status else ""
+    return f"{status_part}{text}{hint}"
 
 
 class EvergreenGraphQLClient:
@@ -172,7 +201,8 @@ class EvergreenGraphQLClient:
                             "GraphQL transport error on retry after token refresh: %s", retry_e, exc_info=True,
                         )
                         raise Exception(
-                            "Failed to execute GraphQL query after token refresh"
+                            "GraphQL query failed after a token refresh: "
+                            + _describe_transport_error(retry_e)
                         ) from retry_e
                     except Exception as retry_e:
                         logger.warning(
@@ -180,7 +210,9 @@ class EvergreenGraphQLClient:
                         )
                         raise Exception("Query failed after token refresh") from retry_e
             logger.warning("GraphQL transport error: %s", e, exc_info=True)
-            raise Exception("Failed to execute GraphQL query") from e
+            raise Exception(
+                "GraphQL query failed: " + _describe_transport_error(e)
+            ) from e
         except Exception as e:
             logger.warning("GraphQL query execution error: %s", e, exc_info=True)
             raise
@@ -227,46 +259,6 @@ class EvergreenGraphQLClient:
         logger.info("Retrieved %s projects", len(projects))
         return projects
 
-    async def get_project(self, project_id: str) -> Dict[str, Any]:
-        """Get specific project by ID
-
-        Args:
-            project_id: Project identifier
-
-        Returns:
-            Project details dictionary
-        """
-        variables = {"projectId": project_id}
-        result = await self._execute_query(GET_PROJECT, variables)
-
-        project = result.get("project")
-        if not project:
-            raise Exception(f"Project not found: {project_id}")
-
-        logger.info(
-            "Retrieved project details for: %s", project.get("displayName", project_id)
-        )
-        return project
-
-    async def get_project_settings(self, project_id: str) -> Dict[str, Any]:
-        """Get project settings and configuration
-
-        Args:
-            project_id: Project identifier
-
-        Returns:
-            Project settings dictionary
-        """
-        variables = {"projectId": project_id}
-        result = await self._execute_query(GET_PROJECT_SETTINGS, variables)
-
-        settings = result.get("projectSettings")
-        if not settings:
-            raise Exception(f"Project settings not found: {project_id}")
-
-        logger.info("Retrieved project settings for: %s", project_id)
-        return settings
-
     async def get_user_recent_patches(
         self, user_id: str, limit: int = 10, page: int = 0
     ) -> List[Dict[str, Any]]:
@@ -293,6 +285,59 @@ class EvergreenGraphQLClient:
             "Retrieved %s patches for user %s (page %s)", len(patches), user_id, page
         )
         return patches
+
+    async def get_patch_status_summary(
+        self, patch_id: str, failed_statuses: List[str], failed_limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get compact status counts plus failing tasks for a patch.
+
+        Args:
+            patch_id: Patch identifier
+            failed_statuses: Statuses treated as failures (the only tasks whose
+                per-task detail is fetched)
+            failed_limit: Maximum number of failing tasks to fetch
+
+        Returns:
+            Patch dictionary with versionFull.taskStatusStats and failing tasks
+        """
+        variables = {
+            "patchId": patch_id,
+            "failedStatuses": failed_statuses,
+            "failedLimit": failed_limit,
+        }
+        result = await self._execute_query(GET_PATCH_STATUS_SUMMARY, variables)
+        patch = result.get("patch")
+
+        if not patch:
+            raise Exception(f"Patch not found: {patch_id}")
+
+        return patch
+
+    async def get_version_status_summary(
+        self, version_id: str, failed_statuses: List[str], failed_limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get compact status counts plus failing tasks for a version.
+
+        Args:
+            version_id: Version identifier
+            failed_statuses: Statuses treated as failures
+            failed_limit: Maximum number of failing tasks to fetch
+
+        Returns:
+            Version dictionary with taskStatusStats and failing tasks
+        """
+        variables = {
+            "versionId": version_id,
+            "failedStatuses": failed_statuses,
+            "failedLimit": failed_limit,
+        }
+        result = await self._execute_query(GET_VERSION_STATUS_SUMMARY, variables)
+        version = result.get("version")
+
+        if not version:
+            raise Exception(f"Version not found: {version_id}")
+
+        return version
 
     async def get_patch_tasks(
         self, patch_id: str, statuses: List[str], limit: int = 100

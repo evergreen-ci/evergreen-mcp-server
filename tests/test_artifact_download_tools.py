@@ -331,10 +331,13 @@ class TestFetchTaskArtifacts(unittest.IsolatedAsyncioTestCase):
                     work_dir=tmp,
                 )
 
-        assert result["task_id"] == "task-abc"
+        assert result["status"] == "ok"
         assert "downloaded_artifacts" in result
         assert "artifact_count" in result
         assert "error" not in result
+        # The caller's own inputs are deliberately not echoed back.
+        assert "task_id" not in result
+        assert "work_dir" not in result
 
     async def test_returns_error_dict_on_value_error(self):
         client = _make_client()
@@ -347,10 +350,9 @@ class TestFetchTaskArtifacts(unittest.IsolatedAsyncioTestCase):
             artifact_filter="nonexistent",
         )
 
-        assert "error" in result
+        assert result["status"] == "error"
         assert "nonexistent" in result["error"]
-        assert result["task_id"] == "task-abc"
-        assert result["artifact_filter"] == "nonexistent"
+        assert "task_id" not in result
 
     async def test_returns_error_dict_on_runtime_error(self):
         """RuntimeError from get_task_details should be caught and surfaced."""
@@ -364,7 +366,7 @@ class TestFetchTaskArtifacts(unittest.IsolatedAsyncioTestCase):
             task_id="bad-id",
         )
 
-        assert "error" in result
+        assert result["status"] == "error"
         assert "RuntimeError" in result["error"]
+        # The failing id must still be recoverable from the message itself.
         assert "bad-id" in result["error"]
-        assert result["task_id"] == "bad-id"

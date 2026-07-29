@@ -439,14 +439,14 @@ class TestFetchEvergreenTaskLogs(unittest.IsolatedAsyncioTestCase):
             mock_client, {"task_id": "t1", "execution_retries": 1}
         )
         assert result == {"logs": "raw log output"}
-        mock_client.get_task_logs.assert_called_once_with("t1", 1)
+        mock_client.get_task_logs.assert_called_once_with("t1", 1, max_chars=0)
 
     async def test_defaults_execution_retries(self):
         mock_client = AsyncMock()
         mock_client.get_task_logs.return_value = "logs"
 
         await fetch_evergreen_task_logs(mock_client, {"task_id": "t1"})
-        mock_client.get_task_logs.assert_called_once_with("t1", 0)
+        mock_client.get_task_logs.assert_called_once_with("t1", 0, max_chars=0)
 
 
 class TestFetchEvergreenTaskTestResults(unittest.IsolatedAsyncioTestCase):
@@ -560,3 +560,52 @@ class TestGetTaskDetails(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ValidationError):
             await client.get_task_details("task-abc")
+
+
+class TestTaskLogTruncation(unittest.IsolatedAsyncioTestCase):
+    """The raw-log fallback must be bounded.
+
+    A task log whose text matches no error keyword used to be returned in full,
+    with no caller-facing cap — the largest single payload this server emits.
+    """
+
+    async def test_tail_helper_keeps_the_end_and_reports_the_drop(self):
+        from evergreen_mcp.evergreen_rest_client import _tail
+
+        text = "a" * 100 + "THE-FAILURE"
+        out = _tail(text, 20)
+        assert out.endswith("THE-FAILURE")
+        assert "truncated" in out
+        assert "91 of 111 characters" in out
+
+    async def test_tail_helper_passes_short_text_through(self):
+        from evergreen_mcp.evergreen_rest_client import _tail
+
+        assert _tail("short", 100) == "short"
+
+    async def test_unmatched_log_is_capped_to_the_tail(self):
+        from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
+
+        client = EvergreenRestClient.__new__(EvergreenRestClient)
+        # No error keywords anywhere, so this takes the raw-text fallback.
+        benign = "\n".join("all quiet on the western front" for _ in range(5000))
+        client._request = AsyncMock(return_value={"status": "success", "data": benign})
+
+        out = await client.get_task_logs("t1", 0, max_chars=500)
+
+        assert len(out) < 700  # 500 of log plus the truncation notice
+        assert out.endswith("all quiet on the western front")
+
+    async def test_default_cap_applies_when_max_chars_is_zero(self):
+        from evergreen_mcp.evergreen_rest_client import (
+            DEFAULT_TASK_LOG_MAX_CHARS,
+            EvergreenRestClient,
+        )
+
+        client = EvergreenRestClient.__new__(EvergreenRestClient)
+        benign = "x" * (DEFAULT_TASK_LOG_MAX_CHARS * 3)
+        client._request = AsyncMock(return_value={"status": "success", "data": benign})
+
+        out = await client.get_task_logs("t1", 0)
+
+        assert len(out) < DEFAULT_TASK_LOG_MAX_CHARS + 200

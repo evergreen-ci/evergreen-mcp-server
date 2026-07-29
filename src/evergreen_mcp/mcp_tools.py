@@ -41,6 +41,12 @@ from .patch_creation_tools import (
 from .priority_tools import set_patch_priority, set_task_priority
 from .restart_tools import restart_task, restart_version
 from .schedule_tools import configure_patch, schedule_unscheduled_tasks
+from .status_summary_tools import (
+    DEFAULT_DESCRIPTION_MAX_CHARS,
+    DEFAULT_MAX_FAILED_TASKS,
+    fetch_patch_status_summary,
+    fetch_version_status_summary,
+)
 from .waterfall_tools import (
     fetch_mainline_commits_between,
     fetch_project_build_variants,
@@ -49,6 +55,33 @@ from .waterfall_tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Tool responses are consumed by a model, not read by a human. Pretty-printing
+# with indent=2 accounted for 18.6% of all Evergreen MCP response bytes measured
+# across the local transcript corpus (25% for the task-list tools), and every
+# byte is re-sent on each subsequent turn of the conversation.
+_COMPACT_JSON = (",", ":")
+
+
+def _as_list(value: Any) -> Optional[list]:
+    """Accept a bare string where a list of filters is expected.
+
+    Callers naturally pass a single filter as a string (`variants="^(disagg-...)"`);
+    a strict `list[str]` annotation rejects that with a pydantic validation
+    error, costing a whole round-trip to learn nothing. This was the single most
+    repeated tool-call failure in the sampled transcripts.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        # Deliberately NOT split on commas. These params accept regex on the
+        # waterfall tools, and a regex can legitimately contain a comma
+        # ("^(a|b){1,2}$"), so splitting would corrupt valid input. A caller who
+        # crams "compile,unit_tests" into one string gets one unmatched name;
+        # create_patch already detects the resulting empty variants_tasks and
+        # warns not to finalize (patch_creation_tools.py:311-341).
+        return [value]
+    return list(value)
 
 
 @asynccontextmanager
@@ -60,6 +93,16 @@ async def _get_clients(
 
     When a bearer token is provided, temporary clients are created for this
     request only. Otherwise falls back to the lifespan context clients.
+
+    Do NOT remove or hide `bearer_token` from the tool schemas to save tokens.
+    It is ~735 tokens of schema re-sent on every request and was passed 0 times
+    in 2,083 sampled local calls, which makes it look dead — but under
+    EVERGREEN_AUTH_MODE=per_request (server.py, "used by MCP gateways that
+    inject per-user credentials from a credential store") the lifespan context
+    has no clients at all, and this function raises unless the token arrives as
+    a tool argument. Hiding it would break that deployment outright. The type
+    was narrowed (str | None = None -> str = "") to drop the anyOf union from
+    the schema, which is the safe part of that saving.
 
     Yields (graphql_client, rest_client, user_id).
     """
@@ -213,9 +256,9 @@ def register_tools(mcp: FastMCP) -> None:
             "quick overview, larger (10-20) for comprehensive analysis. Maximum 50.",
         ] = 10,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """List the user's recent patches from Evergreen."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -269,7 +312,7 @@ def register_tools(mcp: FastMCP) -> None:
                                 "this tool again with the project_id parameter set to their choice."
                             ),
                         },
-                        indent=2,
+                        separators=_COMPACT_JSON,
                     )
 
             if effective_project_id:
@@ -296,16 +339,20 @@ def register_tools(mcp: FastMCP) -> None:
                     },
                 }
                 final_response.update(result)
-                return json.dumps(final_response, indent=2)
+                return json.dumps(final_response, separators=_COMPACT_JSON)
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
-            "Get CI/CD jobs for a specific patch. By default returns only failed jobs "
+            "Get CI/CD jobs for a specific patch, with full per-task detail. "
+            "By default returns only failed jobs "
             "to help debug patch failures; use status_filter='all' to see every task or "
             "'succeeded' to see only passing tasks. Shows task status, build variants, "
-            "timeout info, log links, and test counts. "
+            "timeout info, task_id, host metadata, and test counts. "
+            "If you are only checking whether the patch has finished and what "
+            "failed, use get_status_summary_evergreen instead — it is ~20x "
+            "smaller. Come here when you need a task_id to drill into. "
             "If project_id is not specified, will automatically detect it from "
             "your workspace directory and recent patch activity. "
             "This tool may return a list of available project_ids if it cannot determine the project_id automatically. "
@@ -334,9 +381,9 @@ def register_tools(mcp: FastMCP) -> None:
             "'succeeded' for passing tasks only, 'all' for every task regardless of status.",
         ] = "failed",
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Get jobs for a specific patch, filtered by status."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -386,7 +433,7 @@ def register_tools(mcp: FastMCP) -> None:
                                 "this tool again with the project_id parameter set to their choice."
                             ),
                         },
-                        indent=2,
+                        separators=_COMPACT_JSON,
                     )
 
             result = await fetch_patch_jobs(
@@ -395,6 +442,7 @@ def register_tools(mcp: FastMCP) -> None:
                 max_results,
                 project_id=effective_project_id,
                 status_filter=status_filter,
+                project_id_inferred=project_id is None,
             )
 
             # Include low-confidence warning if applicable
@@ -407,13 +455,106 @@ def register_tools(mcp: FastMCP) -> None:
                     },
                 }
                 final_response.update(result)
-                return json.dumps(final_response, indent=2)
+                return json.dumps(final_response, separators=_COMPACT_JSON)
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
-            "Get CI/CD tasks for a specific Evergreen version by version_id. "
+            "PREFERRED TOOL FOR POLLING whether a patch or version has finished. "
+            "Returns a compact fixed schema: version_status, an explicit 'done' "
+            "flag, 'in_flight' count, per-status task counts, Evergreen's own "
+            "'eta', and one entry per FAILING task ({task_name, build_variant, "
+            "status, description}) — including 'known-issue' tasks, which are "
+            "annotated failures and count as failed, not succeeded. "
+            "Roughly 20-50x smaller than "
+            "get_patch_failed_jobs_evergreen / get_version_tasks_evergreen, and "
+            "the size does not grow with task count, so use this by default and "
+            "reach for the detailed tools only once you know which task to "
+            "investigate (they return task_id, host metadata and test counts). "
+            "Pass exactly one of patch_id or version_id. "
+            "'done' is not monotonic: unscheduled tasks are not counted as "
+            "in-flight, so a version whose tasks are not activated yet "
+            "(batchtime on mainline, or after an abort/restart or "
+            "configure_patch) can report done=true and later go back to "
+            "false. A 'done_caveat' field appears when that is possible. "
+            "When polling several patches, issue the calls IN PARALLEL in a "
+            "single turn rather than one per turn — that is where most of the "
+            "cost of status polling actually lives. Prefer polling from a "
+            "subagent when you have many checks to make."
+        )
+    )
+    async def get_status_summary_evergreen(
+        ctx: Context,
+        patch_id: Annotated[
+            str | None,
+            "Patch identifier to summarize. Mutually exclusive with version_id.",
+        ] = None,
+        version_id: Annotated[
+            str | None,
+            "Version identifier to summarize (extract from a Spruce URL: "
+            "spruce.corp.mongodb.com/version/<version_id>/tasks). Use this for "
+            "trigger_request and other non-patch versions. Mutually exclusive "
+            "with patch_id.",
+        ] = None,
+        max_failed_tasks: Annotated[
+            int,
+            "Maximum number of failing tasks to enumerate. The total count is "
+            "always reported even when the list is truncated.",
+        ] = DEFAULT_MAX_FAILED_TASKS,
+        description_max_chars: Annotated[
+            int,
+            "Truncate each failure description to this many characters. Raise it "
+            "if a description is cut off mid-message.",
+        ] = DEFAULT_DESCRIPTION_MAX_CHARS,
+        bearer_token: Annotated[
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
+    ) -> str:
+        """Get a compact status summary for a patch or version."""
+        if bool(patch_id) == bool(version_id):
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        "Pass exactly one of patch_id or version_id "
+                        f"(got patch_id={patch_id!r}, version_id={version_id!r})."
+                    ),
+                },
+                separators=_COMPACT_JSON,
+            )
+
+        evg_ctx = ctx.request_context.lifespan_context
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            _api_client,
+            _user_id,
+        ):
+            if patch_id:
+                result = await fetch_patch_status_summary(
+                    client,
+                    patch_id,
+                    max_failed_tasks=max_failed_tasks,
+                    description_max_chars=description_max_chars,
+                )
+            else:
+                result = await fetch_version_status_summary(
+                    client,
+                    version_id,
+                    max_failed_tasks=max_failed_tasks,
+                    description_max_chars=description_max_chars,
+                )
+        return json.dumps(result, separators=_COMPACT_JSON)
+
+    @mcp.tool(
+        description=(
+            "Get CI/CD tasks for a specific Evergreen version by version_id, "
+            "with full per-task detail (task_id, host metadata, timing, test "
+            "counts). This is the heaviest read tool in this server: prefer "
+            "get_status_summary_evergreen when you only need to know whether "
+            "the version finished and what failed, and come here once you need "
+            "a task_id to drill into. "
             "Unlike get_patch_failed_jobs_evergreen (which queries via the patch graph), "
             "this queries the version directly — making it the right tool for "
             "trigger_request versions and other non-patch versions that are "
@@ -432,9 +573,12 @@ def register_tools(mcp: FastMCP) -> None:
         ],
         max_results: Annotated[
             int,
-            "Maximum number of tasks to fetch and return. Use 10-20 for focused "
-            "analysis, 50-200 for comprehensive review. Versions with thousands "
-            "of tasks (e.g. mainline commits) may need 500+ to see all variants.",
+            "Maximum number of tasks to fetch and return, capped at 500. Use "
+            "10-20 for focused analysis, 50-200 for comprehensive review. A "
+            "mainline version can hold thousands of tasks, so pair a large "
+            "value with status_filter='failed' rather than trying to list them "
+            "all; for a whole-version overview use get_status_summary_evergreen, "
+            "whose size does not grow with task count.",
         ] = 50,
         status_filter: Annotated[
             str,
@@ -443,9 +587,9 @@ def register_tools(mcp: FastMCP) -> None:
             "'succeeded' for passing tasks only.",
         ] = "all",
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Get tasks for a specific version by version_id."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -461,7 +605,7 @@ def register_tools(mcp: FastMCP) -> None:
                 max_results,
                 status_filter=status_filter,
             )
-            return json.dumps(result, indent=2)
+            return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -496,9 +640,9 @@ def register_tools(mcp: FastMCP) -> None:
             "log output. Set to false only when you need complete context.",
         ] = True,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Get detailed logs for a specific task."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -516,7 +660,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await fetch_task_logs(client, arguments)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -550,9 +694,9 @@ def register_tools(mcp: FastMCP) -> None:
             "analysis, 200+ for comprehensive review.",
         ] = 100,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Get detailed test results for a specific task."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -570,7 +714,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await fetch_task_test_results(client, arguments)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -589,9 +733,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Default is 50.",
         ] = 50,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Get unique project identifiers from user's recent patches."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -602,7 +746,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await fetch_inferred_project_ids(client, user_id, max_patches)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -628,15 +772,22 @@ def register_tools(mcp: FastMCP) -> None:
             "Task execution number if task was retried. Usually 0 for first "
             "execution, 1+ for retries.",
         ] = 0,
+        max_chars: Annotated[
+            int,
+            "Cap the returned log text at this many characters, keeping the "
+            "TAIL (failures surface at the end). Defaults to 20000. Raise it "
+            "only after seeing a truncation notice and needing earlier output.",
+        ] = 0,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         evg_ctx = ctx.request_context.lifespan_context
         arguments = {
             "task_id": task_id,
             "execution_retries": execution_retries,
+            "max_chars": max_chars,
         }
 
         async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
@@ -645,7 +796,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await fetch_evergreen_task_logs(api_client, arguments)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -661,9 +812,12 @@ def register_tools(mcp: FastMCP) -> None:
         ctx: Context,
         test_name: Annotated[
             str,
-            "The test name used to locate its log in S3. For resmoke tests "
-            "this is typically Job0, Job1, etc. For other test runners it may "
-            "be the full test identifier. Used to construct the S3 log path: "
+            "REQUIRED. Use the 'test_file' value from a "
+            "get_test_results_summary response verbatim (e.g. "
+            "'resource_sanity_checks', 'load') — that is the name this log is "
+            "stored under. For resmoke tests it is typically Job0, Job1, etc. "
+            "Call get_test_results_summary first if you do not have it; there "
+            "is no default. Used to construct the S3 log path: "
             "TestLogs/{test_name}/global.log.",
         ],
         task_id: Annotated[
@@ -682,9 +836,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Defaults to 100000 for comprehensive review.",
         ] = 100000,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         evg_ctx = ctx.request_context.lifespan_context
         arguments = {
@@ -699,7 +853,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await fetch_evergreen_task_test_results(api_client, arguments)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -723,9 +877,9 @@ def register_tools(mcp: FastMCP) -> None:
             "The base directory to create artifact folders in. Defaults to 'WORK'.",
         ] = "WORK",
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Download artifacts for a given Evergreen task and return paths."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -740,7 +894,7 @@ def register_tools(mcp: FastMCP) -> None:
                 artifact_filter=artifact_filter,
                 work_dir=work_dir,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -786,16 +940,16 @@ def register_tools(mcp: FastMCP) -> None:
             "Show versions on/before this date (YYYY-MM-DD).",
         ] = None,
         variants: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by build variant (regex or exact). Use "
             "list_project_build_variants_evergreen to discover valid values.",
         ] = None,
         statuses: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter task status counts (e.g., ['failed', 'system-failed']).",
         ] = None,
         requesters: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by requester type. Server defaults to system requesters "
             "(commit/branch).",
         ] = None,
@@ -804,10 +958,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Skip inactive builds in the grid. Defaults to True (less noise).",
         ] = True,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, "
-            "uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Compact project waterfall: per-cell task status counts."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -820,7 +973,7 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
 
             result = await fetch_waterfall_summary(
                 client,
@@ -830,12 +983,12 @@ def register_tools(mcp: FastMCP) -> None:
                 min_order=min_order,
                 revision=revision,
                 date=date,
-                variants=variants,
-                statuses=statuses,
-                requesters=requesters,
+                variants=_as_list(variants),
+                statuses=_as_list(statuses),
+                requesters=_as_list(requesters),
                 omit_inactive_builds=omit_inactive_builds,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -876,19 +1029,19 @@ def register_tools(mcp: FastMCP) -> None:
             "Show versions on/before this date (YYYY-MM-DD).",
         ] = None,
         variants: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by build variant (regex or exact).",
         ] = None,
         tasks: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by task display name (regex or exact).",
         ] = None,
         statuses: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by task status (e.g., ['failed', 'system-failed']).",
         ] = None,
         requesters: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by requester type. Server defaults to system requesters.",
         ] = None,
         omit_inactive_builds: Annotated[
@@ -904,9 +1057,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Case sensitivity for the variants filter. Defaults to True.",
         ] = True,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Detailed project waterfall: per-cell task arrays with task_ids."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -919,7 +1072,7 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
 
             result = await fetch_waterfall_detailed(
                 client,
@@ -929,15 +1082,15 @@ def register_tools(mcp: FastMCP) -> None:
                 min_order=min_order,
                 revision=revision,
                 date=date,
-                variants=variants,
-                tasks=tasks,
-                statuses=statuses,
-                requesters=requesters,
+                variants=_as_list(variants),
+                tasks=_as_list(tasks),
+                statuses=_as_list(statuses),
+                requesters=_as_list(requesters),
                 omit_inactive_builds=omit_inactive_builds,
                 task_case_sensitive=task_case_sensitive,
                 variant_case_sensitive=variant_case_sensitive,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -955,9 +1108,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Evergreen project identifier. If omitted, auto-detected.",
         ] = None,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """List unique build variants for a project."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -970,10 +1123,10 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
 
             result = await fetch_project_build_variants(client, project_id=effective_id)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1004,14 +1157,14 @@ def register_tools(mcp: FastMCP) -> None:
             "Evergreen project identifier. If omitted, auto-detected.",
         ] = None,
         requesters: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Filter by requester type. If omitted, the server's mainline "
             "default applies (commit/branch).",
         ] = None,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """List mainline commits between two version order numbers."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1024,16 +1177,16 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
 
             result = await fetch_mainline_commits_between(
                 client,
                 project_id=effective_id,
                 start_order=start_order,
                 end_order=end_order,
-                requesters=requesters,
+                requesters=_as_list(requesters),
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1065,10 +1218,9 @@ def register_tools(mcp: FastMCP) -> None:
             "task in a cell). Must be tasks belonging to the given version_id.",
         ],
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, "
-            "uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Schedule previously-unscheduled tasks on a version."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1082,7 +1234,7 @@ def register_tools(mcp: FastMCP) -> None:
                 version_id=version_id,
                 task_ids=task_ids,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1131,10 +1283,9 @@ def register_tools(mcp: FastMCP) -> None:
             "description is preserved.",
         ] = None,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, "
-            "uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Add variant/task pairs to an existing patch (reusing compiles)."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1149,7 +1300,7 @@ def register_tools(mcp: FastMCP) -> None:
                 add_variants_tasks=add_variants_tasks,
                 description=description,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1181,10 +1332,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Defaults to false.",
         ] = False,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, "
-            "uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Restart a finished task, producing a new execution."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1198,7 +1348,7 @@ def register_tools(mcp: FastMCP) -> None:
                 task_id=task_id,
                 failed_only=failed_only,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1234,10 +1384,9 @@ def register_tools(mcp: FastMCP) -> None:
             "before restarting completed tasks. Defaults to false.",
         ] = False,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request. If not provided, "
-            "uses the server's default credentials.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Restart tasks on a version (full patch or a subset)."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1252,7 +1401,7 @@ def register_tools(mcp: FastMCP) -> None:
                 task_ids=task_ids,
                 abort=abort,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1307,7 +1456,7 @@ def register_tools(mcp: FastMCP) -> None:
             "Patch description shown in the Spruce UI.",
         ] = None,
         variants: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Build variants to run. Evergreen schedules the cross-product of "
             "variants × tasks — every listed task on every listed variant. "
             "Task+variant pairs that don't exist in the resolved project config "
@@ -1316,7 +1465,7 @@ def register_tools(mcp: FastMCP) -> None:
             "Use ['all'] for every variant. Pair with `tasks`.",
         ] = None,
         tasks: Annotated[
-            list[str] | None,
+            list[str] | str | None,
             "Task names to run on the selected variants. Scheduled as a "
             "cross-product with `variants`; pairs absent from the project "
             "config are silently dropped. Use ['all'] for every task. "
@@ -1406,9 +1555,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Entries from both parameters are merged before sending.",
         ] = None,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Submit a new patch."""
         import os as _os
@@ -1424,7 +1573,7 @@ def register_tools(mcp: FastMCP) -> None:
                     "status": "error",
                     "error": f"git command failed in {server_repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
                 },
-                indent=2,
+                separators=_COMPACT_JSON,
             )
 
         # --- expand local_module_include_paths ---
@@ -1434,7 +1583,7 @@ def register_tools(mcp: FastMCP) -> None:
             if not path:
                 return json.dumps(
                     {"status": "error", "error": f"local_module_include_paths entry missing 'path': {entry}"},
-                    indent=2,
+                    separators=_COMPACT_JSON,
                 )
             try:
                 with open(_os.path.expanduser(path), "r", encoding="utf-8") as fh:
@@ -1442,7 +1591,7 @@ def register_tools(mcp: FastMCP) -> None:
             except OSError as exc:
                 return json.dumps(
                     {"status": "error", "error": f"Cannot read {path}: {exc}"},
-                    indent=2,
+                    separators=_COMPACT_JSON,
                 )
             combined_includes.append(
                 {
@@ -1466,7 +1615,7 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
             assert effective_id is not None
             result = await create_patch(
                 api_client,
@@ -1474,8 +1623,8 @@ def register_tools(mcp: FastMCP) -> None:
                 diff=effective_diff,
                 base_revision=effective_base_revision,
                 description=description,
-                variants=variants,
-                tasks=tasks,
+                variants=_as_list(variants),
+                tasks=_as_list(tasks),
                 regex_variants=regex_variants,
                 regex_tasks=regex_tasks,
                 alias=alias,
@@ -1494,7 +1643,7 @@ def register_tools(mcp: FastMCP) -> None:
             )
 
             if result.get("status") != "ok":
-                return json.dumps(result, indent=2)
+                return json.dumps(result, separators=_COMPACT_JSON)
 
             patch_id = result.get("patch_id")
 
@@ -1560,7 +1709,7 @@ def register_tools(mcp: FastMCP) -> None:
                 if fin_result.get("status") != "ok":
                     result["finalize_error"] = fin_result.get("error")
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1578,9 +1727,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Patch identifier returned by create_patch_evergreen.",
         ],
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Activate an unfinalized patch."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1590,7 +1739,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await finalize_patch(api_client, patch_id=patch_id)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1606,9 +1755,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Patch identifier to cancel.",
         ],
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Cancel an unfinalized patch."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1618,7 +1767,7 @@ def register_tools(mcp: FastMCP) -> None:
             user_id,
         ):
             result = await cancel_patch(api_client, patch_id=patch_id)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1644,9 +1793,9 @@ def register_tools(mcp: FastMCP) -> None:
             "a field not present in the slim view.",
         ] = False,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Fetch a single patch by id."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1672,7 +1821,7 @@ def register_tools(mcp: FastMCP) -> None:
                 "variants_tasks": raw.get("variants_tasks") or [],
             }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1701,9 +1850,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Optional commit message / note attached to the module diff.",
         ] = "",
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Set a module diff on a patch."""
         try:
@@ -1715,7 +1864,7 @@ def register_tools(mcp: FastMCP) -> None:
                     "patch_id": patch_id,
                     "error": f"git command failed in {repo_path}: {exc.stderr.strip() if exc.stderr else str(exc)}",
                 },
-                indent=2,
+                separators=_COMPACT_JSON,
             )
         evg_ctx = ctx.request_context.lifespan_context
         async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
@@ -1731,7 +1880,7 @@ def register_tools(mcp: FastMCP) -> None:
                 base_revision=base_revision,
                 message=message,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1744,9 +1893,9 @@ def register_tools(mcp: FastMCP) -> None:
         patch_id: Annotated[str, "Patch identifier."],
         module_name: Annotated[str, "Module name to remove."],
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Remove a module from a patch."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1758,7 +1907,7 @@ def register_tools(mcp: FastMCP) -> None:
             result = await remove_patch_module(
                 api_client, patch_id=patch_id, module_name=module_name
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1776,9 +1925,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Evergreen project identifier. If omitted, auto-detected.",
         ] = None,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """List task names for a project."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1791,10 +1940,10 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
             assert effective_id is not None
             result = await list_project_tasks(client, project_id=effective_id)
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1817,9 +1966,9 @@ def register_tools(mcp: FastMCP) -> None:
             "evergreen.yml. Defaults to false (only admin-defined aliases).",
         ] = False,
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """List patch aliases for a project."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1832,14 +1981,14 @@ def register_tools(mcp: FastMCP) -> None:
                 client, user_id, project_id
             )
             if selection is not None:
-                return json.dumps(selection, indent=2)
+                return json.dumps(selection, separators=_COMPACT_JSON)
             assert effective_id is not None
             result = await list_project_patch_aliases(
                 api_client,
                 project_id=effective_id,
                 include_project_config=include_project_config,
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1867,9 +2016,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Non-admin users are limited to values <= 100.",
         ],
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Set priority for a single Evergreen task."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1881,7 +2030,7 @@ def register_tools(mcp: FastMCP) -> None:
             result = await set_task_priority(
                 api_client, task_id=task_id, priority=priority
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
@@ -1910,9 +2059,9 @@ def register_tools(mcp: FastMCP) -> None:
             "Non-admin users are limited to values <= 100.",
         ],
         bearer_token: Annotated[
-            str | None,
-            "Override with a bearer token for this request.",
-        ] = None,
+            str,
+            "Per-request auth override; normally omit.",
+        ] = "",
     ) -> str:
         """Set priority for all tasks in an Evergreen patch."""
         evg_ctx = ctx.request_context.lifespan_context
@@ -1924,6 +2073,6 @@ def register_tools(mcp: FastMCP) -> None:
             result = await set_patch_priority(
                 api_client, patch_id=patch_id, priority=priority
             )
-        return json.dumps(result, indent=2)
+        return json.dumps(result, separators=_COMPACT_JSON)
 
     logger.info("Registered %d tools with FastMCP server", 25)

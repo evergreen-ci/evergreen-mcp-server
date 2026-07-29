@@ -440,14 +440,21 @@ hierarchy, statuses, terminology, and how to interpret results.
 
 ## Quick Tool Selection
 - **"Check my CI"** → `list_user_recent_patches_evergreen`
+- **"Is my patch done yet?"** → `get_status_summary_evergreen` (patch_id or \
+version_id) — the compact poll tool; use this instead of the detailed task \
+listings for status checks
 - **"Why is it failing?"** → `get_patch_failed_jobs_evergreen` (needs patch_id)
-- **"Which tests failed?"** → `get_task_test_results_evergreen` (needs task_id)
-- **"Show me the logs"** → `get_task_logs_evergreen` (needs task_id)
+- **"Which tests failed?"** → `get_test_results_summary` (needs task_id)
+- **"Show me the logs"** → `get_task_log_summary` (needs task_id)
 - **"What projects do I have?"** → `get_inferred_project_ids_evergreen`
 
-## Key Rule
-Always progress from broad to narrow: Project → Patch → Task → Tests/Logs. \
+## Key Rules
+1. Always progress from broad to narrow: Project → Patch → Task → Tests/Logs. \
 Do not skip steps.
+2. Poll with `get_status_summary_evergreen`, and when checking several \
+patches/versions issue the calls **in parallel in one turn**. Every tool \
+response stays in the conversation and is re-sent on each later turn, so both \
+oversized responses and one-call-per-turn polling compound over a long session.
 """,
 )
 
@@ -480,7 +487,7 @@ async def list_projects_resource(ctx: Context) -> str:
             }
             for p in projects
         ],
-        indent=2,
+        separators=(",", ":"),
     )
 
 
@@ -566,13 +573,13 @@ Classify each failed task:
 
 ## Step 4a: Get test failures
 ```
-get_task_test_results_evergreen(task_id="<task_id>", failed_only=True)
+get_test_results_summary(task_id="<task_id>", failed_only=True)
 ```
 Report the failing test names and look for patterns.
 
 ## Step 4b: Get error logs
 ```
-get_task_logs_evergreen(task_id="<task_id>", filter_errors=True)
+get_task_log_summary(task_id="<task_id>", filter_errors=True)
 ```
 Find the root cause error message.
 If too few results, retry with filter_errors=False.

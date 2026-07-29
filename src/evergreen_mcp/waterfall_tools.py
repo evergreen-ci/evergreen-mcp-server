@@ -31,7 +31,25 @@ def _format_exception(e: BaseException) -> str:
         parts.append(repr(e))
     return f"{type(e).__name__}: {' | '.join(parts)}"
 
+
 logger = logging.getLogger(__name__)
+
+# Commit messages are frequently multi-paragraph (a Jira ticket, a description,
+# and a co-authored-by trailer). Only the subject line identifies the commit,
+# and versions[].message was 19.4% of get_waterfall_detailed_evergreen's bytes
+# across the sampled corpus.
+MESSAGE_MAX_CHARS = 120
+
+
+def _shape_message(message: Optional[str]) -> Optional[str]:
+    """Reduce a commit message to its subject line, capped in length."""
+    if not message:
+        return message
+    subject = message.strip().split("\n", 1)[0].strip()
+    if len(subject) > MESSAGE_MAX_CHARS:
+        return subject[:MESSAGE_MAX_CHARS] + "…"
+    return subject
+
 
 WATERFALL_VARIANT_CAP = 60
 MAX_LIMIT_SUMMARY = 30
@@ -143,7 +161,7 @@ def _shape_versions(
                 "order": v.get("order") or 0,
                 "version_id": version_id,
                 "revision": v.get("revision"),
-                "message": v.get("message"),
+                "message": _shape_message(v.get("message")),
                 "author": v.get("author"),
                 "create_time": v.get("createTime"),
                 "requester": v.get("requester"),
@@ -544,7 +562,7 @@ async def fetch_mainline_commits_between(
                 "order": order,
                 "version_id": v.get("id") or "",
                 "revision": v.get("revision"),
-                "message": v.get("message"),
+                "message": _shape_message(v.get("message")),
                 "author": v.get("author"),
                 "create_time": v.get("createTime"),
                 "requester": v.get("requester"),

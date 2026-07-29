@@ -56,13 +56,13 @@ This returns all failed tasks for the patch. Classify each failed task:
 ### Step 4a: Investigate Test Failures
 
 ```
-Call: get_task_test_results_evergreen(task_id="...", failed_only=True)
+Call: get_test_results_summary(task_id="...", failed_only=True)
 ```
 
 This gives you the exact test names that failed. Present them to the user:
 - "3 tests failed in `auth_unit_tests`: `test_login_expired_token`, `test_session_refresh`, `test_oauth_callback`"
 - Look for patterns in test names (all auth-related? all in the same directory?)
-- Share Parsley links (`url_parsley`) for the user to explore logs visually
+- Share the Parsley link (`log_url`) for the user to explore logs visually
 
 If you need to understand *why* a test failed (not just *which*), use the REST detailed tool:
 
@@ -85,13 +85,13 @@ This returns a structured error summary showing matched line counts, top error t
 If you need the GraphQL view (truncated, with severity metadata):
 
 ```
-Call: get_task_logs_evergreen(task_id="...", filter_errors=True)
+Call: get_task_log_summary(task_id="...", filter_errors=True)
 ```
 
 If `filter_errors=True` returns too few results, retry with full output:
 
 ```
-Call: get_task_logs_evergreen(task_id="...", filter_errors=False, max_lines=500)
+Call: get_task_log_summary(task_id="...", filter_errors=False, max_lines=500)
 ```
 
 ### Step 5: Synthesize and Report
@@ -132,7 +132,7 @@ Only drill deeper if the user asks.
 When the user already has a task_id (e.g., from a Spruce/Parsley URL):
 
 ```
-1. get_task_test_results_evergreen(task_id="...", failed_only=True)
+1. get_test_results_summary(task_id="...", failed_only=True)
    → If tests failed, report which ones
 2. get_test_results_detailed(task_id="...", test_name="Job0")
    → Get the raw test log with automatic error scanning to understand WHY

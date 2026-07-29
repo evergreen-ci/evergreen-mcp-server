@@ -23,85 +23,6 @@ query GetProjects {
 }
 """
 
-# Single project query - retrieves detailed information about a specific project
-GET_PROJECT = """
-query GetProject($projectId: String!) {
-  project(projectIdentifier: $projectId) {
-    id
-    displayName
-    identifier
-    enabled
-    owner
-    repo
-    branch
-    admins
-    banner {
-      text
-      theme
-    }
-  }
-}
-"""
-
-# Project settings query - retrieves configuration settings for a project
-GET_PROJECT_SETTINGS = """
-query GetProjectSettings($projectId: String!) {
-  projectSettings(projectIdentifier: $projectId) {
-    projectRef {
-      id
-      identifier
-      displayName
-      enabled
-      owner
-      repo
-      branch
-    }
-    githubWebhooksEnabled
-    vars {
-      adminOnlyVars
-      privateVars
-      vars
-    }
-    aliases {
-      alias
-      gitTag
-      variant
-      task
-    }
-  }
-}
-"""
-
-# Query to get recent patches for a project
-GET_PROJECT_PATCHES = """
-query GetProjectPatches($projectId: String!, $limit: Int = 10) {
-  project(projectIdentifier: $projectId) {
-    patches(patchesInput: {limit: $limit}) {
-      patches {
-        id
-        description
-        author
-        createTime
-        status
-        version
-      }
-    }
-  }
-}
-"""
-
-# Query to get builds for a project
-GET_PROJECT_BUILDS = """
-query GetProjectBuilds($projectId: String!, $limit: Int = 10) {
-  project(projectIdentifier: $projectId) {
-    id
-    displayName
-    # Note: This would need to be adjusted based on actual schema structure
-    # The merged-schema.graphql should be consulted for exact field names
-  }
-}
-"""
-
 # Get recent patches for the authenticated user (with pagination)
 GET_USER_RECENT_PATCHES = """
 query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
@@ -128,6 +49,99 @@ query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
         versionFull {
           id
           status
+        }
+      }
+    }
+  }
+}
+"""
+
+# Compact status-poll query for a patch: server-side task status counts plus
+# only the failing tasks' identity and failure description. Deliberately omits
+# host metadata, log links and test counts — see status_summary_tools.py.
+# Powers get_patch_status_summary_evergreen.
+GET_PATCH_STATUS_SUMMARY = """
+query GetPatchStatusSummary(
+  $patchId: String!
+  $failedStatuses: [String!]!
+  $failedLimit: Int = 50
+) {
+  patch(patchId: $patchId) {
+    id
+    description
+    status
+    projectMetadata {
+      identifier
+    }
+    versionFull {
+      id
+      status
+      startTime
+      finishTime
+      taskStatusStats(options: { includeNeverActivatedTasks: false }) {
+        counts {
+          status
+          count
+        }
+        eta
+      }
+      tasks(options: { statuses: $failedStatuses, limit: $failedLimit }) {
+        count
+        data {
+          id
+          displayName
+          buildVariant
+          displayStatus
+          execution
+          details {
+            description
+            timedOut
+            timeoutType
+            failingCommand
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+# Same compact status-poll shape as GET_PATCH_STATUS_SUMMARY, addressed by
+# version_id instead — for trigger_request and other non-patch versions.
+GET_VERSION_STATUS_SUMMARY = """
+query GetVersionStatusSummary(
+  $versionId: String!
+  $failedStatuses: [String!]!
+  $failedLimit: Int = 50
+) {
+  version(versionId: $versionId) {
+    id
+    status
+    startTime
+    finishTime
+    projectMetadata {
+      identifier
+    }
+    taskStatusStats(options: { includeNeverActivatedTasks: false }) {
+      counts {
+        status
+        count
+      }
+      eta
+    }
+    tasks(options: { statuses: $failedStatuses, limit: $failedLimit }) {
+      count
+      data {
+        id
+        displayName
+        buildVariant
+        displayStatus
+        execution
+        details {
+          description
+          timedOut
+          timeoutType
+          failingCommand
         }
       }
     }
@@ -165,7 +179,7 @@ query GetPatchTasks($patchId: String!, $statuses: [String!]!, $limit: Int = 100)
           id
           displayName
           buildVariant
-          status
+          displayStatus
           execution
           finishTime
           timeTaken
@@ -182,12 +196,6 @@ query GetPatchTasks($patchId: String!, $statuses: [String!]!, $limit: Int = 100)
             timedOut
             timeoutType
             failingCommand
-          }
-          logs {
-            taskLogLink
-            agentLogLink
-            systemLogLink
-            allLogLink
           }
         }
       }
@@ -214,7 +222,7 @@ query GetVersionTasks($versionId: String!, $statuses: [String!]!, $limit: Int = 
         id
         displayName
         buildVariant
-        status
+        displayStatus
         execution
         finishTime
         timeTaken
@@ -231,12 +239,6 @@ query GetVersionTasks($versionId: String!, $statuses: [String!]!, $limit: Int = 
           timedOut
           timeoutType
           failingCommand
-        }
-        logs {
-          taskLogLink
-          agentLogLink
-          systemLogLink
-          allLogLink
         }
       }
     }
@@ -280,7 +282,7 @@ query GetTaskTestResults(
     id
     displayName
     buildVariant
-    status
+    displayStatus
     execution
     hasTestResults
     failedTestCount

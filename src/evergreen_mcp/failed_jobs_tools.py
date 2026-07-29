@@ -6,7 +6,7 @@ It uses a patch-based approach focused on the authenticated user's recent patche
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .evergreen_rest_client import EvergreenRestClient
@@ -93,13 +93,76 @@ async def fetch_user_recent_patches(
     }
 
 
-FAILED_STATUSES = ["failed", "system-failed", "task-timed-out"]
+# Mirrors evergreen.TaskFailureStatuses (globals.go:422-433) plus "aborted"
+# (globals.go:99). These are DISPLAY statuses: the GraphQL `statuses` filter
+# matches DisplayStatusKey (model/task/db.go:2501-2507), not the raw stored
+# status. The previous list omitted test-timed-out, setup-failed,
+# system-unresponsive and system-timed-out, so status_filter="failed" silently
+# hid setup and timeout failures.
+FAILED_STATUSES = [
+    "failed",
+    "task-timed-out",
+    "system-failed",
+    "test-timed-out",
+    "setup-failed",
+    "system-unresponsive",
+    "system-timed-out",
+    "aborted",
+    # A failed task with an annotation. Excluding it meant status_filter="failed"
+    # silently hid every triaged failure; see status_summary_tools.FAILURE_STATUSES.
+    "known-issue",
+]
+
+# Callers asked for up to 5,000 tasks in the sampled transcripts. A mainline
+# sys-perf version has thousands of tasks and each shaped task is ~700 bytes, so
+# an uncapped request is a multi-megabyte response nobody reads. Use
+# get_status_summary_evergreen when the question is "how is it going" — its size
+# is independent of task count.
+MAX_TASK_RESULTS = 500
+
+
+def _clamp_max_results(max_results: int) -> tuple:
+    """Clamp max_results, returning (value, warning-or-None)."""
+    if max_results > MAX_TASK_RESULTS:
+        return MAX_TASK_RESULTS, (
+            f"max_results was clamped from {max_results} to {MAX_TASK_RESULTS}. "
+            "For a whole-version overview use get_status_summary_evergreen, "
+            "whose response size does not grow with task count."
+        )
+    return max_results, None
+
 
 STATUS_FILTER_MAP = {
     "failed": FAILED_STATUSES,
-    "succeeded": ["succeeded"],
+    # The display status for a passing task is "success" (globals.go:66);
+    # "succeeded" matches nothing.
+    "succeeded": ["success"],
     "all": [],
 }
+
+
+def _shape_failure_details(details: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Shape task details, returning None when nothing actually failed.
+
+    Evergreen populates this struct with empty strings on a successful task
+    ({"description": "", "timedOut": false, "timeoutType": "", ...}), so a naive
+    truthiness check on the struct emits padding for every passing task. Only
+    the keys that carry signal are included.
+    """
+    if not details:
+        return None
+    shaped = {}
+    if details.get("description"):
+        shaped["description"] = details["description"]
+    if details.get("timedOut"):
+        shaped["timed_out"] = True
+        if details.get("timeoutType"):
+            shaped["timeout_type"] = details["timeoutType"]
+    # description is often the failing command verbatim; don't say it twice.
+    failing_command = details.get("failingCommand")
+    if failing_command and failing_command != details.get("description"):
+        shaped["failing_command"] = failing_command
+    return shaped or None
 
 
 async def fetch_patch_jobs(
@@ -108,6 +171,7 @@ async def fetch_patch_jobs(
     max_results: int = 50,
     project_id: str = None,
     status_filter: str = "failed",
+    project_id_inferred: bool = False,
 ) -> Dict[str, Any]:
     """Fetch jobs for a specific patch, optionally filtered by status.
 
@@ -117,6 +181,10 @@ async def fetch_patch_jobs(
         max_results: Maximum number of tasks to return
         project_id: Optional project identifier to validate patch ownership
         status_filter: One of "failed", "succeeded", or "all"
+        project_id_inferred: True when project_id came from server-side
+            inference rather than the caller. A mismatch against an inferred
+            value is the server's own guess being wrong, so it is reported
+            alongside the data instead of discarding a successful fetch.
 
     Returns:
         Dictionary containing patch info and tasks data
@@ -125,12 +193,25 @@ async def fetch_patch_jobs(
     if project_id:
         logger.info("Project context: %s", project_id)
 
+    max_results, clamp_warning = _clamp_max_results(max_results)
     statuses = STATUS_FILTER_MAP.get(status_filter, FAILED_STATUSES)
     patch = await client.get_patch_tasks(patch_id, statuses, limit=max_results)
 
     patch_project_identifier = (patch.get("projectMetadata") or {}).get("identifier")
+    project_mismatch = None
     if project_id and patch_project_identifier != project_id:
-        raise ValueError("Patch does not belong to the specified project")
+        if not project_id_inferred:
+            raise ValueError(
+                f"Patch {patch_id} belongs to project "
+                f"{patch_project_identifier!r}, not the requested {project_id!r}."
+            )
+        # The project_id was auto-detected, not asked for. The patch fetch
+        # already succeeded, so returning the data with a note beats throwing
+        # it away and making the caller pay for another round-trip.
+        project_mismatch = (
+            f"Auto-detected project was {project_id!r} but this patch belongs "
+            f"to {patch_project_identifier!r}; using the patch's own project."
+        )
 
     # Extract patch information
     patch_info = {
@@ -173,53 +254,43 @@ async def fetch_patch_jobs(
             "task_id": task.get("id"),
             "task_name": task.get("displayName"),
             "build_variant": task.get("buildVariant"),
-            "status": task.get("status"),
+            "status": task.get("displayStatus") or task.get("status"),
             "execution": task.get("execution", 0),
             "finish_time": task.get("finishTime"),
             "duration_ms": task.get("timeTaken"),
-            # Host metadata
-            "ami": task.get("ami"),
-            "host_id": task.get("hostId"),
-            "distro_id": task.get("distroId"),
-            "image_id": task.get("imageId"),
         }
 
-        # Add failure details if available
-        details = task.get("details", {})
-        if details:
-            task_info["failure_details"] = {
-                "description": details.get("description"),
-                "timed_out": details.get("timedOut", False),
-                "timeout_type": details.get("timeoutType"),
-                "failing_command": details.get("failingCommand"),
-            }
+        # Host metadata only for failures, where "was it the host/AMI?" is a
+        # real question. On passing tasks it was 535k of 565k sampled bytes and
+        # near-constant per variant. Use get_task_log_summary for a single
+        # task's host details regardless of status.
+        if task_info["status"] in FAILED_STATUSES:
+            task_info.update(
+                {
+                    "ami": task.get("ami"),
+                    "host_id": task.get("hostId"),
+                    "distro_id": task.get("distroId"),
+                    "image_id": task.get("imageId"),
+                }
+            )
 
-            if details.get("timedOut"):
-                has_timeouts = True
+        # Failure details only when they say something. Evergreen returns the
+        # struct populated with empty strings for a task that passed, which was
+        # ~90 characters of nothing on 4,326 of 4,577 sampled tasks.
+        details = task.get("details") or {}
+        failure_details = _shape_failure_details(details)
+        if failure_details:
+            task_info["failure_details"] = failure_details
+        if details.get("timedOut"):
+            has_timeouts = True
 
-        # Add log links
-        logs = task.get("logs", {})
-        if logs:
-            task_info["logs"] = {
-                "task_log": logs.get("taskLogLink"),
-                "agent_log": logs.get("agentLogLink"),
-                "system_log": logs.get("systemLogLink"),
-                "all_logs": logs.get("allLogLink"),
-            }
-
-        # Add test information if available
-        has_test_results = task.get("hasTestResults", False)
-        if has_test_results:
+        # Test counts only when the task actually produced test results. The
+        # all-zero placeholder was emitted for 2,511 of 4,577 sampled tasks and
+        # said nothing that the key's absence does not already say.
+        if task.get("hasTestResults"):
             task_info["test_info"] = {
-                "has_test_results": True,
                 "failed_test_count": task.get("failedTestCount", 0),
                 "total_test_count": task.get("totalTestCount", 0),
-            }
-        else:
-            task_info["test_info"] = {
-                "has_test_results": False,
-                "failed_test_count": 0,
-                "total_test_count": 0,
             }
 
         processed_tasks.append(task_info)
@@ -240,13 +311,18 @@ async def fetch_patch_jobs(
         patch_id,
     )
 
-    return {
+    result = {
         "patch_info": patch_info,
         "version_info": version_info,
         "tasks": processed_tasks,
         "summary": summary,
-        "project_id": project_id,
+        "project_id": patch_project_identifier or project_id,
     }
+    if project_mismatch:
+        result["project_mismatch"] = project_mismatch
+    if clamp_warning:
+        result["warning"] = clamp_warning
+    return result
 
 
 async def fetch_version_jobs(
@@ -272,6 +348,7 @@ async def fetch_version_jobs(
     """
     logger.info("Fetching %s jobs for version %s", status_filter, version_id)
 
+    max_results, clamp_warning = _clamp_max_results(max_results)
     statuses = STATUS_FILTER_MAP.get(status_filter, [])
     version = await client.get_version_tasks(version_id, statuses, limit=max_results)
 
@@ -296,42 +373,35 @@ async def fetch_version_jobs(
             "task_id": task.get("id"),
             "task_name": task.get("displayName"),
             "build_variant": task.get("buildVariant"),
-            "status": task.get("status"),
+            "status": task.get("displayStatus") or task.get("status"),
             "execution": task.get("execution", 0),
             "finish_time": task.get("finishTime"),
             "duration_ms": task.get("timeTaken"),
-            "ami": task.get("ami"),
-            "host_id": task.get("hostId"),
-            "distro_id": task.get("distroId"),
-            "image_id": task.get("imageId"),
         }
 
-        details = task.get("details", {})
-        if details:
-            task_info["failure_details"] = {
-                "description": details.get("description"),
-                "timed_out": details.get("timedOut", False),
-                "timeout_type": details.get("timeoutType"),
-                "failing_command": details.get("failingCommand"),
-            }
-            if details.get("timedOut"):
-                has_timeouts = True
+        # See fetch_patch_jobs: host metadata only where it answers something.
+        if task_info["status"] in FAILED_STATUSES:
+            task_info.update(
+                {
+                    "ami": task.get("ami"),
+                    "host_id": task.get("hostId"),
+                    "distro_id": task.get("distroId"),
+                    "image_id": task.get("imageId"),
+                }
+            )
 
-        logs = task.get("logs", {})
-        if logs:
-            task_info["logs"] = {
-                "task_log": logs.get("taskLogLink"),
-                "agent_log": logs.get("agentLogLink"),
-                "system_log": logs.get("systemLogLink"),
-                "all_logs": logs.get("allLogLink"),
-            }
+        details = task.get("details") or {}
+        failure_details = _shape_failure_details(details)
+        if failure_details:
+            task_info["failure_details"] = failure_details
+        if details.get("timedOut"):
+            has_timeouts = True
 
-        has_test_results = task.get("hasTestResults", False)
-        task_info["test_info"] = {
-            "has_test_results": has_test_results,
-            "failed_test_count": task.get("failedTestCount", 0) if has_test_results else 0,
-            "total_test_count": task.get("totalTestCount", 0) if has_test_results else 0,
-        }
+        if task.get("hasTestResults"):
+            task_info["test_info"] = {
+                "failed_test_count": task.get("failedTestCount", 0),
+                "total_test_count": task.get("totalTestCount", 0),
+            }
 
         processed_tasks.append(task_info)
         build_variants.add(task.get("buildVariant"))
@@ -351,11 +421,14 @@ async def fetch_version_jobs(
         version_id,
     )
 
-    return {
+    result = {
         "version_info": version_info,
         "tasks": processed_tasks,
         "summary": summary,
     }
+    if clamp_warning:
+        result["warning"] = clamp_warning
+    return result
 
 
 async def fetch_task_logs(client, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -438,7 +511,7 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
         "task_id": task_data.get("id"),
         "task_name": task_data.get("displayName"),
         "build_variant": task_data.get("buildVariant"),
-        "status": task_data.get("status"),
+        "status": task_data.get("displayStatus") or task_data.get("status"),
         "execution": task_data.get("execution"),
         "has_test_results": task_data.get("hasTestResults", False),
         "failed_test_count": task_data.get("failedTestCount", 0),
@@ -459,27 +532,25 @@ async def fetch_task_test_results(client, arguments: Dict[str, Any]) -> Dict[str
 
     for test in test_results:
         test_result_info = {
-            "test_id": test.get("id"),
             "test_file": test.get("testFile"),
             "status": test.get("status"),
             "duration": test.get("duration"),
             "start_time": test.get("startTime"),
             "end_time": test.get("endTime"),
             "exit_code": test.get("exitCode"),
-            "group_id": test.get("groupID"),
         }
 
-        # Add test logs if available
-        logs = test.get("logs", {})
-        if logs:
-            test_result_info["logs"] = {
-                "url": logs.get("url"),
-                "url_parsley": logs.get("urlParsley"),
-                "url_raw": logs.get("urlRaw"),
-                "line_num": logs.get("lineNum"),
-                "rendering_type": logs.get("renderingType"),
-                "version": logs.get("version"),
-            }
+        # One log URL, not three. Evergreen returns url / urlParsley / urlRaw:
+        # three renderings of the same log, each embedding the ~160-character
+        # task id. Across the sampled corpus those three fields were 54% of
+        # this tool's entire payload. Parsley is the viewer to hand a human,
+        # and get_test_results_detailed fetches the content when needed.
+        logs = test.get("logs") or {}
+        log_url = logs.get("urlParsley") or logs.get("url") or logs.get("urlRaw")
+        if log_url:
+            test_result_info["log_url"] = log_url
+        if logs.get("lineNum"):
+            test_result_info["log_line"] = logs.get("lineNum")
 
         # Count failed tests
         if test.get("status", "").lower() in FAILED_TEST_STATUSES:
@@ -751,9 +822,12 @@ async def fetch_evergreen_task_logs(
     logger.info("fetch_evergreen_task_logs called with arguments: %s", arguments)
     task_id = arguments.get("task_id")
     execution_retries = arguments.get("execution_retries", 0)
+    max_chars = arguments.get("max_chars", 0)
 
     logger.info("Calling client.get_task_logs for task %s", task_id)
-    response = await client.get_task_logs(task_id, execution_retries)
+    response = await client.get_task_logs(
+        task_id, execution_retries, max_chars=max_chars
+    )
     logger.info("client.get_task_logs returned type: %s", type(response))
 
     return {"logs": response}

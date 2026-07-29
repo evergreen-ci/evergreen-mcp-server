@@ -156,9 +156,33 @@ ERROR_KEYWORDS: List[str] = [
 
 
 def _build_error_regex(keywords: List[str]) -> re.Pattern:
-    """Compile *keywords* into one case-insensitive alternation pattern."""
-    escaped = [re.escape(kw) for kw in keywords]
-    return re.compile("|".join(escaped), re.IGNORECASE)
+    """Compile *keywords* into one case-insensitive alternation pattern.
+
+    Numeric keywords are anchored on word boundaries; alphabetic ones are not,
+    and deliberately so.
+
+    The numeric keywords ("401", "403") otherwise match inside any longer number
+    — a line number, a byte count, a timestamp, an Evergreen task id — so
+    unrelated lines get pulled into the error summary ("line 2403 all quiet"
+    matched on "403"). But anchoring the alphabetic keywords costs real recall,
+    because the interesting forms are plural and compound: "errors were found",
+    "FatalError", "ConnectionResetError", "TestFailure" all contain a keyword as
+    a substring and must still match. Substring matching is the point for those.
+    """
+    parts = []
+    for kw in keywords:
+        escaped = re.escape(kw)
+        # Leading \b whenever the keyword opens with a digit, so it cannot be
+        # absorbed into a longer number. Trailing \b only when it also ends in a
+        # digit ("403"); a keyword ending in a letter ("502 Bad Gateway") has no
+        # numeric-absorption risk and anchoring it would only lose matches.
+        if kw[:1].isdigit():
+            prefix = r"\b"
+            suffix = r"\b" if kw[-1:].isdigit() else ""
+        else:
+            prefix = suffix = ""
+        parts.append(f"{prefix}{escaped}{suffix}")
+    return re.compile("|".join(parts), re.IGNORECASE)
 
 
 _ERROR_RE: re.Pattern = _build_error_regex(ERROR_KEYWORDS)

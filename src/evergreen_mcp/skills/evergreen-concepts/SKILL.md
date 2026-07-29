@@ -157,7 +157,7 @@ Evergreen has several types of logs:
 **Viewing logs**:
 - **Spruce** (spruce.mongodb.com) — Shows log tail (~100 lines) in the task view
 - **Parsley** — Full log viewer with search, filtering, and AI-powered analysis
-- **GraphQL MCP tools** — get_task_logs_evergreen fetches truncated logs with severity metadata
+- **GraphQL MCP tools** — get_task_log_summary fetches truncated logs with severity metadata
 - **REST MCP tools** — get_task_log_detailed and get_test_results_detailed fetch full untruncated logs from S3 with automatic error scanning (returns structured summaries with top error terms and example lines)
 
 ---
@@ -196,6 +196,6 @@ Users may work across multiple projects. The get_inferred_project_ids_evergreen 
 | `failed_test_count` | Number of tests that failed within a task |
 | `total_test_count` | Total tests executed within a task |
 | `test_file` | Name/path of a specific test case |
-| `url_parsley` | Link to the Parsley AI log viewer for a test |
+| `log_url` | Parsley log-viewer link for a test (one URL; the redundant evergreen/raw variants are no longer returned) |
 | `timed_out` | Whether the failure was due to timeout |
 | `failing_command` | Which command in the task definition caused the failure |

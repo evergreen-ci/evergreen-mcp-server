@@ -863,7 +863,7 @@ Retrieves failed jobs for a specific patch with test failure counts.
 }
 ```
 
-### `get_task_logs_evergreen`
+### `get_task_log_summary`
 
 Retrieves detailed logs for a specific task with error filtering.
 
@@ -876,7 +876,7 @@ Retrieves detailed logs for a specific task with error filtering.
 **Example Usage:**
 ```json
 {
-  "tool": "get_task_logs_evergreen",
+  "tool": "get_task_log_summary",
   "arguments": {
     "task_id": "task_456",
     "filter_errors": true
@@ -884,7 +884,7 @@ Retrieves detailed logs for a specific task with error filtering.
 }
 ```
 
-### `get_task_test_results_evergreen`
+### `get_test_results_summary`
 
 Retrieves detailed unit test results for a task.
 
@@ -897,7 +897,7 @@ Retrieves detailed unit test results for a task.
 **Example Usage:**
 ```json
 {
-  "tool": "get_task_test_results_evergreen",
+  "tool": "get_test_results_summary",
   "arguments": {
     "task_id": "task_456",
     "failed_only": true
@@ -907,7 +907,7 @@ Retrieves detailed unit test results for a task.
 
 ### `get_task_log_detailed`
 
-Fetches the complete, untruncated task logs via REST API. Returns the full task execution log including timeout handler output, process dumps, and stdout/stderr — content not accessible via the GraphQL `get_task_logs_evergreen` tool. Automatically scans for error patterns and returns a structured summary with top error terms and example lines when errors are found; returns raw text when no errors are detected.
+Fetches the complete, untruncated task logs via REST API. Returns the full task execution log including timeout handler output, process dumps, and stdout/stderr — content not accessible via the GraphQL `get_task_log_summary` tool. Automatically scans for error patterns and returns a structured summary with top error terms and example lines when errors are found; returns raw text when no errors are detected.
 
 **Parameters:**
 - `task_id` (required): Task identifier from `get_patch_failed_jobs` results
@@ -1047,7 +1047,7 @@ Ask: *"Show me the failing tests in that task"*
 The assistant calls:
 ```json
 {
-  "tool": "get_task_test_results_evergreen",
+  "tool": "get_test_results_summary",
   "arguments": {
     "task_id": "task_auth_tests_123",
     "failed_only": true
@@ -1064,7 +1064,7 @@ Ask: *"Get the error logs for that task"*
 The assistant calls:
 ```json
 {
-  "tool": "get_task_logs_evergreen",
+  "tool": "get_task_log_summary",
   "arguments": {
     "task_id": "task_auth_tests_123",
     "filter_errors": true,
@@ -1450,7 +1450,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 5. **Get test results**:
    ```json
    {
-     "tool": "get_task_test_results_evergreen",
+     "tool": "get_test_results_summary",
      "arguments": { "task_id": "<copied_task_id>", "failed_only": true }
    }
    ```
@@ -1458,7 +1458,7 @@ npx @modelcontextprotocol/inspector .venv/bin/evergreen-mcp-server
 6. **Get logs**:
    ```json
    {
-     "tool": "get_task_logs_evergreen",
+     "tool": "get_task_log_summary",
      "arguments": { "task_id": "<copied_task_id>", "filter_errors": true }
    }
    ```

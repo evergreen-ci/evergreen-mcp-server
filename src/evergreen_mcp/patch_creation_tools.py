@@ -31,7 +31,7 @@ def _shape_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
         for vt in raw_vts
         if isinstance(vt, dict)
     ]
-    return {
+    shaped = {
         "patch_id": patch.get("Id") or patch.get("id") or patch.get("patch_id"),
         "description": patch.get("Description") or patch.get("description"),
         "project": patch.get("Project") or patch.get("project_identifier"),
@@ -47,6 +47,18 @@ def _shape_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
         "github_patch_data": patch.get("GithubPatchData")
         or patch.get("github_patch_data"),
     }
+    # github_patch_data is a fixed ten-field struct that Evergreen populates
+    # only for PR-triggered patches; for a CLI patch every field is empty (it
+    # was empty in 148/148 sampled responses) and it is pure padding. Same for
+    # an empty branch. Drop keys whose value carries no information.
+    gh = shaped.get("github_patch_data")
+    if isinstance(gh, dict) and not any(gh.values()):
+        shaped.pop("github_patch_data")
+    elif not gh:
+        shaped.pop("github_patch_data")
+    if not shaped.get("branch"):
+        shaped.pop("branch")
+    return shaped
 
 
 def _spruce_patch_url(patch_id: str) -> Optional[str]:

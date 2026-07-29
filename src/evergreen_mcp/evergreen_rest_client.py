@@ -22,6 +22,22 @@ __version__ = "0.1.0"
 
 logger = logging.getLogger(__name__)
 
+# Task logs are the single largest per-call payload this server can emit, and
+# the tail is where a failure surfaces. Sampled task-log responses ran to ~48K
+# characters with no way to cap them.
+DEFAULT_TASK_LOG_MAX_CHARS = 20000
+
+
+def _tail(text: str, max_chars: int) -> str:
+    """Keep the last *max_chars* of *text*, noting what was dropped."""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    dropped = len(text) - max_chars
+    return (
+        f"[truncated: {dropped} of {len(text)} characters dropped from the "
+        f"start; raise max_chars to see more]\n" + text[-max_chars:]
+    )
+
 
 def _derive_legacy_base_url(base_url: str) -> str:
     """Derive the legacy /api/ base URL from a /rest/v2/ base URL.
@@ -171,7 +187,7 @@ class EvergreenRestClient:
                 return {"status": "success", "data": await response.text()}
 
     async def get_task_logs(
-        self, task_id: str, execution_retries: int
+        self, task_id: str, execution_retries: int, max_chars: int = 0
     ) -> Optional[str]:
         """
         Get the logs for a task.
@@ -179,10 +195,15 @@ class EvergreenRestClient:
         Args:
             task_id: The task identifier.
             execution_retries: The execution number (0 for first run, 1+ for retries).
+            max_chars: Cap on the returned text; the tail is kept because the
+                failure is almost always at the end. 0 uses
+                DEFAULT_TASK_LOG_MAX_CHARS.
 
         Returns:
-            The raw log text, or None if the request failed.
+            The log text (error-scan summary when error keywords match,
+            otherwise the tail of the raw log), or None if the request failed.
         """
+        limit = max_chars if max_chars > 0 else DEFAULT_TASK_LOG_MAX_CHARS
         endpoint = f"tasks/{task_id}/build/TaskLogs?type=task_log&execution={execution_retries}"
         response = await self._request("GET", endpoint)
         if response.get("status") != "success":
@@ -192,10 +213,12 @@ class EvergreenRestClient:
         logger.info("Task log bytes: %s", len(log_text))
 
         # Scan for error patterns and return a structured summary when matches
-        # are found; otherwise fall back to the raw text.
+        # are found; otherwise fall back to the raw text. That fallback used to
+        # be unbounded — a task log with no recognised error keyword returned
+        # in full, with no way for the caller to cap it.
         scan = scan_log_for_errors(log_text)
         if scan.matched_lines == 0:
-            return log_text
+            return _tail(log_text, limit)
 
         parts: list[str] = []
         parts.append(f"Log scan: {scan.matched_lines}/{scan.total_lines} lines matched")
@@ -219,7 +242,7 @@ class EvergreenRestClient:
             parts.append("Matched excerpt (last 50 matched lines):")
             parts.append(scan.matched_excerpt)
 
-        return "\n".join(parts)
+        return _tail("\n".join(parts), limit)
 
     async def get_task_test_results(
         self,

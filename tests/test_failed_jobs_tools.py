@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 from evergreen_mcp.failed_jobs_tools import (
     fetch_patch_jobs,
+    fetch_version_jobs,
     fetch_task_logs,
     fetch_task_test_results,
 )
@@ -326,3 +327,279 @@ class TestHostMetadataFieldNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProjectMismatchHandling(unittest.IsolatedAsyncioTestCase):
+    """A mismatch against an auto-inferred project must not discard the fetch.
+
+    The server guesses project_id when the caller omits it, then used to raise
+    on its own wrong guess — throwing away a patch it had already fetched and
+    costing a whole extra round-trip.
+    """
+
+    @staticmethod
+    def _patch(project="other-project"):
+        return {
+            "id": "patch123",
+            "patchNumber": 1,
+            "githash": "abc",
+            "description": "d",
+            "author": "a",
+            "authorDisplayName": "A",
+            "status": "failed",
+            "createTime": "2026-01-01T00:00:00Z",
+            "projectMetadata": {"identifier": project},
+            "versionFull": {
+                "id": "v1",
+                "revision": "abc",
+                "author": "a",
+                "createTime": "2026-01-01T00:00:00Z",
+                "status": "failed",
+                "tasks": {"count": 0, "data": []},
+            },
+        }
+
+    async def test_inferred_mismatch_returns_data_with_a_note(self):
+        client = AsyncMock()
+        client.get_patch_tasks.return_value = self._patch()
+
+        result = await fetch_patch_jobs(
+            client, "patch123", project_id="guessed", project_id_inferred=True
+        )
+
+        self.assertIn("project_mismatch", result)
+        self.assertIn("other-project", result["project_mismatch"])
+        # The patch's own project wins over the bad guess.
+        self.assertEqual(result["project_id"], "other-project")
+        self.assertEqual(result["patch_info"]["patch_id"], "patch123")
+
+    async def test_explicit_mismatch_still_raises(self):
+        client = AsyncMock()
+        client.get_patch_tasks.return_value = self._patch()
+
+        with self.assertRaises(ValueError) as ctx:
+            await fetch_patch_jobs(
+                client, "patch123", project_id="asked-for", project_id_inferred=False
+            )
+        self.assertIn("other-project", str(ctx.exception))
+        self.assertIn("asked-for", str(ctx.exception))
+
+    async def test_matching_project_adds_no_note(self):
+        client = AsyncMock()
+        client.get_patch_tasks.return_value = self._patch(project="sys-perf")
+
+        result = await fetch_patch_jobs(
+            client, "patch123", project_id="sys-perf", project_id_inferred=True
+        )
+
+        self.assertNotIn("project_mismatch", result)
+
+
+class TestPayloadShaping(unittest.IsolatedAsyncioTestCase):
+    """Fields that answer nothing must not be emitted.
+
+    Host metadata answers "was it the host/AMI?", which only arises for a
+    failure; on passing tasks it was 535k of 565k sampled bytes. The all-zero
+    test_info placeholder was emitted for 2,511 of 4,577 sampled tasks.
+    """
+
+    @staticmethod
+    def _version(*tasks):
+        return {
+            "id": "v1",
+            "revision": "abc",
+            "author": "a",
+            "createTime": "2026-01-01T00:00:00Z",
+            "status": "started",
+            "tasks": {"count": len(tasks), "data": list(tasks)},
+        }
+
+    @staticmethod
+    def _task(status="success", has_tests=False):
+        return {
+            "id": "t1",
+            "displayName": "perf",
+            "buildVariant": "linux",
+            "displayStatus": status,
+            "execution": 0,
+            "finishTime": None,
+            "timeTaken": 1,
+            "hasTestResults": has_tests,
+            "failedTestCount": 2 if has_tests else 0,
+            "totalTestCount": 9 if has_tests else 0,
+            "ami": "ami-123",
+            "hostId": "i-123",
+            "distroId": "rhel94",
+            "imageId": "rhel94",
+            "details": {},
+        }
+
+    async def test_passing_task_omits_host_metadata(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version(self._task("success"))
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        task = result["tasks"][0]
+        for key in ("ami", "host_id", "distro_id", "image_id"):
+            self.assertNotIn(key, task)
+
+    async def test_failed_task_keeps_host_metadata(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version(
+            self._task("system-failed")
+        )
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        task = result["tasks"][0]
+        self.assertEqual(task["ami"], "ami-123")
+        self.assertEqual(task["distro_id"], "rhel94")
+
+    async def test_task_without_test_results_omits_test_info(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version(
+            self._task("success", has_tests=False)
+        )
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        self.assertNotIn("test_info", result["tasks"][0])
+
+    async def test_task_with_test_results_keeps_counts(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version(
+            self._task("failed", has_tests=True)
+        )
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        self.assertEqual(
+            result["tasks"][0]["test_info"],
+            {"failed_test_count": 2, "total_test_count": 9},
+        )
+
+
+class TestMaxResultsClamp(unittest.IsolatedAsyncioTestCase):
+    """An uncapped task listing is a multi-megabyte response nobody reads."""
+
+    @staticmethod
+    def _version():
+        return {
+            "id": "v1",
+            "revision": "abc",
+            "author": "a",
+            "createTime": "2026-01-01T00:00:00Z",
+            "status": "started",
+            "tasks": {"count": 0, "data": []},
+        }
+
+    async def test_clamps_and_warns(self):
+        from evergreen_mcp.failed_jobs_tools import MAX_TASK_RESULTS
+
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version()
+
+        result = await fetch_version_jobs(client, "v1", max_results=5000)
+
+        client.get_version_tasks.assert_awaited_once()
+        self.assertEqual(
+            client.get_version_tasks.await_args.kwargs["limit"], MAX_TASK_RESULTS
+        )
+        self.assertIn("clamped", result["warning"])
+        self.assertIn("get_status_summary_evergreen", result["warning"])
+
+    async def test_reasonable_request_is_untouched_and_unwarned(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version()
+
+        result = await fetch_version_jobs(client, "v1", max_results=50)
+
+        self.assertEqual(client.get_version_tasks.await_args.kwargs["limit"], 50)
+        self.assertNotIn("warning", result)
+
+
+class TestFailureDetailsShaping(unittest.IsolatedAsyncioTestCase):
+    """Evergreen fills `details` with empty strings on a task that PASSED.
+
+    A truthiness check on the struct therefore emits ~90 characters of nothing
+    per passing task — 411k chars across 4,326 of 4,577 sampled tasks. Found by
+    calling the live API, not by the corpus analysis, which only showed the
+    field was large.
+    """
+
+    @staticmethod
+    def _version(details):
+        return {
+            "id": "v1",
+            "revision": "abc",
+            "author": "a",
+            "createTime": "2026-01-01T00:00:00Z",
+            "status": "success",
+            "tasks": {
+                "count": 1,
+                "data": [
+                    {
+                        "id": "t1",
+                        "displayName": "perf",
+                        "buildVariant": "linux",
+                        "displayStatus": "success",
+                        "execution": 0,
+                        "timeTaken": 1,
+                        "hasTestResults": False,
+                        "details": details,
+                    }
+                ],
+            },
+        }
+
+    async def test_passing_task_omits_empty_failure_details(self):
+        client = AsyncMock()
+        # Exactly what Evergreen returns for a successful task.
+        client.get_version_tasks.return_value = self._version(
+            {
+                "description": "",
+                "status": "success",
+                "timedOut": False,
+                "timeoutType": "",
+                "failingCommand": "",
+            }
+        )
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        self.assertNotIn("failure_details", result["tasks"][0])
+
+    async def test_real_failure_keeps_only_meaningful_keys(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version(
+            {
+                "description": "shell script encountered problem",
+                "timedOut": False,
+                "timeoutType": "",
+                "failingCommand": "shell.exec",
+            }
+        )
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        self.assertEqual(
+            result["tasks"][0]["failure_details"],
+            {
+                "description": "shell script encountered problem",
+                "failing_command": "shell.exec",
+            },
+        )
+
+    async def test_timeout_still_reported_and_flagged_in_summary(self):
+        client = AsyncMock()
+        client.get_version_tasks.return_value = self._version(
+            {"description": "", "timedOut": True, "timeoutType": "idle"}
+        )
+
+        result = await fetch_version_jobs(client, "v1", status_filter="all")
+
+        fd = result["tasks"][0]["failure_details"]
+        self.assertTrue(fd["timed_out"])
+        self.assertEqual(fd["timeout_type"], "idle")
+        self.assertTrue(result["summary"]["has_timeouts"])

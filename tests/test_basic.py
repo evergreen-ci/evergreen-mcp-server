@@ -53,9 +53,10 @@ class TestImports(unittest.TestCase):
             # Check that some expected queries exist
             expected_queries = [
                 "GET_PROJECTS",
-                "GET_PROJECT",
                 "GET_USER_RECENT_PATCHES",
                 "GET_PATCH_TASKS",
+                "GET_PATCH_STATUS_SUMMARY",
+                "GET_VERSION_STATUS_SUMMARY",
                 "GET_TASK_LOGS",
                 "GET_TASK_TEST_RESULTS",
             ]
@@ -309,3 +310,206 @@ class TestGraphQLQueriesHostMetadata(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestErrorRegexWordBoundaries(unittest.TestCase):
+    """Short numeric keywords must not match inside longer numbers.
+
+    Every false positive here drags an unrelated line into the log summary that
+    get_task_log_detailed returns, so this is both a signal and a size problem.
+    """
+
+    def test_numeric_keywords_do_not_match_inside_numbers(self):
+        from evergreen_mcp.utils import _ERROR_RE
+
+        for line in (
+            "line 2403 all quiet",
+            "wrote 4401 bytes",
+            "elapsed 14036ms",
+            "task_id sys_perf_403abc",
+        ):
+            self.assertEqual(_ERROR_RE.findall(line), [], line)
+
+    def test_real_status_codes_still_match(self):
+        from evergreen_mcp.utils import _ERROR_RE
+
+        self.assertTrue(_ERROR_RE.findall("HTTP 403 Forbidden"))
+        self.assertTrue(_ERROR_RE.findall("got 401 from the API"))
+        self.assertTrue(_ERROR_RE.findall("502 Bad Gateway"))
+
+    def test_word_keywords_still_match(self):
+        from evergreen_mcp.utils import _ERROR_RE
+
+        for line in (
+            "panic: runtime error",
+            "Traceback (most recent call last):",
+            "AssertionError: nope",
+            "FAIL test_thing",
+        ):
+            self.assertTrue(_ERROR_RE.findall(line), line)
+
+    def test_plural_and_compound_forms_still_match(self):
+        """Alphabetic keywords must stay substring matches.
+
+        Anchoring them on word boundaries silently destroys recall on the forms
+        that actually appear in logs. A log whose only signal is "3 errors
+        detected" would fall through to the raw-text path with no error summary
+        at all — worse than before, for exactly the debugging case this exists
+        for.
+        """
+        from evergreen_mcp.utils import _ERROR_RE
+
+        for line in (
+            "errors were found",
+            "3 failures: see above",
+            "FatalError: boom",
+            "UnhandledError occurred",
+            "TestFailure detected",
+            "ConnectionResetError while dialing",
+            "panicked in goroutine",
+        ):
+            self.assertTrue(_ERROR_RE.findall(line), f"lost recall on: {line}")
+
+
+class TestAsListCoercion(unittest.TestCase):
+    """A bare string must be accepted where a list of filters is expected.
+
+    Rejecting it cost a full round-trip to learn nothing, and it was the most
+    repeated tool-call failure in the sampled transcripts. Every parameter whose
+    annotation was widened to `list[str] | str | None` must be coerced, or a
+    bare string reaches code that iterates it character by character.
+    """
+
+    def test_coerces_bare_string(self):
+        from evergreen_mcp.mcp_tools import _as_list
+
+        self.assertEqual(_as_list("^(disagg-m8g)"), ["^(disagg-m8g)"])
+
+    def test_passes_through_none_and_lists(self):
+        from evergreen_mcp.mcp_tools import _as_list
+
+        self.assertIsNone(_as_list(None))
+        self.assertEqual(_as_list(["a", "b"]), ["a", "b"])
+        self.assertEqual(_as_list([]), [])
+
+    def test_every_widened_param_is_coerced(self):
+        import re
+        from pathlib import Path
+
+        import evergreen_mcp.mcp_tools as m
+
+        src = Path(m.__file__).read_text()
+        widened = len(re.findall(r"list\[str\] \| str \| None", src))
+        # -1 for the _as_list definition itself.
+        coerced = len(re.findall(r"_as_list\(", src)) - 1
+        self.assertEqual(
+            widened,
+            coerced,
+            "a widened list param is not coerced; a bare string would be "
+            "iterated character by character",
+        )
+
+
+class TestDocsReferenceRealTools(unittest.TestCase):
+    """Agent-facing docs must only name tools that actually exist.
+
+    server.py's prompts and the skill:// resources are read by the model and
+    followed verbatim, so a stale name there becomes a failed tool call and a
+    wasted round-trip. `get_task_test_results_evergreen` and
+    `get_task_logs_evergreen` were referenced 26 times across these files and
+    have never existed.
+    """
+
+    @staticmethod
+    def _registered_tool_names():
+        import re
+        from pathlib import Path
+
+        import evergreen_mcp.mcp_tools as m
+
+        src = Path(m.__file__).read_text()
+        # Every tool is an `async def` directly beneath an @mcp.tool(...) block.
+        return set(re.findall(r"@mcp\.tool\(.*?\n    async def (\w+)\(", src, re.S))
+
+    @staticmethod
+    def _doc_files():
+        from pathlib import Path
+
+        import evergreen_mcp.server as s
+
+        root = Path(s.__file__).parent
+        return [root / "server.py", *sorted(root.glob("skills/*/SKILL.md"))]
+
+    def test_registered_names_are_discoverable(self):
+        names = self._registered_tool_names()
+        self.assertIn("get_status_summary_evergreen", names)
+        self.assertIn("get_task_log_summary", names)
+        self.assertGreater(len(names), 20)
+
+    def test_docs_do_not_name_nonexistent_tools(self):
+        import re
+
+        real = self._registered_tool_names()
+        problems = []
+        for path in self._doc_files():
+            text = path.read_text()
+            for name in set(re.findall(r"\b([a-z][a-z0-9_]{6,})\(", text)):
+                looks_like_tool = name.endswith("_evergreen") or name.startswith(
+                    ("get_task_log", "get_test_results")
+                )
+                if looks_like_tool and name not in real:
+                    problems.append(f"{path.name}: {name}")
+        self.assertEqual(problems, [], f"docs name non-existent tools: {problems}")
+
+
+class TestGraphQLErrorMessages(unittest.TestCase):
+    """A failed query must say what went wrong and whether retrying can help.
+
+    "Failed to execute GraphQL query" discarded the HTTP status entirely; an
+    expired OIDC token surfaced as that string with the real 401 buried in a
+    traceback, which invites blind retries of a call that cannot succeed.
+    """
+
+    def test_401_says_reauthenticate(self):
+        from gql.transport.exceptions import TransportServerError
+
+        from evergreen_mcp.evergreen_graphql_client import _describe_transport_error
+
+        msg = _describe_transport_error(TransportServerError("Unauthorized", 401))
+        self.assertIn("401", msg)
+        self.assertIn("Re-authenticate", msg)
+        self.assertIn("will fail the same way", msg)
+
+    def test_403_distinguishes_authz_from_authn(self):
+        from gql.transport.exceptions import TransportServerError
+
+        from evergreen_mcp.evergreen_graphql_client import _describe_transport_error
+
+        msg = _describe_transport_error(TransportServerError("Forbidden", 403))
+        self.assertIn("not authorized", msg)
+        self.assertNotIn("Re-authenticate", msg)
+
+    def test_5xx_marked_transient(self):
+        from gql.transport.exceptions import TransportServerError
+
+        from evergreen_mcp.evergreen_graphql_client import _describe_transport_error
+
+        for code in (502, 503, 504):
+            msg = _describe_transport_error(TransportServerError("Bad Gateway", code))
+            self.assertIn("transient", msg, code)
+
+    def test_unknown_error_still_surfaces_status_and_text(self):
+        from gql.transport.exceptions import TransportServerError
+
+        from evergreen_mcp.evergreen_graphql_client import _describe_transport_error
+
+        msg = _describe_transport_error(TransportServerError("kaboom", 500))
+        self.assertIn("HTTP 500", msg)
+        self.assertIn("kaboom", msg)
+
+    def test_error_without_status_code_does_not_invent_one(self):
+        from evergreen_mcp.evergreen_graphql_client import _describe_transport_error
+
+        msg = _describe_transport_error(RuntimeError("connection reset"))
+        self.assertNotIn("HTTP", msg)
+        self.assertIn("connection reset", msg)

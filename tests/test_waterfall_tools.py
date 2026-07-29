@@ -588,3 +588,43 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCommitMessageShaping(unittest.TestCase):
+    """Commit messages are reduced to their subject line.
+
+    versions[].message was 19.4% of get_waterfall_detailed_evergreen's bytes:
+    mainline commits routinely carry a body, a ticket reference and
+    co-authored-by trailers, none of which identify the commit.
+    """
+
+    def test_multiline_message_keeps_only_the_subject(self):
+        from evergreen_mcp.waterfall_tools import _shape_message
+
+        msg = (
+            "SERVER-128542 Better log sealing metrics (#59521)\n"
+            "\n"
+            "This reworks the sealing metrics to be per-segment.\n"
+            "Co-authored-by: Someone Else <someone@example.com>\n"
+        )
+        self.assertEqual(
+            _shape_message(msg), "SERVER-128542 Better log sealing metrics (#59521)"
+        )
+
+    def test_long_subject_is_capped_with_an_ellipsis(self):
+        from evergreen_mcp.waterfall_tools import MESSAGE_MAX_CHARS, _shape_message
+
+        out = _shape_message("x" * 400)
+        self.assertEqual(len(out), MESSAGE_MAX_CHARS + 1)  # +1 for the ellipsis
+        self.assertTrue(out.endswith("…"))
+
+    def test_short_single_line_message_is_untouched(self):
+        from evergreen_mcp.waterfall_tools import _shape_message
+
+        self.assertEqual(_shape_message("SERVER-1 fix it"), "SERVER-1 fix it")
+
+    def test_empty_and_none_pass_through(self):
+        from evergreen_mcp.waterfall_tools import _shape_message
+
+        self.assertIsNone(_shape_message(None))
+        self.assertEqual(_shape_message(""), "")

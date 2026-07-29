@@ -112,3 +112,79 @@ def test_user_from_jwt_falls_back_to_sub():
 
 def test_user_from_jwt_returns_empty_on_garbage():
     assert _user_from_jwt("not-a-jwt") == ""
+
+
+# ---------------------------------------------------------------------------
+# bearer_token parameter shape
+#
+# EVERGREEN_AUTH_MODE=per_request leaves the lifespan context without clients
+# (server.py:145-152 — "used by MCP gateways that inject per-user credentials
+# from a credential store"), so _get_clients RAISES unless a bearer_token
+# arrives as a tool argument. That is why the parameter was narrowed
+# (str | None = None -> str = "") rather than removed from the tool schema:
+# removing it would save ~945 tokens per request but break that deployment.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_string_default_falls_back_to_lifespan_clients():
+    """The new "" default must behave exactly as the old None default did."""
+    mock_client = MagicMock()
+    mock_api_client = MagicMock()
+    ctx = FakeEvergreenContext(
+        client=mock_client, api_client=mock_api_client, user_id="me"
+    )
+
+    async with _get_clients(ctx, bearer_token="") as (client, api_client, user_id):
+        assert client is mock_client
+        assert api_client is mock_api_client
+        assert user_id == "me"
+
+
+@pytest.mark.asyncio
+async def test_per_request_mode_without_a_token_raises_clearly():
+    """A gateway context before credential injection: no clients, no token."""
+    ctx = FakeEvergreenContext(client=None, api_client=None, user_id="")
+
+    with pytest.raises(ValueError, match="No Evergreen credentials available"):
+        async with _get_clients(ctx, bearer_token=""):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_gateway_token_still_builds_per_request_clients():
+    """The capability the narrowing preserves: a real token routes per-request."""
+    import evergreen_mcp.mcp_tools as mt
+
+    ctx = FakeEvergreenContext(client=None, api_client=None, user_id="")
+    built = {}
+
+    class FakeGQL:
+        def __init__(self, **kw):
+            built["gql_kwargs"] = kw
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakeREST:
+        def __init__(self, **kw):
+            built["rest_kwargs"] = kw
+
+        async def _close_session(self):
+            built["closed"] = True
+
+    token = _make_jwt({"email": "marcin.borowiec@mongodb.com"})
+    with patch.object(mt, "EvergreenGraphQLClient", FakeGQL), patch.object(
+        mt, "EvergreenRestClient", FakeREST
+    ):
+        async with mt._get_clients(ctx, bearer_token=token) as (gql, rest, user_id):
+            assert isinstance(gql, FakeGQL)
+            assert isinstance(rest, FakeREST)
+            assert user_id == "marcin.borowiec"
+
+    assert built["gql_kwargs"]["bearer_token"] == token
+    assert built["rest_kwargs"]["bearer_token"] == token
+    assert built["closed"] is True
