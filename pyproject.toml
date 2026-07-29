@@ -32,7 +32,7 @@ known_first_party = ["evergreen_mcp"]
 
 [project]
 name = "evergreen-mcp-server"
-version = "0.4.4"
+version = "0.4.5"
 description = "A server for interacting with the Evergreen API."
 authors = [
     { name = "Geoff Mishkin", email = "geoff.mishkin@mongodb.com" }
@@ -40,7 +40,7 @@ authors = [
 dependencies = [
     "urllib3",
     "python-dateutil",
-    "aiohttp",
+    "aiohttp>=3.14.1",
     "aiohttp-retry",
     "pydantic",
     "typing-extensions",

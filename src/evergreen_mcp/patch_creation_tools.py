@@ -403,7 +403,16 @@ async def set_patch_module(
     base_revision: str,
     message: str = "",
 ) -> Dict[str, Any]:
-    """Attach a module diff to an existing patch."""
+    """Attach a module to an existing patch, pinning it at ``base_revision``.
+
+    An empty ``diff`` is valid and common: it means "run this module at exactly
+    ``base_revision``, unmodified" (e.g. testing whether something newly landed
+    on the module's mainline works against real perf variants). Evergreen stores
+    the module patch as ``ModulePatch{ModuleName, Githash, PatchSet}`` and uses
+    the githash to override the manifest — an empty ``patch_bytes`` is accepted
+    server-side and simply applies no changes on top of that commit. Only
+    ``base_revision`` is truly required; without it there is nothing to pin to.
+    """
     if not patch_id:
         return {"status": "error", "error": "patch_id is required."}
     if not module_name:
@@ -412,13 +421,15 @@ async def set_patch_module(
             "patch_id": patch_id,
             "error": "module_name is required.",
         }
-    if not diff:
-        return {"status": "error", "patch_id": patch_id, "error": "diff is required."}
     if not base_revision:
         return {
             "status": "error",
             "patch_id": patch_id,
-            "error": "base_revision is required.",
+            "module_name": module_name,
+            "error": (
+                "base_revision is required — it's the commit the module is "
+                "pinned to. (An empty diff is fine, but the pin is not.)"
+            ),
         }
     try:
         await api_client.set_patch_module(
@@ -438,7 +449,24 @@ async def set_patch_module(
             "module_name": module_name,
             "error": _format_exception(e),
         }
-    return {"status": "ok", "patch_id": patch_id, "module_name": module_name}
+    result: Dict[str, Any] = {
+        "status": "ok",
+        "patch_id": patch_id,
+        "module_name": module_name,
+        "base_revision": base_revision,
+    }
+    if not diff:
+        # Not an error — the common "pin to this exact commit, unmodified" case.
+        # Flag it so the caller can confirm the pin is intentional rather than
+        # discovering a stale/wrong module revision from a runtime task failure.
+        result["diff_empty"] = True
+        result["note"] = (
+            f"Module '{module_name}' pinned to {base_revision} with no diff "
+            "(worktree matches its upstream, no local commits). The module runs "
+            "at exactly this commit. If you meant to attach local changes, "
+            "commit them in the module repo first."
+        )
+    return result
 
 
 async def remove_patch_module(

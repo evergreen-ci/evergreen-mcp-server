@@ -388,12 +388,40 @@ class TestPatchModuleTools(unittest.IsolatedAsyncioTestCase):
         for kwargs in [
             {"patch_id": "", "module_name": "m", "diff": "d", "base_revision": "b"},
             {"patch_id": "p", "module_name": "", "diff": "d", "base_revision": "b"},
-            {"patch_id": "p", "module_name": "m", "diff": "", "base_revision": "b"},
+            # base_revision (the pin) is required; an empty diff is NOT an error.
             {"patch_id": "p", "module_name": "m", "diff": "d", "base_revision": ""},
         ]:
             result = await set_patch_module(client, **kwargs)
             self.assertEqual(result["status"], "error", kwargs)
         client.set_patch_module.assert_not_awaited()
+
+    async def test_set_empty_diff_pins_to_commit(self):
+        """An empty module diff is valid: pin the module to base_revision.
+
+        This is the "run this module at exactly its current upstream commit,
+        unmodified" case (e.g. a freshly-synced ~/dsi/master with no local
+        commits). It must not be rejected, must still call the API with the
+        githash, and must flag the pin so it's visible rather than silent.
+        """
+        client = AsyncMock()
+        result = await set_patch_module(
+            client,
+            patch_id="p1",
+            module_name="dsi",
+            diff="",
+            base_revision="abc123",
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["diff_empty"])
+        self.assertEqual(result["base_revision"], "abc123")
+        self.assertIn("pinned to abc123", result["note"])
+        client.set_patch_module.assert_awaited_once_with(
+            patch_id="p1",
+            module="dsi",
+            diff="",
+            base_revision="abc123",
+            message="",
+        )
 
     async def test_set_local_module_includes_rejects_diff_content(self):
         """Passing a git diff as file_content should raise a clear ValueError."""

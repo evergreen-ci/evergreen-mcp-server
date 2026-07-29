@@ -1289,6 +1289,13 @@ def register_tools(mcp: FastMCP) -> None:
             "The server runs `git diff --binary <upstream>...HEAD` inside each "
             "repo and calls set_patch_module automatically. Example: "
             '[{"module": "dsi", "repo_path": "~/dsi/my-branch"}]. '
+            "If the repo has no local commits ahead of upstream (e.g. freshly "
+            "synced ~/dsi/master), the diff is empty and the module is pinned to "
+            "that exact upstream commit, unmodified — a valid, common case (no "
+            "throwaway commit needed). Such modules are listed under "
+            "`modules_pinned_no_diff` in the response so the pin is visible. "
+            "Without this, the module falls back to whatever revision the "
+            "project config tracks, which can be arbitrarily stale. "
             "After all modules are set, the patch is finalized if finalize=true.",
         ] = None,
         project_id: Annotated[
@@ -1529,8 +1536,20 @@ def register_tools(mcp: FastMCP) -> None:
                     result["warning"] = (
                         "One or more module diffs failed. "
                         "The patch was created but may be incomplete. "
-                        "Check module_results for details."
+                        "Check module_results for details. "
+                        "The patch was NOT finalized."
                     )
+                # Surface empty-diff pins at the top level so a "pinned to exact
+                # upstream commit" module (worktree with no local commits) is
+                # visible here rather than only discovered from a runtime task
+                # failure. This is expected/valid, not an error.
+                pinned = [
+                    m.get("module")
+                    for m in module_results
+                    if m.get("status") == "ok" and m.get("diff_empty")
+                ]
+                if pinned:
+                    result["modules_pinned_no_diff"] = pinned
 
             # --- finalize if requested (and modules were set) ---
             if finalize and module_repos and not any(
