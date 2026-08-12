@@ -323,10 +323,12 @@ query GetTaskTestResults(
 GET_WATERFALL = """
 query GetWaterfall($options: WaterfallOptions!) {
   waterfall(options: $options) {
-    flattenedVersions {
+    versions {
       id
       revision
-      author
+      user {
+        displayName
+      }
       message
       createTime
       order
@@ -366,10 +368,12 @@ query GetWaterfall($options: WaterfallOptions!) {
 GET_MAINLINE_COMMITS = """
 query GetMainlineCommits($options: WaterfallOptions!) {
   waterfall(options: $options) {
-    flattenedVersions {
+    versions {
       id
       revision
-      author
+      user {
+        displayName
+      }
       message
       createTime
       order

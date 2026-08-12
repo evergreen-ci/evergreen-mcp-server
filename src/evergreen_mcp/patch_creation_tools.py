@@ -583,7 +583,7 @@ async def list_project_tasks(graphql_client, *, project_id: str) -> Dict[str, An
         }
 
     seen: Dict[str, str] = {}
-    for version in raw.get("flattenedVersions") or []:
+    for version in raw.get("versions") or []:
         for build in version.get("waterfallBuilds") or []:
             for task in build.get("tasks") or []:
                 display_name = task.get("displayName") or task.get("display_name")

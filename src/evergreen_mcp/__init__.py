@@ -3,7 +3,7 @@
 This is the upgraded version of the Evergreen MCP Server using FastMCP.
 """
 
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 USER_AGENT = f"evergreen-mcp-server/{__version__}"
 
 import os

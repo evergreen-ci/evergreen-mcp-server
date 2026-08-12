@@ -457,12 +457,12 @@ class EvergreenGraphQLClient:
             options: WaterfallOptions input as a dict (projectIdentifier required).
 
         Returns:
-            Waterfall payload with flattenedVersions and pagination.
+            Waterfall payload with versions and pagination.
         """
         variables = {"options": options}
         result = await self._execute_query(GET_WATERFALL, variables)
         waterfall = result.get("waterfall") or {}
-        version_count = len(waterfall.get("flattenedVersions") or [])
+        version_count = len(waterfall.get("versions") or [])
         logger.info(
             "Retrieved waterfall for %s: %s versions",
             options.get("projectIdentifier"),
@@ -481,12 +481,12 @@ class EvergreenGraphQLClient:
             options: WaterfallOptions input as a dict (projectIdentifier required).
 
         Returns:
-            Payload with flattenedVersions and pagination (no waterfallBuilds).
+            Payload with versions and pagination (no waterfallBuilds).
         """
         variables = {"options": options}
         result = await self._execute_query(GET_MAINLINE_COMMITS, variables)
         waterfall = result.get("waterfall") or {}
-        version_count = len(waterfall.get("flattenedVersions") or [])
+        version_count = len(waterfall.get("versions") or [])
         logger.info(
             "Retrieved mainline commits for %s: %s versions",
             options.get("projectIdentifier"),

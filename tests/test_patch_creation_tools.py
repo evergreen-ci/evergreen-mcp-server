@@ -475,7 +475,7 @@ class TestListProjectTasks(unittest.IsolatedAsyncioTestCase):
     async def test_extracts_unique_task_names_from_waterfall(self):
         client = AsyncMock()
         client.get_waterfall.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 {
                     "waterfallBuilds": [
                         {
@@ -506,7 +506,7 @@ class TestListProjectTasks(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_waterfall(self):
         client = AsyncMock()
-        client.get_waterfall.return_value = {"flattenedVersions": []}
+        client.get_waterfall.return_value = {"versions": []}
         result = await list_project_tasks(client, project_id="p")
         self.assertEqual(result["count"], 0)
         self.assertEqual(result["tasks"], [])

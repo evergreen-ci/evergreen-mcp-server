@@ -141,8 +141,18 @@ def _build_options(
     return options
 
 
+def _version_author(version: Dict[str, Any]) -> Optional[str]:
+    """Author display name for a waterfall version.
+
+    VersionLite (what `waterfall.versions` returns since DEVPROD-27824 dropped
+    `flattenedVersions`) has no scalar `author` field — the name lives under
+    `user.displayName`.
+    """
+    return (version.get("user") or {}).get("displayName")
+
+
 def _shape_versions(
-    flattened_versions: List[Dict[str, Any]],
+    versions: List[Dict[str, Any]],
     active_version_ids: List[str],
 ) -> List[Dict[str, Any]]:
     """Project active versions into the response shape.
@@ -152,7 +162,7 @@ def _shape_versions(
     """
     active_set = set(active_version_ids or [])
     out: List[Dict[str, Any]] = []
-    for v in flattened_versions or []:
+    for v in versions or []:
         version_id = v.get("id") or ""
         if version_id not in active_set:
             continue
@@ -162,7 +172,7 @@ def _shape_versions(
                 "version_id": version_id,
                 "revision": v.get("revision"),
                 "message": _shape_message(v.get("message")),
-                "author": v.get("author"),
+                "author": _version_author(v),
                 "create_time": v.get("createTime"),
                 "requester": v.get("requester"),
                 "status": v.get("status"),
@@ -251,7 +261,7 @@ def _variant_matches(variant: str, patterns: Optional[List[Any]]) -> bool:
 
 
 def _shape_variants_grid(
-    flattened_versions: List[Dict[str, Any]],
+    versions: List[Dict[str, Any]],
     active_version_ids: List[str],
     *,
     detailed: bool,
@@ -271,7 +281,7 @@ def _shape_variants_grid(
     active_set = set(active_version_ids or [])
     rows: Dict[str, Dict[str, Any]] = {}
     matching_variant_names: set = set()
-    for version in flattened_versions or []:
+    for version in versions or []:
         version_id = version.get("id")
         if not version_id or version_id not in active_set:
             continue
@@ -343,12 +353,12 @@ def _build_response(
     task_patterns: Optional[List[Any]] = None,
     warnings: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    flattened = raw.get("flattenedVersions") or []
+    raw_versions = raw.get("versions") or []
     pagination = raw.get("pagination") or {}
     active_ids = pagination.get("activeVersionIds") or []
-    versions = _shape_versions(flattened, active_ids)
+    versions = _shape_versions(raw_versions, active_ids)
     grid = _shape_variants_grid(
-        flattened,
+        raw_versions,
         active_ids,
         detailed=detailed,
         variant_cap=variant_cap,
@@ -553,7 +563,7 @@ async def fetch_mainline_commits_between(
         }
 
     commits: List[Dict[str, Any]] = []
-    for v in raw.get("flattenedVersions") or []:
+    for v in raw.get("versions") or []:
         order = v.get("order") or 0
         if order < lo or order > hi:
             continue
@@ -563,7 +573,7 @@ async def fetch_mainline_commits_between(
                 "version_id": v.get("id") or "",
                 "revision": v.get("revision"),
                 "message": _shape_message(v.get("message")),
-                "author": v.get("author"),
+                "author": _version_author(v),
                 "create_time": v.get("createTime"),
                 "requester": v.get("requester"),
                 "activated": bool(v.get("activated")),
@@ -631,7 +641,7 @@ async def fetch_project_build_variants(
         }
 
     seen: Dict[str, str] = {}
-    for version in raw.get("flattenedVersions") or []:
+    for version in raw.get("versions") or []:
         for build in version.get("waterfallBuilds") or []:
             variant = build.get("buildVariant")
             if not variant or variant in seen:

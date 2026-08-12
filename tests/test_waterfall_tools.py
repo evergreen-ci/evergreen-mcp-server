@@ -8,11 +8,32 @@ from evergreen_mcp.waterfall_tools import (
     MAX_LIMIT_DETAILED,
     MAX_LIMIT_SUMMARY,
     WATERFALL_VARIANT_CAP,
+    _version_author,
     fetch_mainline_commits_between,
     fetch_project_build_variants,
     fetch_waterfall_detailed,
     fetch_waterfall_summary,
 )
+
+
+class TestVersionAuthor(unittest.TestCase):
+    """VersionLite.user.displayName unwrapping (see DEVPROD-27824)."""
+
+    def test_display_name_present(self):
+        self.assertEqual(
+            _version_author({"user": {"displayName": "alice"}}), "alice"
+        )
+
+    def test_null_user(self):
+        """`user` is User! in the schema, but tolerate null rather than raising."""
+        self.assertIsNone(_version_author({"user": None}))
+
+    def test_missing_user_key(self):
+        self.assertIsNone(_version_author({}))
+
+    def test_null_display_name(self):
+        """displayName is a nullable String — system/gitter versions may omit it."""
+        self.assertIsNone(_version_author({"user": {"displayName": None}}))
 
 
 def _make_task(name: str, status: str, task_id: str | None = None) -> dict:
@@ -41,7 +62,7 @@ def _make_version(
     return {
         "id": version_id,
         "revision": f"rev{version_id}",
-        "author": "alice",
+        "user": {"displayName": "alice"},
         "message": f"msg-{version_id}",
         "createTime": "2026-04-17T10:00:00Z",
         "order": order,
@@ -70,7 +91,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """Two versions × two variants produces correct status counts."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 _make_version(
                     "v1",
                     100,
@@ -115,7 +136,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """Versions not in activeVersionIds are dropped entirely."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 _make_version("v1", 100, [_make_build("ubuntu", "v1", ["success"])]),
                 _make_version("v_inactive", 99, [], activated=False),
             ],
@@ -138,7 +159,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         inactive_build = _make_build("rhel", "v1", ["unscheduled"])
         inactive_build["activated"] = False
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [_make_version("v1", 100, [active_build, inactive_build])],
+            "versions": [_make_version("v1", 100, [active_build, inactive_build])],
             "pagination": _make_pagination(["v1"]),
         }
 
@@ -153,7 +174,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """statuses filter restricts status_counts and drops empty cells."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 _make_version(
                     "v1",
                     100,
@@ -182,7 +203,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """Variant rows not matching the variants filter are dropped."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 _make_version(
                     "v1",
                     100,
@@ -211,7 +232,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
             for i in range(WATERFALL_VARIANT_CAP + 20)
         ]
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [_make_version("v1", 100, many_variants)],
+            "versions": [_make_version("v1", 100, many_variants)],
             "pagination": _make_pagination(["v1"]),
         }
 
@@ -225,7 +246,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """YYYY-MM-DD becomes RFC3339 end-of-day in the GraphQL options."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": _make_pagination([]),
         }
 
@@ -262,7 +283,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """A huge limit is clamped to MAX_LIMIT_SUMMARY and emits a warning."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": _make_pagination([]),
         }
 
@@ -290,7 +311,7 @@ class TestFetchWaterfallSummary(unittest.IsolatedAsyncioTestCase):
         """Empty results carry an explicit message."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": _make_pagination([]),
         }
 
@@ -307,7 +328,7 @@ class TestFetchWaterfallDetailed(unittest.IsolatedAsyncioTestCase):
         mock_client = AsyncMock()
         builds = [_make_build("ubuntu", "v1", ["failed", "success"])]
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [_make_version("v1", 100, builds)],
+            "versions": [_make_version("v1", 100, builds)],
             "pagination": _make_pagination(["v1"]),
         }
 
@@ -324,7 +345,7 @@ class TestFetchWaterfallDetailed(unittest.IsolatedAsyncioTestCase):
     async def test_limit_clamping_detailed(self):
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": _make_pagination([]),
         }
 
@@ -343,7 +364,7 @@ class TestFetchWaterfallDetailed(unittest.IsolatedAsyncioTestCase):
         # Rename one task for filter testing
         builds[0]["tasks"][1]["displayName"] = "compile_x"
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [_make_version("v1", 100, builds)],
+            "versions": [_make_version("v1", 100, builds)],
             "pagination": _make_pagination(["v1"]),
         }
 
@@ -364,7 +385,7 @@ class TestFetchWaterfallDetailed(unittest.IsolatedAsyncioTestCase):
     async def test_case_sensitivity_flags_propagate(self):
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": _make_pagination([]),
         }
 
@@ -387,7 +408,7 @@ class TestFetchProjectBuildVariants(unittest.IsolatedAsyncioTestCase):
         """Variants are deduplicated and returned alphabetically."""
         mock_client = AsyncMock()
         mock_client.get_waterfall.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 _make_version(
                     "v1",
                     100,
@@ -425,7 +446,7 @@ def _make_commit_version(
     return {
         "id": version_id,
         "revision": f"rev{version_id}",
-        "author": "alice",
+        "user": {"displayName": "alice"},
         "message": f"msg-{version_id}",
         "createTime": "2026-04-17T10:00:00Z",
         "order": order,
@@ -439,7 +460,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """All commits in the [lo, hi] window are returned, newest-first."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [
+            "versions": [
                 _make_commit_version(f"v{o}", o) for o in (74964, 74963, 74962, 74961, 74960, 74959)
             ],
             "pagination": {},
@@ -464,7 +485,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """start_order > end_order still produces the same ordered window."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [_make_commit_version(f"v{o}", o) for o in (102, 101, 100)],
+            "versions": [_make_commit_version(f"v{o}", o) for o in (102, 101, 100)],
             "pagination": {},
         }
 
@@ -480,7 +501,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """Versions outside [lo, hi] in the GraphQL feed are filtered out."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [_make_commit_version(f"v{o}", o) for o in (105, 103, 102, 101, 99)],
+            "versions": [_make_commit_version(f"v{o}", o) for o in (105, 103, 102, 101, 99)],
             "pagination": {},
         }
 
@@ -512,7 +533,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """A span > MAX_COMMITS_RANGE clamps and emits a truncation warning."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": {},
         }
 
@@ -532,7 +553,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """When requesters is provided it lands in options; when None it's omitted."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": {},
         }
 
@@ -556,7 +577,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """maxOrder is set to hi+1 so inclusive-or-exclusive schema both work."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": {},
         }
 
@@ -573,7 +594,7 @@ class TestFetchMainlineCommitsBetween(unittest.IsolatedAsyncioTestCase):
         """Empty result carries an explanatory message."""
         mock_client = AsyncMock()
         mock_client.get_mainline_commits.return_value = {
-            "flattenedVersions": [],
+            "versions": [],
             "pagination": {},
         }
 
