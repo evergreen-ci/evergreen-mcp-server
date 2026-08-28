@@ -80,7 +80,10 @@ query GetProjectPatches($projectId: String!, $limit: Int = 10) {
       patches {
         id
         description
-        author
+        user {
+          id
+          displayName
+        }
         createTime
         status
         version
@@ -117,8 +120,10 @@ query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
         id
         githash
         description
-        author
-        authorDisplayName
+        user {
+          id
+          displayName
+        }
         status
         createTime
         patchNumber
@@ -142,8 +147,10 @@ query GetPatchFailedTasks($patchId: String!) {
     id
     githash
     description
-    author
-    authorDisplayName
+    user {
+      id
+      displayName
+    }
     status
     createTime
     patchNumber
