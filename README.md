@@ -1,5 +1,8 @@
 # Evergreen MCP Server
 
+> [!WARNING]
+> **This project is deprecated.** MongoDB users should use the **DevProd MCP** server instead, which provides Evergreen tools alongside other DevProd integrations. This repository is no longer the recommended way to connect AI assistants to Evergreen, and the setup instructions below are kept for reference only.
+
 A Model Context Protocol (MCP) server that provides access to the Evergreen CI/CD platform API. This server enables AI assistants and other MCP clients to interact with Evergreen projects, builds, tasks, and other CI/CD resources.
 
 ## Overview
