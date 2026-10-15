@@ -21,6 +21,37 @@ class ConfigParseError(Exception):
     pass
 
 
+def patch_version(patch: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return a patch's version object, or None if the patch has none.
+
+    The GraphQL `Patch.version` field replaced the removed `versionFull`
+    field (DEVPROD-38057). Tolerate both keys so responses cached or mocked
+    under either name keep working.
+    """
+    version = patch.get("version") if patch else None
+    if version is None:
+        version = (patch or {}).get("versionFull")
+    return version
+
+
+def patch_author(patch: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Extract author info from a GraphQL Patch object.
+
+    The `Patch.author` / `Patch.authorDisplayName` fields were removed in
+    DEVPROD-38057; authorship now comes from `Patch.user` (the submitting
+    user) and `Patch.githubPatchData` (for GitHub PR patches).
+    Note: for GitHub PR patches the returned `author` is the GitHub username
+    (githubPatchData.author), not the Evergreen user id.
+    """
+    patch = patch or {}
+    user = patch.get("user") or {}
+    github = patch.get("githubPatchData") or {}
+    return {
+        "author": github.get("author") or user.get("id"),
+        "author_display_name": user.get("displayName"),
+    }
+
+
 def load_evergreen_config(*, use_cache: bool = True) -> dict[str, Any]:
     """Load ~/.evergreen.yml config file.
 

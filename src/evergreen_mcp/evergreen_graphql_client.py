@@ -33,6 +33,7 @@ from .evergreen_queries import (
     SCHEDULE_PATCH,
     SCHEDULE_TASKS,
 )
+from .utils import patch_version
 
 # Constants for test status values
 FAILED_TEST_STATUSES = ["fail", "failed"]
@@ -298,7 +299,7 @@ class EvergreenGraphQLClient:
             failed_limit: Maximum number of failing tasks to fetch
 
         Returns:
-            Patch dictionary with versionFull.taskStatusStats and failing tasks
+            Patch dictionary with version.taskStatusStats and failing tasks
         """
         variables = {
             "patchId": patch_id,
@@ -359,7 +360,7 @@ class EvergreenGraphQLClient:
         if not patch:
             raise Exception(f"Patch not found: {patch_id}")
 
-        version = patch.get("versionFull", {})
+        version = patch_version(patch) or {}
         task_count = version.get("tasks", {}).get("count", 0)
         logger.info("Retrieved patch %s with %s tasks", patch_id, task_count)
         return patch

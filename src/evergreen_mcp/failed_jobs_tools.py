@@ -8,6 +8,8 @@ It uses a patch-based approach focused on the authenticated user's recent patche
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from evergreen_mcp.utils import patch_author, patch_version
+
 if TYPE_CHECKING:
     from .evergreen_rest_client import EvergreenRestClient
 
@@ -56,21 +58,19 @@ async def fetch_user_recent_patches(
         )
         if project_id and patch_project_identifier != project_id:
             continue
+        patch_version_obj = patch_version(patch)
         patch_info = {
             "patch_id": patch.get("id"),
             "patch_number": patch.get("patchNumber"),
             "githash": patch.get("githash"),
             "description": patch.get("description"),
-            "author": patch.get("author"),
-            "author_display_name": patch.get("authorDisplayName"),
+            **patch_author(patch),
             "status": patch.get("status"),
             "create_time": patch.get("createTime"),
             "project_identifier": patch_project_identifier,
-            "has_version": patch.get("versionFull") is not None,
+            "has_version": patch_version_obj is not None,
             "version_status": (
-                patch.get("versionFull", {}).get("status")
-                if patch.get("versionFull")
-                else None
+                patch_version_obj.get("status") if patch_version_obj else None
             ),
         }
         processed_patches.append(patch_info)
@@ -219,15 +219,14 @@ async def fetch_patch_jobs(
         "patch_number": patch.get("patchNumber"),
         "githash": patch.get("githash"),
         "description": patch.get("description"),
-        "author": patch.get("author"),
-        "author_display_name": patch.get("authorDisplayName"),
+        **patch_author(patch),
         "status": patch.get("status"),
         "create_time": patch.get("createTime"),
         "project_identifier": patch_project_identifier,
     }
 
     # Extract version and tasks information
-    version = patch.get("versionFull", {})
+    version = patch_version(patch) or {}
     version_info = (
         {
             "version_id": version.get("id"),

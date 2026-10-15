@@ -38,15 +38,20 @@ query GetUserRecentPatches($userId: String!, $limit: Int = 10, $page: Int = 0) {
         id
         githash
         description
-        author
-        authorDisplayName
+        user {
+          id
+          displayName
+        }
+        githubPatchData {
+          author
+        }
         status
         createTime
         patchNumber
         projectMetadata {
           identifier
         }
-        versionFull {
+        version {
           id
           status
         }
@@ -73,12 +78,12 @@ query GetPatchStatusSummary(
     projectMetadata {
       identifier
     }
-    versionFull {
+    version {
       id
       status
       startTime
       finishTime
-      taskStatusStats(options: { includeNeverActivatedTasks: false }) {
+      taskStatusStats {
         counts {
           status
           count
@@ -122,7 +127,7 @@ query GetVersionStatusSummary(
     projectMetadata {
       identifier
     }
-    taskStatusStats(options: { includeNeverActivatedTasks: false }) {
+    taskStatusStats {
       counts {
         status
         count
@@ -156,15 +161,20 @@ query GetPatchTasks($patchId: String!, $statuses: [String!]!, $limit: Int = 100)
     id
     githash
     description
-    author
-    authorDisplayName
+    user {
+      id
+      displayName
+    }
+    githubPatchData {
+      author
+    }
     status
     createTime
     patchNumber
     projectMetadata {
       identifier
     }
-    versionFull {
+    version {
       id
       revision
       author

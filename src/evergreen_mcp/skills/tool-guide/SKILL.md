@@ -581,7 +581,7 @@ On failure, returns an `error` key instead of `downloaded_artifacts`/`artifact_c
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| version_id | str | **required** | Version (or patch version) ID owning the tasks. From `get_waterfall_detailed_evergreen` (`version_id` field) or a patch's `versionFull.id`. |
+| version_id | str | **required** | Version (or patch version) ID owning the tasks. From `get_waterfall_detailed_evergreen` (`version_id` field) or a patch's `version.id`. |
 | task_ids | list[str] | **required** | Task IDs to schedule. From `get_waterfall_detailed_evergreen` (the `task_id` field of each task in a cell). Must belong to the given version_id. |
 
 **Return shape**:

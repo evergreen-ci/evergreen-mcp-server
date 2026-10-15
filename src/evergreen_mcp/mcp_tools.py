@@ -1209,7 +1209,7 @@ def register_tools(mcp: FastMCP) -> None:
             str,
             "Version (or patch version) identifier owning the tasks. Found in "
             "the 'version_id' field of get_waterfall_detailed_evergreen "
-            "responses, or the 'versionFull.id' field on a patch.",
+            "responses, or the 'version.id' field on a patch.",
         ],
         task_ids: Annotated[
             list[str],
@@ -1361,7 +1361,7 @@ def register_tools(mcp: FastMCP) -> None:
             "Set abort=true to also abort any in-progress tasks and queue "
             "them for reset before restarting completed ones. "
             "Obtain version_id from list_user_recent_patches_evergreen "
-            "('version_id' field) or the 'versionFull.id' on a patch. "
+            "('version_id' field) or the 'version.id' on a patch. "
             "Returns the restarted version entities."
         )
     )
@@ -1371,7 +1371,7 @@ def register_tools(mcp: FastMCP) -> None:
             str,
             "Version (or patch version) identifier to restart. Found in the "
             "'version_id' field of list_user_recent_patches_evergreen or "
-            "'versionFull.id' on a patch.",
+            "'version.id' on a patch.",
         ],
         task_ids: Annotated[
             list[str] | None,

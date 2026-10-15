@@ -21,6 +21,8 @@ Only failing tasks are enumerated.
 import logging
 from typing import Any, Dict, List, Optional
 
+from evergreen_mcp.utils import patch_version
+
 logger = logging.getLogger(__name__)
 
 # All status values below are DISPLAY statuses, not the raw stored status.
@@ -192,12 +194,12 @@ def _build_summary(
         # done is NOT monotonic. Because unscheduled tasks are excluded from
         # in_flight, a version whose tasks have not been activated yet reports
         # done=True and can later go back to False:
-        #   - Mainline versions: the query asks for
-        #     includeNeverActivatedTasks=false but Evergreen forces it to true
-        #     for non-patch requesters (version_resolver.go:527-538), and a
-        #     never-activated task displays as "unscheduled"
-        #     (model/task/db.go:281-289). A fresh mainline version with
-        #     batchtime variants is therefore all-unscheduled => done=True,
+        #   - Mainline versions: taskStatusStats takes no arguments and the
+        #     resolver hardcodes includeNeverActivated = !IsPatchRequester
+        #     (version_resolver.go:532-536), so a mainline version always
+        #     includes never-activated tasks. A never-activated task displays
+        #     as "unscheduled" (model/task/db.go:281-289), so a fresh mainline
+        #     version with batchtime variants is all-unscheduled => done=True,
         #     until the scheduler activates it.
         #   - After an abort (display status "aborted" => failed bucket) a
         #     restart resets tasks to "will-run" => done goes False again.
@@ -263,7 +265,7 @@ async def fetch_patch_status_summary(
         patch_id, FAILURE_STATUSES, failed_limit=max_failed_tasks
     )
 
-    version = patch.get("versionFull")
+    version = patch_version(patch)
     if not version:
         # Unfinalized patch: no version exists yet, so there is nothing to poll.
         return {

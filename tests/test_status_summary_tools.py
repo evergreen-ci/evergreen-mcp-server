@@ -243,7 +243,7 @@ class TestPatchStatusSummary(unittest.IsolatedAsyncioTestCase):
             "description": "PERF-9224 bisection",
             "status": "started",
             "projectMetadata": {"identifier": "sys-perf"},
-            "versionFull": {
+            "version": {
                 "id": "version123",
                 "status": "started",
                 "taskStatusStats": _stats(success=3, started=1),
@@ -267,7 +267,7 @@ class TestPatchStatusSummary(unittest.IsolatedAsyncioTestCase):
             "description": "not scheduled yet",
             "status": "created",
             "projectMetadata": {"identifier": "sys-perf"},
-            "versionFull": None,
+            "version": None,
         }
 
         result = await fetch_patch_status_summary(client, "patch123")
@@ -288,7 +288,7 @@ class TestPatchStatusSummary(unittest.IsolatedAsyncioTestCase):
             "description": "big patch",
             "status": "started",
             "projectMetadata": {"identifier": "sys-perf"},
-            "versionFull": {
+            "version": {
                 "id": "version123",
                 "status": "started",
                 "taskStatusStats": _stats(success=2000, started=40, failed=2),
@@ -377,10 +377,10 @@ class TestDoneIsNotMonotonic(unittest.IsolatedAsyncioTestCase):
 
     Excluding unscheduled tasks from in_flight is the right call (counting them
     would hang forever on a sys-perf patch), but it means a not-yet-activated
-    version reports done=true. Evergreen forces includeNeverActivatedTasks=true
-    for non-patch requesters (version_resolver.go:527-538) and a never-activated
-    task displays as "unscheduled" (model/task/db.go:281-289), so a fresh
-    mainline version is all-unscheduled.
+    version reports done=true. taskStatusStats hardcodes
+    includeNeverActivated = !IsPatchRequester (version_resolver.go:532-536) and a
+    never-activated task displays as "unscheduled" (model/task/db.go:281-289), so
+    a fresh mainline version is all-unscheduled.
     """
 
     async def test_fresh_mainline_version_reports_done_with_a_caveat(self):

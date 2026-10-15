@@ -468,7 +468,7 @@ wheels = [
 
 [[package]]
 name = "evergreen-mcp-server"
-version = "0.4.6"
+version = "0.4.8"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

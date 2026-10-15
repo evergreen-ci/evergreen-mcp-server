@@ -22,12 +22,11 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
             "patchNumber": 1,
             "githash": "abc123",
             "description": "Test patch",
-            "author": "test@example.com",
-            "authorDisplayName": "Test User",
+            "user": {"id": "test@example.com", "displayName": "Test User"},
             "status": "failed",
             "createTime": "2025-01-01T12:00:00Z",
             "projectMetadata": {"identifier": "test-project"},
-            "versionFull": {
+            "version": {
                 "id": "version123",
                 "revision": "abc123",
                 "author": "test@example.com",
@@ -93,12 +92,11 @@ class TestFetchPatchFailedJobs(unittest.IsolatedAsyncioTestCase):
             "patchNumber": 1,
             "githash": "abc123",
             "description": "Test patch",
-            "author": "test@example.com",
-            "authorDisplayName": "Test User",
+            "user": {"id": "test@example.com", "displayName": "Test User"},
             "status": "failed",
             "createTime": "2025-01-01T12:00:00Z",
             "projectMetadata": {"identifier": "test-project"},
-            "versionFull": {
+            "version": {
                 "id": "version123",
                 "revision": "abc123",
                 "author": "test@example.com",
@@ -344,12 +342,11 @@ class TestProjectMismatchHandling(unittest.IsolatedAsyncioTestCase):
             "patchNumber": 1,
             "githash": "abc",
             "description": "d",
-            "author": "a",
-            "authorDisplayName": "A",
+            "user": {"id": "a", "displayName": "A"},
             "status": "failed",
             "createTime": "2026-01-01T00:00:00Z",
             "projectMetadata": {"identifier": project},
-            "versionFull": {
+            "version": {
                 "id": "v1",
                 "revision": "abc",
                 "author": "a",
