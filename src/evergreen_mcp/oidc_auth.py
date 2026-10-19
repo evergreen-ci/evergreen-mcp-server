@@ -12,7 +12,6 @@ import logging
 import os
 import tempfile
 import time
-from datetime import datetime, timezone
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -245,21 +244,28 @@ class OIDCAuthManager:
     def _normalize_token_data(self, token_data: dict) -> dict:
         """Normalize token data by computing expires_at and expiry from expires_in if needed.
 
-        OAuth servers return expires_in (seconds until expiry). We compute:
-        - expires_at: Unix timestamp, used by this MCP server for expiry checks
-        - expiry: ISO 8601 UTC string, required by Kanopy CLI (Go). Without it,
-          Go unmarshals the missing field as the zero time (0001-01-01T00:00:00Z),
-          which Kanopy treats as expired — causing it to consume the refresh token
-          and write back a corrupted file that breaks subsequent MCP refreshes.
+        OAuth servers typically return expires_in (seconds until expiry) rather than
+        expires_at (absolute timestamp). This method ensures expires_at is always set
+        for token file persistence, allowing other tools that read the token file to
+        check expiry without decoding the JWT.
+
+        Also adds/updates the 'expiry' field in ISO 8601 format for compatibility
+        with Kanopy CLI (Go), which expects this field for token expiration checking.
+        Without this, Kanopy CLI may write the zero-value time (0001-01-01T00:00:00Z)
+        back to the token file, corrupting it for other consumers.
+
+        Note: _check_token_expiry() decodes the JWT directly and doesn't use these fields,
+        but this normalization is kept for compatibility with external token consumers.
         """
         if "expires_in" in token_data:
-            expires_at = time.time() + token_data["expires_in"]
             if "expires_at" not in token_data:
-                token_data["expires_at"] = expires_at
-            if "expiry" not in token_data:
-                token_data["expiry"] = datetime.fromtimestamp(
-                    expires_at, tz=timezone.utc
-                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                token_data["expires_at"] = time.time() + token_data["expires_in"]
+            # Add/update 'expiry' field in ISO 8601 format for Kanopy CLI compatibility
+            # Kanopy CLI (Go) expects this field to exist and be in RFC3339/ISO8601 format
+            expiry_timestamp = token_data.get("expires_at")
+            token_data["expiry"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiry_timestamp)
+            )
         return token_data
 
     def _read_token_file(self) -> Optional[dict]:

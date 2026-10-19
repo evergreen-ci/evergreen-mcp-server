@@ -14,6 +14,12 @@ from typing import Annotated, Any, AsyncIterator, Dict, Optional, Tuple
 from fastmcp import Context, FastMCP
 
 from .artifact_download_tools import fetch_task_artifacts
+from .auto_triage_client import (
+    AutoTriageError,
+    analyze_task_log,
+    analyze_task_test,
+    auto_triage_enabled,
+)
 from .evergreen_graphql_client import EvergreenGraphQLClient
 from .evergreen_rest_client import EvergreenRestClient
 from .failed_jobs_tools import (
@@ -750,14 +756,81 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         description=(
-            "Get the complete raw task logs via REST API. Returns the full "
-            "untruncated task execution log including timeout handler output, "
-            "process dumps, and stdout/stderr — content that the GraphQL "
-            "get_task_log_summary tool cannot access. Automatically scans for "
-            "error patterns and returns a structured summary with top error "
-            "terms and example lines when errors are found. Best for debugging "
-            "non-test failures (setup errors, timeouts, compilation failures). "
-            "Use task_id from get_patch_failed_jobs results."
+            "Get the recent event log for an Evergreen distro, newest first. "
+            "Returns the full change history (each event's before/after distro "
+            "snapshot) so you can spot any environmental change: AMI (Amazon "
+            "Machine Image) rotations, toolchain updates that happen without an "
+            "image rebuild, and other distro-setting changes. Also includes a "
+            "derived 'ami_changes' list for the common 'did the base AMI rotate?' "
+            "question (before -> after AMI IDs, timestamp, who changed it). A "
+            "recent distro change is a common cause of sudden task regressions "
+            "that have no corresponding project code change, so use this when a "
+            "task started failing with environmental symptoms. Get the distro_id "
+            "from a task's 'distro_id' field in get_patch_failed_jobs results. "
+            "Requires DistroSettingsView permission on the distro; if the caller "
+            "lacks it the response includes a permission error and no event data."
+        )
+    )
+    async def get_distro_ami_changes_evergreen(
+        ctx: Context,
+        distro_id: Annotated[
+            str,
+            "Distro identifier to inspect, e.g. 'ubuntu2204-large'. Found in the "
+            "'distro_id' field of a task from get_patch_failed_jobs.",
+        ],
+        limit: Annotated[
+            int,
+            "Maximum number of recent distro events to scan for AMI changes. "
+            "Default is 20.",
+        ] = 20,
+        bearer_token: Annotated[
+            str | None,
+            "Override with a bearer token for this request. If not provided, uses the server's default credentials.",
+        ] = None,
+    ) -> str:
+        """Get the recent event log (incl. AMI changes) for a distro."""
+        evg_ctx = ctx.request_context.lifespan_context
+
+        async with _get_clients(evg_ctx, bearer_token=bearer_token) as (
+            client,
+            api_client,
+            user_id,
+        ):
+            try:
+                result = await client.get_distro_events(distro_id, limit)
+            except Exception as e:
+                # The distroEvents directive returns a GraphQL error (not an empty
+                # result) when the caller lacks DistroSettingsView. Surface it
+                # instead of failing, so callers can note "AMI check skipped".
+                message = str(e)
+                logger.info(
+                    "Could not fetch distro events for %s: %s", distro_id, message
+                )
+                return json.dumps(
+                    {
+                        "distro_id": distro_id,
+                        "status": "error",
+                        "message": message,
+                        "hint": (
+                            "This may be a permissions issue - fetching distro events "
+                            "requires DistroSettingsView on the distro."
+                        ),
+                    },
+                    separators=_COMPACT_JSON,
+                )
+        return json.dumps(result, separators=_COMPACT_JSON)
+
+    @mcp.tool(
+        description=(
+            "Triage a task's logs to find the root cause of a failure. Routes the "
+            "task log through the auto-triage service, which runs a multi-stage "
+            "pipeline (error-template discovery, causation graph, and LLM triage) "
+            "and returns a structured root-cause analysis with a triage summary, "
+            "failure classification, and suggested ARR regex. If auto-triage is "
+            "unavailable it transparently falls back to fetching the complete raw "
+            "task log via REST and scanning it for error patterns. Best for "
+            "debugging non-test failures (setup errors, timeouts, compilation "
+            "failures). Use task_id from get_patch_failed_jobs results."
         )
     )
     async def get_task_log_detailed(
@@ -795,17 +868,42 @@ def register_tools(mcp: FastMCP) -> None:
             api_client,
             user_id,
         ):
+            # Forward the OIDC bearer token so auto-triage can fetch the logs from
+            # Evergreen on the user's behalf. Fall back to the raw REST scan on any
+            # auto-triage failure so this tool always returns something usable.
+            token = bearer_token or getattr(api_client, "bearer_token", None)
+            if auto_triage_enabled():
+                try:
+                    triage = await analyze_task_log(
+                        task_id, execution_retries, token, log_type="task_log"
+                    )
+                    return json.dumps(
+                        {"source": "auto-triage", "task_id": task_id, "triage": triage},
+                        separators=_COMPACT_JSON,
+                    )
+                except AutoTriageError as e:
+                    logger.info(
+                        "auto-triage unavailable for task %s, falling back to "
+                        "REST log scan: %s",
+                        task_id,
+                        e,
+                    )
+
             result = await fetch_evergreen_task_logs(api_client, arguments)
+            result["source"] = "rest-scan"
         return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(
         description=(
-            "Get raw test log content via REST API. "
-            "Fetches actual test output (stored in S3, not accessible via GraphQL). "
-            "Automatically scans for error patterns and returns a structured "
-            "summary with top error terms and example lines when errors are found. "
-            "Use this to understand WHY a test failed, not just that it failed. "
-            "Requires task_id and test_name from get_patch_failed_jobs results."
+            "Triage a failed test's log to find the root cause. Routes the test "
+            "log through the auto-triage service, which runs a multi-stage pipeline "
+            "(error-template discovery, causation graph, and LLM triage) and returns "
+            "a structured root-cause analysis with a triage summary, failure "
+            "classification, and suggested ARR regex. If auto-triage is unavailable "
+            "it transparently falls back to fetching the raw test log via REST "
+            "(stored in S3, not accessible via GraphQL) and scanning it for error "
+            "patterns. Use this to understand WHY a test failed, not just that it "
+            "failed. Requires task_id and test_name from get_patch_failed_jobs results."
         )
     )
     async def get_test_results_detailed(
@@ -852,7 +950,35 @@ def register_tools(mcp: FastMCP) -> None:
             api_client,
             user_id,
         ):
+            # Forward the OIDC bearer token so auto-triage can fetch the test log
+            # from Evergreen on the user's behalf. Fall back to the raw REST scan
+            # on any auto-triage failure.
+            token = bearer_token or getattr(api_client, "bearer_token", None)
+            if auto_triage_enabled():
+                try:
+                    triage = await analyze_task_test(
+                        task_id, execution_retries, test_name, token
+                    )
+                    return json.dumps(
+                        {
+                            "source": "auto-triage",
+                            "task_id": task_id,
+                            "test_name": test_name,
+                            "triage": triage,
+                        },
+                        separators=_COMPACT_JSON,
+                    )
+                except AutoTriageError as e:
+                    logger.info(
+                        "auto-triage unavailable for test %s in task %s, falling "
+                        "back to REST log scan: %s",
+                        test_name,
+                        task_id,
+                        e,
+                    )
+
             result = await fetch_evergreen_task_test_results(api_client, arguments)
+            result["source"] = "rest-scan"
         return json.dumps(result, separators=_COMPACT_JSON)
 
     @mcp.tool(

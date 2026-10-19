@@ -1,0 +1,63 @@
+# Shared values for evergreen-mcp-server in the devprod-evergreen namespace.
+# Layered with environments/staging.yml or environments/production.yml.
+# Chart: mongodb/web-app (https://10gen.github.io/helm-charts)
+#
+# Pattern modeled on evergreen-ci/lumber, which deploys the same chart in
+# the same namespace family. Single container, streamable-http transport.
+# If SSE is ever needed, deploy a second helm release with --transport sse
+# rather than complicating this chart with sidecarContainers.
+
+image:
+  # Image is built and published by .github/workflows/docker-build.yml on
+  # every push to the `main` branch. The `:main` tag always points at
+  # the latest commit on that branch.
+  repository: ghcr.io/evergreen-ci/evergreen-mcp-server
+  tag: main
+
+# CLI args for the main container — serve streamable-http on :8080.
+args:
+  - "--transport"
+  - "streamable-http"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8080"
+
+services:
+  - name: http
+    ingress: true
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+    type: ClusterIP
+    probes: true
+
+ingress:
+  enabled: true
+  path: /
+  # hosts list is set per-env in staging.yml / production.yml
+
+# Secret `evergreen-mcp-server-secrets` is provisioned out-of-band per
+# namespace:
+#   helm ksec set evergreen-mcp-server-secrets \
+#     EVERGREEN_USER=<user> EVERGREEN_API_KEY=<key> -n devprod-evergreen
+envSecrets:
+  EVERGREEN_USER: evergreen-mcp-server-secrets
+  EVERGREEN_API_KEY: evergreen-mcp-server-secrets
+
+env:
+  SENTRY_ENABLED: "true"
+
+mesh:
+  enabled: true
+  permissive: true
+
+serviceAccount:
+  enabled: true
+
+ownership:
+  # TODO: swap to a team-alias email once the service has a clear owner
+  driEmail: shreeven.kommireddy@mongodb.com
+
+security:
+  dataClassification: "Internal"

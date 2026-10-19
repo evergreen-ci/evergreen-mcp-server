@@ -12,6 +12,7 @@ These tests validate the OIDCAuthManager class including:
 
 import asyncio
 import base64
+import datetime
 import json
 import time
 from pathlib import Path
@@ -261,6 +262,86 @@ class TestTokenExpiry:
         is_valid, remaining = auth_manager._check_token_expiry(token_data)
         assert is_valid is False
         assert remaining == 0
+
+
+class TestNormalizeTokenData:
+    """Test token data normalization."""
+
+    def test_normalize_adds_expires_at_and_expiry(self, auth_manager):
+        """Test that _normalize_token_data adds expires_at and expiry fields."""
+        token_data = {"access_token": "test", "expires_in": 599}
+
+        result = auth_manager._normalize_token_data(token_data)
+
+        # Should add expires_at (Unix timestamp)
+        assert "expires_at" in result
+        assert isinstance(result["expires_at"], (int, float))
+        assert result["expires_at"] > time.time()
+
+        # Should add expiry (ISO 8601 format for Kanopy CLI compatibility)
+        assert "expiry" in result
+        assert isinstance(result["expiry"], str)
+        # Verify ISO 8601 format and that the time is within 1 minute of now + 599s
+        parsed = datetime.datetime.strptime(
+            result["expiry"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=datetime.timezone.utc)
+        expected = time.time() + 599
+        assert abs(parsed.timestamp() - expected) < 60
+
+    def test_normalize_preserves_existing_expires_at(self, auth_manager):
+        """Test that existing expires_at is preserved when present."""
+        existing_expires_at = time.time() + 1000
+        token_data = {
+            "access_token": "test",
+            "expires_in": 599,
+            "expires_at": existing_expires_at,
+        }
+
+        result = auth_manager._normalize_token_data(token_data)
+
+        # Should preserve existing expires_at
+        assert result["expires_at"] == existing_expires_at
+        # Should still add/update expiry field based on expires_at
+        assert "expiry" in result
+
+    def test_normalize_updates_expiry_from_existing_expires_at(self, auth_manager):
+        """Test that expiry is calculated from existing expires_at if present."""
+        future_time = time.time() + 3600  # 1 hour from now
+        token_data = {
+            "access_token": "test",
+            "expires_in": 599,
+            "expires_at": future_time,
+        }
+
+        result = auth_manager._normalize_token_data(token_data)
+
+        # expiry should be based on the existing expires_at, not expires_in
+        expected_expiry = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(future_time))
+        assert result["expiry"] == expected_expiry
+
+    def test_normalize_no_expires_in_no_changes(self, auth_manager):
+        """Test that without expires_in, no normalization happens."""
+        token_data = {"access_token": "test"}
+
+        result = auth_manager._normalize_token_data(token_data.copy())
+
+        # Should not add expires_at or expiry without expires_in
+        assert "expires_at" not in result
+        assert "expiry" not in result
+
+    def test_normalize_overwrites_stale_expiry(self, auth_manager):
+        """Test that stale expiry field from Kanopy CLI is overwritten."""
+        token_data = {
+            "access_token": "test",
+            "expires_in": 599,
+            "expiry": "0001-01-01T00:00:00Z",  # Go zero-value time
+        }
+
+        result = auth_manager._normalize_token_data(token_data)
+
+        # Should overwrite the stale Go zero-value expiry
+        assert result["expiry"] != "0001-01-01T00:00:00Z"
+        assert result["expiry"].startswith("20")  # Should be current year (2025+)
 
 
 class TestUserIdExtraction:
