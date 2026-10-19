@@ -176,14 +176,14 @@ async def test_gateway_token_still_builds_per_request_clients():
         async def _close_session(self):
             built["closed"] = True
 
-    token = _make_jwt({"email": "marcin.borowiec@mongodb.com"})
+    token = _make_jwt({"email": "test-user@example.com"})
     with patch.object(mt, "EvergreenGraphQLClient", FakeGQL), patch.object(
         mt, "EvergreenRestClient", FakeREST
     ):
         async with mt._get_clients(ctx, bearer_token=token) as (gql, rest, user_id):
             assert isinstance(gql, FakeGQL)
             assert isinstance(rest, FakeREST)
-            assert user_id == "marcin.borowiec"
+            assert user_id == "test-user"
 
     assert built["gql_kwargs"]["bearer_token"] == token
     assert built["rest_kwargs"]["bearer_token"] == token
