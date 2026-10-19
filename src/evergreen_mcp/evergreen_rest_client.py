@@ -139,10 +139,8 @@ class EvergreenRestClient:
     async def _try_refresh_token(self) -> bool:
         """Attempt to refresh the bearer token and recreate session."""
         if not self._auth_manager:
-            logger.debug("_try_refresh_token: no auth_manager, skipping")
             return False
         if not self.bearer_token:
-            logger.debug("_try_refresh_token: no bearer_token set, skipping")
             return False
         logger.info("REST client got 401 — attempting token refresh")
         try:
@@ -178,7 +176,6 @@ class EvergreenRestClient:
                 and await self._try_refresh_token()
             ):
                 return await self._request(method, url, _retry=False, **kwargs)
-            logger.debug("Response status: %s", response.status)
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "")
             if "application/json" in content_type:

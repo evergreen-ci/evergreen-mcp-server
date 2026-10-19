@@ -25,17 +25,9 @@ from evergreen_mcp.evergreen_rest_client import EvergreenRestClient
 from evergreen_mcp.mcp_tools import register_tools
 from evergreen_mcp.oidc_auth import OIDCAuthenticationError, OIDCAuthManager
 
-# Set up logging — stderr at INFO, per-PID debug file for auth diagnosis
+# Set up logging
 logging.basicConfig(level=logging.INFO)
-_log_file = Path.home() / "logs" / f"evergreen-mcp-{os.getpid()}.log"
-_log_file.parent.mkdir(exist_ok=True)
-_fh = logging.FileHandler(_log_file)
-_fh.setLevel(logging.DEBUG)
-_fh.setFormatter(logging.Formatter("%(asctime)s [%(process)d] %(name)s %(levelname)s %(message)s"))
-logging.getLogger("evergreen_mcp").addHandler(_fh)
-logging.getLogger("evergreen_mcp").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
-logger.info("Debug log: %s", _log_file)
 
 
 @dataclass
@@ -220,10 +212,6 @@ async def _proactive_refresh_loop(auth_manager: "OIDCAuthManager") -> None:
                 )
                 if remaining > _PROACTIVE_REFRESH_BEFORE_S:
                     sleep_for = max(remaining - _PROACTIVE_REFRESH_BEFORE_S, 30)
-                    logger.debug(
-                        "Proactive refresh: %ds remaining, sleeping %ds",
-                        remaining, sleep_for,
-                    )
                     # Sleep in chunks, picking up fresher tokens written by
                     # devprod or other processes between cycles.
                     while sleep_for > 0:
@@ -238,11 +226,6 @@ async def _proactive_refresh_loop(auth_manager: "OIDCAuthManager") -> None:
                                 new_sleep = max(
                                     new_remaining - _PROACTIVE_REFRESH_BEFORE_S, 30
                                 )
-                                logger.debug(
-                                    "File watcher: newer token (%ds remaining),"
-                                    " extending sleep to %ds",
-                                    new_remaining, new_sleep,
-                                )
                                 sleep_for = new_sleep
                                 remaining = new_remaining
                     continue
@@ -255,7 +238,6 @@ async def _proactive_refresh_loop(auth_manager: "OIDCAuthManager") -> None:
                     {"access_token": auth_manager.access_token}
                 )
                 sleep_for = max(new_remaining - _PROACTIVE_REFRESH_BEFORE_S, 30)
-                logger.debug("Proactive refresh: %ds remaining, sleeping %ds", new_remaining, sleep_for)
                 await asyncio.sleep(sleep_for)
             else:
                 consecutive_failures += 1

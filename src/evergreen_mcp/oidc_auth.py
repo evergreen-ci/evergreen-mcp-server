@@ -199,12 +199,7 @@ class OIDCAuthManager:
             if exp:
                 remaining = exp - time.time()
                 valid = remaining > 60
-                logger.debug(
-                    "Token expiry: exp=%s remaining=%ds valid=%s",
-                    exp, int(remaining), valid,
-                )
                 return valid, int(remaining)
-            logger.debug("Token has no exp claim — treating as invalid")
             return False, 0
         except Exception as e:
             # Malformed/tampered token - treat as invalid for security
@@ -265,8 +260,6 @@ class OIDCAuthManager:
                 token_data["expiry"] = datetime.fromtimestamp(
                     expires_at, tz=timezone.utc
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        fields = {k for k in token_data if k != "access_token"}
-        logger.debug("Normalized token fields: %s", sorted(fields))
         return token_data
 
     def _read_token_file(self) -> Optional[dict]:
@@ -288,8 +281,6 @@ class OIDCAuthManager:
             logger.exception("Failed to read token file %s", self.token_file)
             return None
 
-        fields = {k for k in token_data if k != "access_token"}
-        logger.debug("Token file fields: %s", sorted(fields))
         if "access_token" not in token_data:
             logger.warning("Token file missing access_token field")
             return None
@@ -426,18 +417,12 @@ class OIDCAuthManager:
 
                 if response.status_code == 200:
                     raw = response.json()
-                    logger.debug(
-                        "Refresh response fields: %s (has refresh_token=%s)",
-                        sorted(k for k in raw if k != "access_token"),
-                        "refresh_token" in raw,
-                    )
                     token_data = self._normalize_token_data(raw)
 
                     # Some OIDC servers don't rotate refresh tokens — they omit
                     # refresh_token from the response. Preserve the one we used so
                     # future refreshes can still work.
                     if "refresh_token" not in token_data:
-                        logger.debug("Server omitted refresh_token — preserving existing one")
                         token_data["refresh_token"] = refresh_token_value
 
                     # Validate token BEFORE updating state to ensure atomic updates
